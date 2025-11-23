@@ -1,0 +1,1076 @@
+// app.js – frontend logika pre tracker s hamburger menu a overlay dialógmi
+
+const API = 'api.php';
+
+// --------- Helpers ---------
+const $ = (sel) => document.querySelector(sel);
+const fmt = (d) => {
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+const toTime = (iso) => {
+  const d = new Date(iso);
+  return d.toLocaleTimeString('sk-SK', { hour:'2-digit', minute:'2-digit' });
+};
+const dur = (fromIso, toIso) => {
+  if (!toIso) return '';
+  const a = new Date(fromIso).getTime();
+  const b = new Date(toIso).getTime();
+  const m = Math.max(0, Math.round((b - a) / 60000));
+  return m + ' min';
+};
+async function apiGet(url) {
+  const r = await fetch(url, { method:'GET' });
+  if (!r.ok) throw new Error(`GET ${url} -> ${r.status}`);
+  return r.json();
+}
+async function apiPost(action, payload) {
+  const r = await fetch(`${API}?action=${action}`, {
+    method: 'POST',
+    headers: { 'Content-Type':'application/json' },
+    body: JSON.stringify(payload)
+  });
+  if (!r.ok) throw new Error(`POST ${action} -> ${r.status}`);
+  return r.json();
+}
+async function apiDelete(action, payload) {
+  const r = await fetch(`${API}?action=${action}`, {
+    method: 'DELETE',
+    headers: { 'Content-Type':'application/json' },
+    body: JSON.stringify(payload)
+  });
+  if (!r.ok) throw new Error(`DELETE ${action} -> ${r.status}`);
+  return r.json();
+}
+
+// --------- Map init ---------
+let map, trackLayer, ibeaconLayer, legendControl, lastPositionMarker;
+let selectorMap, selectorMarker; // Pre map selector v overlay
+let circleMarkers = []; // Store markers for highlighting
+
+function initMap() {
+  map = L.map('map');
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19, attribution: '&copy; OpenStreetMap'
+  }).addTo(map);
+  trackLayer = L.layerGroup().addTo(map);
+  ibeaconLayer = L.layerGroup().addTo(map);
+
+  // Legenda (collapsible)
+  legendControl = L.control({ position: 'bottomright' });
+  legendControl.onAdd = function() {
+    const container = L.DomUtil.create('div', 'leaflet-control custom-legend-container');
+    
+    // Toggle button
+    const toggleBtn = L.DomUtil.create('button', 'legend-toggle-btn', container);
+    toggleBtn.innerHTML = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h18M3 6h18M3 18h18"/></svg>';
+    toggleBtn.title = 'Zobraziť/Skryť legendu';
+    toggleBtn.setAttribute('aria-label', 'Zobraziť/Skryť legendu');
+    
+    // Legend content (initially hidden)
+    const content = L.DomUtil.create('div', 'legend-content hidden', container);
+    content.innerHTML = `
+      <div class="legend-header">Legenda</div>
+      <div class="leg-item"><span class="leg-line"></span> Trasa (GNSS / Wi-Fi)</div>
+      <div class="leg-item"><span class="leg-dot blinking"></span> Posledná poloha</div>
+      <div class="leg-item"><span class="leg-dot red"></span> iBeacon</div>
+    `;
+    
+    // Toggle functionality
+    toggleBtn.onclick = function(e) {
+      e.stopPropagation();
+      e.preventDefault();
+      content.classList.toggle('hidden');
+      toggleBtn.classList.toggle('active');
+      return false;
+    };
+    
+    // Prevent map interactions
+    L.DomEvent.disableClickPropagation(container);
+    L.DomEvent.disableScrollPropagation(container);
+    
+    return container;
+  };
+  legendControl.addTo(map);
+}
+
+function initSelectorMap() {
+  if (selectorMap) return; // Už inicializovaná
+  
+  selectorMap = L.map('selectorMap').setView([48.1486, 17.1077], 13);
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19, attribution: '&copy; OpenStreetMap'
+  }).addTo(selectorMap);
+  
+  // Klik na mapu pridá/presunie marker
+  selectorMap.on('click', (e) => {
+    if (selectorMarker) {
+      selectorMarker.setLatLng(e.latlng);
+    } else {
+      selectorMarker = L.marker(e.latlng, { draggable: true }).addTo(selectorMap);
+    }
+    
+    // Aktualizuj form fields
+    $('#beaconLat').value = e.latlng.lat.toFixed(6);
+    $('#beaconLng').value = e.latlng.lng.toFixed(6);
+  });
+}
+
+// --------- Battery Status ---------
+async function updateBatteryStatus() {
+  try {
+    const data = await apiGet(`${API}?action=get_device_status`);
+    
+    console.log('Device status response:', data);
+    
+    // Update battery status
+    if (data.ok && data.battery_state !== null && data.battery_state !== undefined) {
+      const state = data.battery_state; // 0 = low, 1 = good
+      const textSpan = $('#batteryText');
+      
+      if (textSpan) {
+        textSpan.textContent = state === 1 ? 'Dobrá' : 'Slabá';
+        console.log('Battery updated to:', state === 1 ? 'Dobrá' : 'Slabá');
+      }
+      
+      // Nastav farbu podľa stavu
+      const indicator = $('#batteryIndicator');
+      if (indicator) {
+        if (state === 1) {
+          indicator.setAttribute('data-level', 'good');
+        } else {
+          indicator.setAttribute('data-level', 'low');
+        }
+      }
+    } else {
+      console.log('No battery data available:', data);
+      const textSpan = $('#batteryText');
+      if (textSpan) {
+        textSpan.textContent = '—';
+      }
+    }
+    
+    // Update last online time (from real-time API data)
+    if (data.ok && data.latest_message_time) {
+      const lastOnlineText = $('#lastOnlineText');
+      const lastOnlineInfo = $('#lastOnlineInfo');
+      
+      if (lastOnlineText) {
+        try {
+          const uploadTime = new Date(data.latest_message_time);
+          const now = new Date();
+          const diffMs = now - uploadTime;
+          const diffSeconds = Math.floor(diffMs / 1000);
+          const diffMinutes = Math.floor(diffMs / 60000);
+          
+          // Presnejšie časové zobrazenie
+          if (diffSeconds < 60) {
+            lastOnlineText.textContent = 'teraz';
+          } else if (diffMinutes < 60) {
+            lastOnlineText.textContent = `pred ${diffMinutes}m`;
+          } else {
+            const diffHours = Math.floor(diffMinutes / 60);
+            if (diffHours < 24) {
+              const remainingMinutes = diffMinutes % 60;
+              if (remainingMinutes > 0 && diffHours < 6) {
+                lastOnlineText.textContent = `pred ${diffHours}h ${remainingMinutes}m`;
+              } else {
+                lastOnlineText.textContent = `pred ${diffHours}h`;
+              }
+            } else {
+              const diffDays = Math.floor(diffHours / 24);
+              const remainingHours = diffHours % 24;
+              if (remainingHours > 0 && diffDays < 7) {
+                lastOnlineText.textContent = `pred ${diffDays}d ${remainingHours}h`;
+              } else {
+                lastOnlineText.textContent = `pred ${diffDays}d`;
+              }
+            }
+          }
+          
+          // Set online/offline status color
+          if (lastOnlineInfo && data.online_status !== undefined) {
+            if (data.online_status === 1) {
+              lastOnlineInfo.setAttribute('data-status', 'online');
+              lastOnlineInfo.title = 'Online - Posledný upload dát';
+            } else {
+              lastOnlineInfo.setAttribute('data-status', 'offline');
+              lastOnlineInfo.title = 'Offline - Posledný upload dát';
+            }
+          }
+          
+          // Ak je z cache, pridaj indikátor
+          if (data.from_cache) {
+            if (lastOnlineInfo) {
+              lastOnlineInfo.setAttribute('data-source', 'cache');
+              lastOnlineInfo.title += ' (z cache)';
+            }
+          }
+        } catch (e) {
+          console.error('Error parsing upload time:', e);
+          lastOnlineText.textContent = '—';
+        }
+      }
+    } else {
+      const lastOnlineText = $('#lastOnlineText');
+      const lastOnlineInfo = $('#lastOnlineInfo');
+      if (lastOnlineText) {
+        lastOnlineText.textContent = '—';
+      }
+      if (lastOnlineInfo) {
+        lastOnlineInfo.removeAttribute('data-status');
+      }
+    }
+  } catch (err) {
+    console.error('Device status error:', err);
+    const textSpan = $('#batteryText');
+    const lastOnlineText = $('#lastOnlineText');
+    if (textSpan) {
+      textSpan.textContent = '—';
+    }
+    if (lastOnlineText) {
+      lastOnlineText.textContent = '—';
+    }
+  }
+}
+
+// --------- Hamburger Menu ---------
+function initHamburgerMenu() {
+  const btn = $('#hamburgerBtn');
+  const menu = $('#hamburgerMenu');
+  
+  btn.addEventListener('click', () => {
+    const isOpen = !menu.classList.contains('hidden');
+    
+    if (isOpen) {
+      menu.classList.add('hidden');
+      btn.classList.remove('active');
+    } else {
+      menu.classList.remove('hidden');
+      btn.classList.add('active');
+      
+      // Zavri menu pri kliknuti mimo
+      setTimeout(() => {
+        const closeHandler = (e) => {
+          if (!menu.contains(e.target) && !btn.contains(e.target)) {
+            menu.classList.add('hidden');
+            btn.classList.remove('active');
+            document.removeEventListener('click', closeHandler);
+          }
+        };
+        document.addEventListener('click', closeHandler);
+      }, 0);
+    }
+  });
+  
+  // Menu items
+  $('#menuRefetch').addEventListener('click', () => {
+    menu.classList.add('hidden');
+    btn.classList.remove('active');
+    refetchDay();
+  });
+  
+  $('#menuManageIBeacons').addEventListener('click', () => {
+    menu.classList.add('hidden');
+    btn.classList.remove('active');
+    openIBeaconOverlay();
+  });
+  
+  $('#menuViewIBeacons').addEventListener('click', () => {
+    menu.classList.add('hidden');
+    btn.classList.remove('active');
+    openIBeaconListOverlay();
+  });
+}
+
+// --------- iBeacon Management Overlay ---------
+let editingBeaconId = null;
+
+function openIBeaconOverlay(beacon = null) {
+  const overlay = $('#ibeaconOverlay');
+  const title = $('#overlayTitle');
+  
+  if (beacon) {
+    // Edit mode
+    editingBeaconId = beacon.id;
+    title.textContent = 'Upraviť iBeacon';
+    $('#beaconId').value = beacon.id;
+    $('#beaconName').value = beacon.name;
+    $('#beaconMac').value = beacon.mac_address;
+    $('#beaconLat').value = beacon.latitude;
+    $('#beaconLng').value = beacon.longitude;
+  } else {
+    // Add mode
+    editingBeaconId = null;
+    title.textContent = 'Pridať iBeacon';
+    $('#beaconId').value = '';
+    $('#beaconName').value = '';
+    $('#beaconMac').value = '';
+    $('#beaconLat').value = '';
+    $('#beaconLng').value = '';
+  }
+  
+  // Skry map selector
+  $('#mapSelector').classList.add('hidden');
+  $('#ibeaconForm').classList.remove('hidden');
+  
+  overlay.classList.remove('hidden');
+  
+  // Focus prvý input
+  setTimeout(() => $('#beaconName').focus(), 100);
+}
+
+function closeIBeaconOverlay() {
+  $('#ibeaconOverlay').classList.add('hidden');
+  editingBeaconId = null;
+  
+  // Vyčisti selector marker
+  if (selectorMarker) {
+    selectorMarker.remove();
+    selectorMarker = null;
+  }
+}
+
+function openMapSelector() {
+  $('#ibeaconForm').classList.add('hidden');
+  $('#mapSelector').classList.remove('hidden');
+  
+  // Inicializuj selector map ak ešte nie je
+  if (!selectorMap) {
+    initSelectorMap();
+  }
+  
+  // Invalidate size po zobrazení
+  setTimeout(() => {
+    selectorMap.invalidateSize();
+    
+    // Ak sú vyplnené súradnice, zobraz marker
+    const lat = parseFloat($('#beaconLat').value);
+    const lng = parseFloat($('#beaconLng').value);
+    
+    if (!isNaN(lat) && !isNaN(lng)) {
+      if (selectorMarker) {
+        selectorMarker.setLatLng([lat, lng]);
+      } else {
+        selectorMarker = L.marker([lat, lng], { draggable: true }).addTo(selectorMap);
+      }
+      selectorMap.setView([lat, lng], 15);
+    } else {
+      // Predvolená pozícia (centrum Bratislavy)
+      selectorMap.setView([48.1486, 17.1077], 13);
+    }
+  }, 100);
+}
+
+function confirmMapLocation() {
+  if (selectorMarker) {
+    const latlng = selectorMarker.getLatLng();
+    $('#beaconLat').value = latlng.lat.toFixed(6);
+    $('#beaconLng').value = latlng.lng.toFixed(6);
+  }
+  
+  // Vráť sa späť na form
+  $('#mapSelector').classList.add('hidden');
+  $('#ibeaconForm').classList.remove('hidden');
+}
+
+function cancelMapSelect() {
+  // Vráť sa späť na form bez zmien
+  $('#mapSelector').classList.add('hidden');
+  $('#ibeaconForm').classList.remove('hidden');
+}
+
+async function submitIBeacon() {
+  const name = $('#beaconName').value.trim();
+  const mac = $('#beaconMac').value.trim();
+  const lat = parseFloat($('#beaconLat').value);
+  const lng = parseFloat($('#beaconLng').value);
+  
+  if (!name || !mac || Number.isNaN(lat) || Number.isNaN(lng)) {
+    alert('Vyplň všetky polia (názov, MAC, súradnice).');
+    return;
+  }
+  
+  await apiPost('upsert_ibeacon', { name, mac, latitude: lat, longitude: lng });
+  
+  // Zavri overlay a refresh
+  closeIBeaconOverlay();
+  await loadIBeacons();
+  
+  alert(editingBeaconId ? 'iBeacon aktualizovaný!' : 'iBeacon pridaný!');
+}
+
+// --------- iBeacon List Overlay ---------
+async function openIBeaconListOverlay() {
+  const overlay = $('#ibeaconListOverlay');
+  overlay.classList.remove('hidden');
+  
+  // Načítaj zoznam
+  await loadIBeaconsIntoOverlay();
+}
+
+function closeIBeaconListOverlay() {
+  $('#ibeaconListOverlay').classList.add('hidden');
+}
+
+async function loadIBeaconsIntoOverlay() {
+  const container = $('#ibeaconList');
+  container.innerHTML = '<p>Načítavam...</p>';
+  
+  try {
+    const list = await apiGet(`${API}?action=get_ibeacons`);
+    
+    if (!Array.isArray(list) || list.length === 0) {
+      container.innerHTML = '<p style="color:#999;padding:16px">Žiadne iBeacony.</p>';
+      return;
+    }
+    
+    let html = list.map(b => `
+      <div class="row" data-id="${b.id}">
+        <div class="info">
+          <strong>${b.name}</strong><br>
+          <small>${b.mac_address}</small><br>
+          <small style="color:#666">(${b.latitude?.toFixed(6)}, ${b.longitude?.toFixed(6)})</small>
+        </div>
+        <div class="actions">
+          <button class="btn-edit" data-edit="${b.id}">Upraviť</button>
+          <button class="btn-delete" data-del="${b.id}">Odstrániť</button>
+        </div>
+      </div>`).join('');
+    
+    container.innerHTML = html;
+    
+    // Edit handlers
+    container.querySelectorAll('button[data-edit]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const id = parseInt(btn.getAttribute('data-edit'));
+        const beacon = list.find(b => b.id === id);
+        if (beacon) {
+          closeIBeaconListOverlay();
+          openIBeaconOverlay(beacon);
+        }
+      });
+    });
+    
+    // Delete handlers
+    container.querySelectorAll('button[data-del]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const id = btn.getAttribute('data-del');
+        if (!confirm('Zmazať iBeacon?')) return;
+        
+        await apiDelete('delete_ibeacon', { id: Number(id) });
+        await loadIBeaconsIntoOverlay();
+        await loadIBeacons(); // Refresh mapu
+      });
+    });
+  } catch (err) {
+    container.innerHTML = `<p style="color:#ef4444;padding:16px">Chyba: ${err.message}</p>`;
+  }
+}
+
+// --------- Load iBeacons na mapu ---------
+async function loadIBeacons() {
+  ibeaconLayer.clearLayers();
+  
+  try {
+    const list = await apiGet(`${API}?action=get_ibeacons`);
+    
+    if (!Array.isArray(list) || list.length === 0) return;
+    
+    // Markery
+    list.forEach(b => {
+      if (b.latitude == null || b.longitude == null) return;
+      L.circleMarker([b.latitude, b.longitude], { 
+        radius: 5, 
+        color: '#ff3b30', 
+        fillColor: '#ff3b30', 
+        fillOpacity: 1 
+      })
+        .bindPopup(`<b>${b.name}</b><br>${b.mac_address}`)
+        .addTo(ibeaconLayer);
+    });
+  } catch (err) {
+    console.error('Load iBeacons error:', err);
+  }
+}
+
+// --------- Table Sorting ---------
+let sortColumn = null;
+let sortDirection = 'asc';
+
+function sortTable(columnIndex, rows) {
+  const compare = (a, b) => {
+    let aVal = a.sortValues[columnIndex];
+    let bVal = b.sortValues[columnIndex];
+    
+    // Handle numbers
+    if (typeof aVal === 'number' && typeof bVal === 'number') {
+      return sortDirection === 'asc' ? aVal - bVal : bVal - aVal;
+    }
+    
+    // Handle strings
+    aVal = String(aVal);
+    bVal = String(bVal);
+    if (sortDirection === 'asc') {
+      return aVal.localeCompare(bVal);
+    } else {
+      return bVal.localeCompare(aVal);
+    }
+  };
+  
+  return rows.sort(compare);
+}
+
+// --------- History + table ---------
+async function loadHistory(dateStr) {
+  $('#positionsTable').innerHTML = 'Načítavam…';
+  trackLayer.clearLayers();
+  circleMarkers = [];
+  if (lastPositionMarker) {
+    lastPositionMarker.remove();
+    lastPositionMarker = null;
+  }
+
+  const data = await apiGet(`${API}?action=get_history&date=${encodeURIComponent(dateStr)}`);
+  
+  // Načítaj aj posledný bod z predošlého dňa
+  const prevDate = new Date(dateStr);
+  prevDate.setDate(prevDate.getDate() - 1);
+  const prevDateStr = fmt(prevDate);
+  const prevData = await apiGet(`${API}?action=get_history&date=${encodeURIComponent(prevDateStr)}`);
+  const lastPrevPoint = (prevData && prevData.length > 0) ? prevData[prevData.length - 1] : null;
+  
+  // OPRAVA: Rozlišuj medzi dneškom a minulým dňom
+  if (!Array.isArray(data) || data.length === 0) {
+    const today = fmt(new Date());
+    const isToday = (dateStr === today);
+    
+    if (isToday) {
+      // Pre dnešok zobraz poslednú známu polohu
+      const lastPosition = await apiGet(`${API}?action=get_last_position`);
+      
+      if (lastPosition && lastPosition.latitude && lastPosition.longitude) {
+        // Zobraz poslednú známu polohu na mape
+        const markerHtml = `
+          <style>
+            @keyframes blink-marker {
+              0%, 100% { opacity: 1; transform: scale(1); }
+              50% { opacity: 0.3; transform: scale(1.3); }
+            }
+          </style>
+          <div style="
+            width: 16px;
+            height: 16px;
+            background: #ff9800;
+            border-radius: 50%;
+            border: 3px solid white;
+            box-shadow: 0 0 4px rgba(0,0,0,0.3);
+            animation: blink-marker 1.5s ease-in-out infinite;
+          "></div>
+        `;
+        
+        const icon = L.divIcon({
+          className: '',
+          html: markerHtml,
+          iconSize: [22, 22],
+          iconAnchor: [11, 11]
+        });
+        
+        lastPositionMarker = L.marker([lastPosition.latitude, lastPosition.longitude], { icon })
+          .bindTooltip(`Posledná známa poloha<br>${new Date(lastPosition.timestamp).toLocaleString('sk-SK')}`, 
+            { permanent:false, opacity:1 })
+          .addTo(map);
+        
+        map.setView([lastPosition.latitude, lastPosition.longitude], 15);
+        
+        // Zobraz info v tabuľke
+        const rows = [{
+          i: 1,
+          from: lastPosition.timestamp,
+          to: null,
+          durMin: 0,
+          source: lastPosition.source,
+          lat: lastPosition.latitude,
+          lng: lastPosition.longitude,
+          isPrevDay: false,
+          isLastKnown: true,  // <-- toto označuje že je to "last known"
+          sortValues: [
+            1,
+            new Date(lastPosition.timestamp).getTime(),
+            0,
+            0,
+            lastPosition.source,
+            lastPosition.latitude,
+            lastPosition.longitude
+          ]
+        }];
+        renderTable(rows);
+        
+        // Pridaj info text
+        const info = document.createElement('div');
+        info.style.cssText = 'padding: 12px; background: #fef3c7; border: 1px solid #fbbf24; border-radius: 8px; margin-bottom: 12px; color: #92400e;';
+        info.innerHTML = '<strong>Žiadny pohyb v tento deň.</strong> Zobrazená je posledná známa poloha.';
+        $('#positionsTable').prepend(info);
+      } else {
+        $('#positionsTable').innerHTML = 'Žiadne dáta pre dnes a žiadna posledná známa poloha.';
+      }
+    } else {
+      // OPRAVA: Pre minulý deň bez pohybu nezobrazuj tabuľku ani posledný bod
+      $('#positionsTable').innerHTML = '<div style="padding: 12px; background: #fef3c7; border: 1px solid #fbbf24; border-radius: 8px; margin: 12px; color: #92400e;"><strong>Žiadny pohyb v tento deň.</strong></div>';
+    }
+    return;
+  }
+
+  // polyline
+  const latlngs = data.map(p => [p.latitude, p.longitude]);
+  const line = L.polyline(latlngs, { color:'#3388ff', weight:3 }).addTo(trackLayer);
+  map.fitBounds(line.getBounds(), { padding:[20,20] });
+
+  // body s tooltipom
+  data.forEach((p, idx) => {
+    // Posledný bod bude blikajúci
+    if (idx === data.length - 1) {
+      // Vytvor HTML element pre blikajúci marker s inline keyframes
+      const markerHtml = `
+        <style>
+          @keyframes blink-marker {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.3; transform: scale(1.3); }
+          }
+        </style>
+        <div style="
+          width: 16px;
+          height: 16px;
+          background: #3388ff;
+          border-radius: 50%;
+          border: 3px solid white;
+          box-shadow: 0 0 4px rgba(0,0,0,0.3);
+          animation: blink-marker 1.5s ease-in-out infinite;
+        "></div>
+      `;
+      
+      const icon = L.divIcon({
+        className: '',
+        html: markerHtml,
+        iconSize: [22, 22],
+        iconAnchor: [11, 11]
+      });
+      
+      lastPositionMarker = L.marker([p.latitude, p.longitude], { icon })
+        .bindTooltip(new Date(p.timestamp).toLocaleString('sk-SK'), { permanent:false, opacity:1 })
+        .addTo(map);
+    } else {
+      const marker = L.circleMarker([p.latitude, p.longitude], { 
+        radius:4,
+        fillColor: '#3388ff',
+        color: '#fff',
+        weight: 1,
+        fillOpacity: 0.8
+      })
+       .bindTooltip(new Date(p.timestamp).toLocaleString('sk-SK'), { permanent:false, opacity:1 })
+       .addTo(trackLayer);
+      
+      circleMarkers.push({ marker, lat: p.latitude, lng: p.longitude });
+    }
+  });
+
+  // tabuľka "od–do" s prvým riadkom z predošlého dňa
+  const rows = [];
+  
+  // Ak existuje posledný bod z predošlého dňa, pridaj ho ako prvý riadok
+  if (lastPrevPoint && data.length > 0) {
+    const firstCur = data[0];
+    const durMin = Math.max(0, Math.round((new Date(firstCur.timestamp) - new Date(lastPrevPoint.timestamp)) / 60000));
+    rows.push({
+      i: 0,
+      from: lastPrevPoint.timestamp,
+      to: firstCur.timestamp,
+      durMin: durMin,
+      source: lastPrevPoint.source,
+      lat: firstCur.latitude,
+      lng: firstCur.longitude,
+      isPrevDay: true,
+      sortValues: [
+        0,
+        new Date(lastPrevPoint.timestamp).getTime(),
+        new Date(firstCur.timestamp).getTime(),
+        durMin,
+        lastPrevPoint.source,
+        firstCur.latitude,
+        firstCur.longitude
+      ]
+    });
+  }
+  
+  // Ostatné riadky z aktuálneho dňa
+  for (let i=0; i<data.length; i++) {
+    const cur = data[i];
+    const nxt = data[i+1];
+    const durMin = nxt ? Math.max(0, Math.round((new Date(nxt.timestamp) - new Date(cur.timestamp)) / 60000)) : 0;
+    rows.push({
+      i: i+1,
+      from: cur.timestamp,
+      to: nxt ? nxt.timestamp : null,
+      durMin: durMin,
+      source: cur.source,
+      lat: cur.latitude,
+      lng: cur.longitude,
+      isPrevDay: false,
+      sortValues: [
+        i+1,
+        new Date(cur.timestamp).getTime(),
+        nxt ? new Date(nxt.timestamp).getTime() : 0,
+        durMin,
+        cur.source,
+        cur.latitude,
+        cur.longitude
+      ]
+    });
+  }
+  renderTable(rows);
+}
+
+function renderTable(rows) {
+  const headers = [
+    { label: '#', sortable: true },
+    { label: 'Od', sortable: true },
+    { label: 'Do', sortable: true },
+    { label: 'Trvanie', sortable: true },
+    { label: 'Zdroj', sortable: true },
+    { label: 'Lat', sortable: true },
+    { label: 'Lng', sortable: true }
+  ];
+  
+  const thHtml = headers.map((h, idx) => 
+    `<th class="${h.sortable ? 'sortable' : ''}" data-col="${idx}">${h.label}</th>`
+  ).join('');
+  
+  const th = `<thead><tr>${thHtml}</tr></thead>`;
+  
+  const tb = rows.map((r, idx) => {
+    let rowClass = '';
+    let displayNum = r.i;
+    let fromDisplay = toTime(r.from);
+    let toDisplay = r.to ? toTime(r.to) : '—';
+    
+    if (r.isPrevDay) {
+      rowClass = 'prev-day-row';
+      displayNum = '↑';
+    } else if (r.isLastKnown) {
+      rowClass = 'last-known-row';
+      displayNum = '📍';
+      // Pre poslednú známu polohu zobraz plný dátum a čas
+      const d = new Date(r.from);
+      fromDisplay = d.toLocaleDateString('sk-SK', { 
+        day: '2-digit', 
+        month: '2-digit', 
+        year: 'numeric' 
+      }) + ' ' + d.toLocaleTimeString('sk-SK', { 
+        hour: '2-digit', 
+        minute: '2-digit' 
+      });
+      toDisplay = 'teraz';
+    }
+    
+    return `
+    <tr class="${rowClass}" data-lat="${r.lat}" data-lng="${r.lng}" data-idx="${idx}">
+      <td>${displayNum}</td>
+      <td>${fromDisplay}</td>
+      <td>${toDisplay}</td>
+      <td>${dur(r.from, r.to)}</td>
+      <td>${r.source}</td>
+      <td>${r.lat.toFixed(6)}</td>
+      <td>${r.lng.toFixed(6)}</td>
+    </tr>`;
+  }).join('');
+  
+  const html = `<table class="pos-table">${th}<tbody>${tb}</tbody></table>`;
+  $('#positionsTable').innerHTML = html;
+
+  // Add sorting handlers
+  $('#positionsTable').querySelectorAll('th.sortable').forEach(th => {
+    th.addEventListener('click', () => {
+      const col = parseInt(th.getAttribute('data-col'));
+      
+      // Toggle direction or set new column
+      if (sortColumn === col) {
+        sortDirection = sortDirection === 'asc' ? 'desc' : 'asc';
+      } else {
+        sortColumn = col;
+        sortDirection = 'asc';
+      }
+      
+      // Remove all sort classes
+      $('#positionsTable').querySelectorAll('th').forEach(h => {
+        h.classList.remove('sort-asc', 'sort-desc');
+      });
+      
+      // Add sort class to current
+      th.classList.add(`sort-${sortDirection}`);
+      
+      // Sort and re-render
+      const sorted = sortTable(col, rows);
+      renderTable(sorted);
+    });
+  });
+
+  // klik na riadok => zoom na bod a zvýrazni ho
+  $('#positionsTable').querySelectorAll('tbody tr').forEach((tr, idx) => {
+    tr.addEventListener('click', () => {
+      const lat = parseFloat(tr.getAttribute('data-lat'));
+      const lng = parseFloat(tr.getAttribute('data-lng'));
+      
+      // Remove previous highlights
+      $('#positionsTable').querySelectorAll('tbody tr').forEach(row => {
+        row.classList.remove('highlighted');
+      });
+      
+      // Highlight clicked row
+      tr.classList.add('highlighted');
+      
+      // Find and highlight corresponding marker
+      circleMarkers.forEach(cm => {
+        const markerLatLng = cm.marker.getLatLng();
+        if (Math.abs(markerLatLng.lat - lat) < 0.000001 && Math.abs(markerLatLng.lng - lng) < 0.000001) {
+          // Reset all markers to default style
+          circleMarkers.forEach(m => {
+            m.marker.setStyle({
+              radius: 4,
+              fillColor: '#3388ff',
+              color: '#fff',
+              weight: 1,
+              fillOpacity: 0.8
+            });
+          });
+          
+          // Highlight selected marker
+          cm.marker.setStyle({
+            radius: 8,
+            fillColor: '#ff6b00',
+            color: '#fff',
+            weight: 2,
+            fillOpacity: 1
+          });
+          
+          // Open tooltip
+          cm.marker.openTooltip();
+        }
+      });
+      
+      // Zoom to location
+      map.setView([lat, lng], 16);
+    });
+  });
+}
+
+// --------- Refetch day ---------
+async function refetchDay() {
+  const dateStr = fmt(currentDate);
+  
+  if (!confirm(`Znova načítať všetky dáta zo SenseCAP pre ${dateStr}?\n\nToto môže trvať niekoľko minút a overí, či neboli nahrané oneskorené záznamy.`)) {
+    return;
+  }
+  
+  try {
+    const result = await apiPost('refetch_day', { date: dateStr });
+    
+    if (result.ok) {
+      alert(`Refetch úspešne spustený pre ${dateStr}.\n\nPočkajte cca 30-60 sekúnd a potom obnovte stránku alebo prepnite na iný deň a späť.`);
+    } else {
+      alert(`Chyba pri refetch: ${result.error || 'Neznáma chyba'}`);
+    }
+  } catch (err) {
+    alert(`Chyba pri refetch: ${err.message}`);
+  }
+}
+
+// --------- Calendar ---------
+let currentDate = new Date();
+let calendarDate = new Date();
+let availableDates = new Set();
+
+async function loadAvailableDates() {
+  try {
+    const today = new Date();
+    const past = new Date();
+    past.setDate(today.getDate() - 90);
+    
+    const data = await apiGet(`${API}?action=get_history_range&since=${past.toISOString()}&until=${today.toISOString()}`);
+    availableDates.clear();
+    if (Array.isArray(data)) {
+      data.forEach(p => {
+        const date = p.timestamp.slice(0, 10);
+        availableDates.add(date);
+      });
+    }
+  } catch (e) {
+    console.error('Failed to load available dates:', e);
+  }
+}
+
+function renderCalendar() {
+  const year = calendarDate.getFullYear();
+  const month = calendarDate.getMonth();
+  
+  $('#calMonthYear').textContent = new Date(year, month).toLocaleDateString('sk-SK', { 
+    year: 'numeric', 
+    month: 'long' 
+  });
+  
+  const firstDay = new Date(year, month, 1).getDay();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const adjustedFirstDay = (firstDay === 0) ? 6 : firstDay - 1;
+  
+  const grid = $('#calendarGrid');
+  grid.innerHTML = '';
+  
+  // Headers
+  ['Po', 'Ut', 'St', 'Št', 'Pi', 'So', 'Ne'].forEach(day => {
+    const el = document.createElement('div');
+    el.className = 'calendar-day header';
+    el.textContent = day;
+    grid.appendChild(el);
+  });
+  
+  // Empty cells
+  for (let i = 0; i < adjustedFirstDay; i++) {
+    const el = document.createElement('div');
+    el.className = 'calendar-day empty';
+    grid.appendChild(el);
+  }
+  
+  // Days
+  const today = fmt(new Date());
+  const selected = fmt(currentDate);
+  
+  for (let day = 1; day <= daysInMonth; day++) {
+    const date = new Date(year, month, day);
+    const dateStr = fmt(date);
+    const el = document.createElement('div');
+    el.className = 'calendar-day active';
+    el.textContent = day;
+    
+    if (dateStr === today) el.classList.add('today');
+    if (dateStr === selected) el.classList.add('selected');
+    if (availableDates.has(dateStr)) el.classList.add('has-data');
+    
+    el.addEventListener('click', async () => {
+      currentDate = new Date(date);
+      toggleCalendar();
+      await refresh();
+    });
+    
+    grid.appendChild(el);
+  }
+}
+
+function toggleCalendar() {
+  const dropdown = $('#calendarDropdown');
+  const isHidden = dropdown.classList.contains('hidden');
+  
+  if (isHidden) {
+    calendarDate = new Date(currentDate);
+    renderCalendar();
+    dropdown.classList.remove('hidden');
+    
+    setTimeout(() => {
+      const closeHandler = (e) => {
+        if (!dropdown.contains(e.target) && !$('#calendarToggle').contains(e.target)) {
+          dropdown.classList.add('hidden');
+          document.removeEventListener('click', closeHandler);
+        }
+      };
+      document.addEventListener('click', closeHandler);
+    }, 0);
+  } else {
+    dropdown.classList.add('hidden');
+  }
+}
+
+function initCalendar() {
+  $('#calendarToggle').addEventListener('click', toggleCalendar);
+  
+  $('#calPrevMonth').addEventListener('click', (e) => {
+    e.stopPropagation();
+    calendarDate.setMonth(calendarDate.getMonth() - 1);
+    renderCalendar();
+  });
+  
+  $('#calNextMonth').addEventListener('click', (e) => {
+    e.stopPropagation();
+    calendarDate.setMonth(calendarDate.getMonth() + 1);
+    renderCalendar();
+  });
+}
+
+// --------- Date controls ---------
+function setDateLabel() {
+  $('#currentDate').textContent = fmt(currentDate);
+}
+
+async function refresh() {
+  setDateLabel();
+  await loadHistory(fmt(currentDate));
+  await loadIBeacons();
+  await updateBatteryStatus();
+  // updateLastOnline() removed - updateBatteryStatus() now handles this from device status API
+}
+
+function addUIHandlers() {
+  // Date navigation
+  $('#prevDay').addEventListener('click', async () => {
+    currentDate.setDate(currentDate.getDate() - 1);
+    await refresh();
+  });
+  
+  $('#nextDay').addEventListener('click', async () => {
+    currentDate.setDate(currentDate.getDate() + 1);
+    await refresh();
+  });
+  
+  $('#today').addEventListener('click', async () => {
+    currentDate = new Date();
+    await refresh();
+  });
+
+  // Overlay controls
+  $('#overlayClose').addEventListener('click', closeIBeaconOverlay);
+  $('#listOverlayClose').addEventListener('click', closeIBeaconListOverlay);
+  
+  // Form buttons
+  $('#selectOnMap').addEventListener('click', openMapSelector);
+  $('#confirmLocation').addEventListener('click', confirmMapLocation);
+  $('#cancelMapSelect').addEventListener('click', cancelMapSelect);
+  $('#submit').addEventListener('click', submitIBeacon);
+  $('#cancelEdit').addEventListener('click', closeIBeaconOverlay);
+  
+  // Close overlay on background click
+  $('#ibeaconOverlay').addEventListener('click', (e) => {
+    if (e.target === $('#ibeaconOverlay')) {
+      closeIBeaconOverlay();
+    }
+  });
+  
+  $('#ibeaconListOverlay').addEventListener('click', (e) => {
+    if (e.target === $('#ibeaconListOverlay')) {
+      closeIBeaconListOverlay();
+    }
+  });
+}
+
+// --------- boot ---------
+window.addEventListener('DOMContentLoaded', async () => {
+  initMap();
+  initCalendar();
+  initHamburgerMenu();
+  addUIHandlers();
+  await loadAvailableDates();
+  await refresh();
+  
+  // Update battery a last online každých 30 sekúnd pre real-time info
+  setInterval(() => {
+    updateBatteryStatus();
+  }, 30 * 1000);
+});
