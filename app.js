@@ -240,17 +240,21 @@ async function updateBatteryStatus() {
 function initHamburgerMenu() {
   const btn = $('#hamburgerBtn');
   const menu = $('#hamburgerMenu');
-  
+
+  console.log('Initializing hamburger menu...');
+  console.log('Menu button:', btn);
+  console.log('Menu:', menu);
+
   btn.addEventListener('click', () => {
     const isOpen = !menu.classList.contains('hidden');
-    
+
     if (isOpen) {
       menu.classList.add('hidden');
       btn.classList.remove('active');
     } else {
       menu.classList.remove('hidden');
       btn.classList.add('active');
-      
+
       // Zavri menu pri kliknuti mimo
       setTimeout(() => {
         const closeHandler = (e) => {
@@ -264,34 +268,59 @@ function initHamburgerMenu() {
       }, 0);
     }
   });
-  
-  // Menu items
-  $('#menuRefetch').addEventListener('click', () => {
-    menu.classList.add('hidden');
-    btn.classList.remove('active');
-    refetchDay();
-  });
-  
-  $('#menuManageIBeacons').addEventListener('click', () => {
-    menu.classList.add('hidden');
-    btn.classList.remove('active');
-    openIBeaconOverlay();
-  });
-  
-  $('#menuViewIBeacons').addEventListener('click', () => {
-    menu.classList.add('hidden');
-    btn.classList.remove('active');
-    openIBeaconListOverlay();
-  });
 
-  $('#menuSettings').addEventListener('click', () => {
-    console.log('Settings menu clicked');
-    menu.classList.add('hidden');
-    btn.classList.remove('active');
-    openSettingsOverlay().catch(err => {
-      console.error('Error opening settings:', err);
+  // Menu items
+  const menuRefetch = $('#menuRefetch');
+  const menuManageIBeacons = $('#menuManageIBeacons');
+  const menuViewIBeacons = $('#menuViewIBeacons');
+  const menuSettings = $('#menuSettings');
+
+  console.log('Menu items found:');
+  console.log('- Refetch:', menuRefetch);
+  console.log('- Manage iBeacons:', menuManageIBeacons);
+  console.log('- View iBeacons:', menuViewIBeacons);
+  console.log('- Settings:', menuSettings);
+
+  if (menuRefetch) {
+    menuRefetch.addEventListener('click', () => {
+      console.log('Refetch clicked');
+      menu.classList.add('hidden');
+      btn.classList.remove('active');
+      refetchDay();
     });
-  });
+  }
+
+  if (menuManageIBeacons) {
+    menuManageIBeacons.addEventListener('click', () => {
+      console.log('Manage iBeacons clicked');
+      menu.classList.add('hidden');
+      btn.classList.remove('active');
+      openIBeaconOverlay();
+    });
+  }
+
+  if (menuViewIBeacons) {
+    menuViewIBeacons.addEventListener('click', () => {
+      console.log('View iBeacons clicked');
+      menu.classList.add('hidden');
+      btn.classList.remove('active');
+      openIBeaconListOverlay();
+    });
+  }
+
+  if (menuSettings) {
+    console.log('Attaching click handler to Settings menu item');
+    menuSettings.addEventListener('click', () => {
+      console.log('Settings menu clicked');
+      menu.classList.add('hidden');
+      btn.classList.remove('active');
+      openSettingsOverlay().catch(err => {
+        console.error('Error opening settings:', err);
+      });
+    });
+  } else {
+    console.error('Settings menu item not found! Check if index.html has been updated.');
+  }
 }
 
 // --------- iBeacon Management Overlay ---------
