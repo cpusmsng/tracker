@@ -12,6 +12,145 @@
   --battery-low:#ef4444;
 }
 
+/* ========== PIN ENTRY OVERLAY (SECURITY) ========== */
+.pin-overlay{
+  position:fixed;top:0;left:0;width:100%;height:100%;
+  background:linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  z-index:9999;display:flex;align-items:center;justify-content:center;
+}
+
+.pin-overlay.hidden{
+  display:none;
+}
+
+.pin-container{
+  background:var(--card-bg);border-radius:20px;
+  padding:40px 32px;max-width:400px;width:90%;
+  box-shadow:0 20px 60px rgba(0,0,0,0.3);
+  animation:slideUp 0.4s ease;
+}
+
+.pin-header{
+  text-align:center;margin-bottom:32px;
+}
+
+.lock-icon{
+  width:64px;height:64px;
+  color:var(--primary);margin:0 auto 16px;
+}
+
+.pin-header h2{
+  margin:0 0 8px;font-size:24px;font-weight:700;
+  color:var(--text);
+}
+
+.pin-header p{
+  margin:0;font-size:14px;color:var(--muted-text);
+}
+
+.pin-display{
+  display:flex;justify-content:center;gap:16px;
+  margin-bottom:24px;
+}
+
+.pin-dot{
+  width:16px;height:16px;border-radius:50%;
+  border:2px solid var(--border);
+  background:transparent;
+  transition:all 0.3s;
+}
+
+.pin-dot.filled{
+  background:var(--primary);
+  border-color:var(--primary);
+  transform:scale(1.2);
+}
+
+.pin-error{
+  text-align:center;color:#ef4444;
+  font-size:14px;font-weight:500;
+  margin-bottom:16px;padding:8px;
+  background:#fef2f2;border-radius:8px;
+  animation:shake 0.4s;
+}
+
+.pin-error.hidden{
+  display:none;
+}
+
+@keyframes shake{
+  0%, 100%{transform:translateX(0)}
+  25%{transform:translateX(-10px)}
+  75%{transform:translateX(10px)}
+}
+
+.pin-keypad{
+  display:grid;grid-template-columns:repeat(3, 1fr);
+  gap:12px;
+}
+
+.pin-key{
+  width:100%;aspect-ratio:1;
+  border:1px solid var(--border);background:#fff;
+  border-radius:12px;cursor:pointer;
+  font-size:24px;font-weight:600;color:var(--text);
+  transition:all 0.2s;
+  display:flex;align-items:center;justify-content:center;
+}
+
+.pin-key:hover:not(.empty){
+  background:var(--muted-bg);
+  transform:scale(1.05);
+}
+
+.pin-key:active:not(.empty){
+  transform:scale(0.95);
+}
+
+.pin-key.empty{
+  background:transparent;border:none;cursor:default;
+}
+
+.pin-key.delete{
+  background:#fef2f2;border-color:#fecaca;
+  color:#ef4444;font-size:18px;
+}
+
+.pin-key.delete:hover{
+  background:#fee2e2;
+}
+
+.pin-key svg{
+  width:24px;height:24px;
+}
+
+/* Mobile responsive PIN pad */
+@media (max-width:480px){
+  .pin-container{
+    padding:32px 24px;
+  }
+
+  .lock-icon{
+    width:48px;height:48px;
+  }
+
+  .pin-header h2{
+    font-size:20px;
+  }
+
+  .pin-dot{
+    width:14px;height:14px;
+  }
+
+  .pin-keypad{
+    gap:8px;
+  }
+
+  .pin-key{
+    font-size:20px;
+  }
+}
+
 *{box-sizing:border-box}
 html,body{
   margin:0;min-height:100%;

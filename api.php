@@ -502,6 +502,40 @@ if ($action === 'get_device_status') {
     }
 }
 
+// ========== PIN SECURITY ==========
+
+if ($action === 'verify_pin' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    try {
+        $j = json_body();
+        $pin = isset($j['pin']) ? (string)$j['pin'] : '';
+
+        if ($pin === '') {
+            respond(['ok' => false, 'error' => 'PIN is required'], 400);
+        }
+
+        // Načítaj PIN hash z .env
+        $storedPinHash = getenv('ACCESS_PIN_HASH');
+
+        // Ak nie je nastavený PIN hash, vytvor default (1234)
+        if (!$storedPinHash || $storedPinHash === '') {
+            $storedPinHash = hash('sha256', '1234');
+        }
+
+        // Over PIN
+        $pinHash = hash('sha256', $pin);
+
+        if ($pinHash === $storedPinHash) {
+            respond(['ok' => true, 'message' => 'PIN verified']);
+        } else {
+            // Pridaj malé delay pre brute-force protection
+            usleep(500000); // 500ms delay
+            respond(['ok' => false, 'error' => 'Invalid PIN'], 401);
+        }
+    } catch (Throwable $e) {
+        respond(['ok' => false, 'error' => 'PIN verification failed: ' . $e->getMessage()], 500);
+    }
+}
+
 // ========== SETTINGS MANAGEMENT ==========
 
 if ($action === 'get_settings') {

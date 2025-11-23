@@ -2,6 +2,178 @@
 
 const API = 'api.php';
 
+// --------- PIN Security ---------
+let pinCode = '';
+const PIN_LENGTH = 4;
+const SESSION_DURATION = 24 * 60 * 60 * 1000; // 24 hodín
+
+function initPinSecurity() {
+  // Skontroluj či je užívateľ autentifikovaný
+  const authToken = sessionStorage.getItem('tracker_auth');
+  const authTime = sessionStorage.getItem('tracker_auth_time');
+
+  if (authToken && authTime) {
+    const elapsed = Date.now() - parseInt(authTime);
+    if (elapsed < SESSION_DURATION) {
+      // Autentifikácia je platná
+      hidePinOverlay();
+      return;
+    }
+  }
+
+  // Zobraz PIN overlay
+  showPinOverlay();
+  setupPinHandlers();
+}
+
+function showPinOverlay() {
+  const overlay = $('#pinOverlay');
+  if (overlay) {
+    overlay.classList.remove('hidden');
+  }
+}
+
+function hidePinOverlay() {
+  const overlay = $('#pinOverlay');
+  if (overlay) {
+    overlay.classList.add('hidden');
+  }
+}
+
+function setupPinHandlers() {
+  // Číselné tlačidlá
+  document.querySelectorAll('.pin-key[data-key]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const key = btn.getAttribute('data-key');
+      addPinDigit(key);
+    });
+  });
+
+  // Delete tlačidlo
+  const deleteBtn = $('#pinDelete');
+  if (deleteBtn) {
+    deleteBtn.addEventListener('click', removePinDigit);
+  }
+
+  // Klávesnica
+  document.addEventListener('keydown', handlePinKeyboard);
+}
+
+function addPinDigit(digit) {
+  if (pinCode.length < PIN_LENGTH) {
+    pinCode += digit;
+    updatePinDisplay();
+
+    // Ak je PIN kompletný, over ho
+    if (pinCode.length === PIN_LENGTH) {
+      setTimeout(() => verifyPin(), 300);
+    }
+  }
+}
+
+function removePinDigit() {
+  if (pinCode.length > 0) {
+    pinCode = pinCode.slice(0, -1);
+    updatePinDisplay();
+    hidePinError();
+  }
+}
+
+function handlePinKeyboard(e) {
+  const overlay = $('#pinOverlay');
+  if (overlay && overlay.classList.contains('hidden')) {
+    document.removeEventListener('keydown', handlePinKeyboard);
+    return;
+  }
+
+  if (e.key >= '0' && e.key <= '9') {
+    e.preventDefault();
+    addPinDigit(e.key);
+  } else if (e.key === 'Backspace' || e.key === 'Delete') {
+    e.preventDefault();
+    removePinDigit();
+  } else if (e.key === 'Enter' && pinCode.length === PIN_LENGTH) {
+    e.preventDefault();
+    verifyPin();
+  }
+}
+
+function updatePinDisplay() {
+  for (let i = 1; i <= PIN_LENGTH; i++) {
+    const dot = $(`#pinDot${i}`);
+    if (dot) {
+      if (i <= pinCode.length) {
+        dot.classList.add('filled');
+      } else {
+        dot.classList.remove('filled');
+      }
+    }
+  }
+}
+
+async function verifyPin() {
+  try {
+    const response = await apiPost('verify_pin', { pin: pinCode });
+
+    if (response && response.ok) {
+      // PIN správny - ulož autentifikáciu
+      const token = btoa(pinCode + Date.now());
+      sessionStorage.setItem('tracker_auth', token);
+      sessionStorage.setItem('tracker_auth_time', Date.now().toString());
+
+      // Skry overlay
+      hidePinOverlay();
+      document.removeEventListener('keydown', handlePinKeyboard);
+
+      // Inicializuj aplikáciu
+      initializeApp();
+    } else {
+      // PIN nesprávny
+      showPinError();
+      resetPin();
+    }
+  } catch (err) {
+    console.error('PIN verification error:', err);
+    showPinError();
+    resetPin();
+  }
+}
+
+function showPinError() {
+  const error = $('#pinError');
+  if (error) {
+    error.classList.remove('hidden');
+  }
+}
+
+function hidePinError() {
+  const error = $('#pinError');
+  if (error) {
+    error.classList.add('hidden');
+  }
+}
+
+function resetPin() {
+  pinCode = '';
+  updatePinDisplay();
+}
+
+async function initializeApp() {
+  initMap();
+  initCalendar();
+  initHamburgerMenu();
+  addUIHandlers();
+  await loadAvailableDates();
+  await refresh();
+
+  // Update battery a last online každých 30 sekúnd pre real-time info
+  setInterval(() => {
+    updateBatteryStatus();
+  }, 30 * 1000);
+}
+
+// --------- Helpers ---------
+
 // --------- Helpers ---------
 const $ = (sel) => document.querySelector(sel);
 const fmt = (d) => {
@@ -1273,16 +1445,7 @@ function addUIHandlers() {
 }
 
 // --------- boot ---------
-window.addEventListener('DOMContentLoaded', async () => {
-  initMap();
-  initCalendar();
-  initHamburgerMenu();
-  addUIHandlers();
-  await loadAvailableDates();
-  await refresh();
-  
-  // Update battery a last online každých 30 sekúnd pre real-time info
-  setInterval(() => {
-    updateBatteryStatus();
-  }, 30 * 1000);
+window.addEventListener('DOMContentLoaded', () => {
+  // Inicializuj PIN security najprv
+  initPinSecurity();
 });
