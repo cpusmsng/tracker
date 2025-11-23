@@ -88,6 +88,13 @@
         </svg>
         Zoznam iBeaconov
       </button>
+      <button class="menu-item" id="menuSettings">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M12 1v6m0 6v6M5.64 5.64l4.24 4.24m4.24 4.24l4.24 4.24M1 12h6m6 0h6M5.64 18.36l4.24-4.24m4.24-4.24l4.24-4.24"/>
+        </svg>
+        Nastavenia
+      </button>
     </div>
         </div> <!-- End hamburger-container -->
       </div> <!-- End topbar-right -->
@@ -170,9 +177,181 @@
         <h2>Zoznam iBeaconov</h2>
         <button id="listOverlayClose" class="overlay-close" aria-label="Zavrieť">&times;</button>
       </div>
-      
+
       <div class="overlay-body">
         <div id="ibeaconList" aria-live="polite">Načítavam...</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Settings Overlay -->
+  <div id="settingsOverlay" class="overlay hidden">
+    <div class="overlay-content settings-content">
+      <div class="overlay-header">
+        <h2>Nastavenia</h2>
+        <button id="settingsOverlayClose" class="overlay-close" aria-label="Zavrieť">&times;</button>
+      </div>
+
+      <div class="overlay-body">
+        <form id="settingsForm" novalidate>
+
+          <!-- Hysteréza vzdialenosti -->
+          <div class="setting-group">
+            <div class="setting-header">
+              <label for="hysteresisMeters">
+                <strong>Minimálna vzdialenosť zmeny polohy</strong>
+                <span class="setting-current" id="currentHysteresisMeters">—</span>
+              </label>
+              <button type="button" class="btn-default" data-setting="hysteresis_meters" data-default="50">
+                Predvolené
+              </button>
+            </div>
+            <div class="setting-description">
+              Minimálna vzdialenosť v metroch, ktorú musí zariadenie prejsť, aby sa zaznamenala nová poloha. Vyššia hodnota = menej záznamov, ale menšia presnosť.
+            </div>
+            <div class="setting-input-group">
+              <input type="number" id="hysteresisMeters" name="hysteresis_meters"
+                     min="10" max="500" step="5" placeholder="50">
+              <span class="setting-unit">m</span>
+              <span class="setting-range">(10 – 500 m)</span>
+            </div>
+          </div>
+
+          <!-- Hysteréza času -->
+          <div class="setting-group">
+            <div class="setting-header">
+              <label for="hysteresisMinutes">
+                <strong>Minimálny čas zmeny polohy</strong>
+                <span class="setting-current" id="currentHysteresisMinutes">—</span>
+              </label>
+              <button type="button" class="btn-default" data-setting="hysteresis_minutes" data-default="30">
+                Predvolené
+              </button>
+            </div>
+            <div class="setting-description">
+              Minimálny časový interval v minútach medzi záznamami polohy. Aj keď sa vzdialenosť zmení, nová poloha sa zaznamená až po uplynutí tohto času.
+            </div>
+            <div class="setting-input-group">
+              <input type="number" id="hysteresisMinutes" name="hysteresis_minutes"
+                     min="5" max="180" step="5" placeholder="30">
+              <span class="setting-unit">min</span>
+              <span class="setting-range">(5 – 180 min)</span>
+            </div>
+          </div>
+
+          <!-- Presnosť súradníc -->
+          <div class="setting-group">
+            <div class="setting-header">
+              <label for="uniquePrecision">
+                <strong>Presnosť súradníc</strong>
+                <span class="setting-current" id="currentUniquePrecision">—</span>
+              </label>
+              <button type="button" class="btn-default" data-setting="unique_precision" data-default="6">
+                Predvolené
+              </button>
+            </div>
+            <div class="setting-description">
+              Počet desatinných miest pre GPS súradnice. Viac = vyššia presnosť (6 = ~11 cm, 5 = ~1 m, 4 = ~11 m).
+            </div>
+            <div class="setting-input-group">
+              <input type="number" id="uniquePrecision" name="unique_precision"
+                     min="4" max="8" step="1" placeholder="6">
+              <span class="setting-unit">desatinných miest</span>
+              <span class="setting-range">(4 – 8)</span>
+            </div>
+          </div>
+
+          <!-- Časový bucket -->
+          <div class="setting-group">
+            <div class="setting-header">
+              <label for="uniqueBucketMinutes">
+                <strong>Časový interval pre unikátne polohy</strong>
+                <span class="setting-current" id="currentUniqueBucketMinutes">—</span>
+              </label>
+              <button type="button" class="btn-default" data-setting="unique_bucket_minutes" data-default="30">
+                Predvolené
+              </button>
+            </div>
+            <div class="setting-description">
+              Časový interval v minútach, v ktorom sa duplicitné polohy zlúčia do jednej. Vyššia hodnota = menej záznamov.
+            </div>
+            <div class="setting-input-group">
+              <input type="number" id="uniqueBucketMinutes" name="unique_bucket_minutes"
+                     min="5" max="180" step="5" placeholder="30">
+              <span class="setting-unit">min</span>
+              <span class="setting-range">(5 – 180 min)</span>
+            </div>
+          </div>
+
+          <!-- Cache pre MAC adresy -->
+          <div class="setting-group">
+            <div class="setting-header">
+              <label for="macCacheMaxAgeDays">
+                <strong>Platnosť cache pre Wi-Fi geolokáciu</strong>
+                <span class="setting-current" id="currentMacCacheMaxAgeDays">—</span>
+              </label>
+              <button type="button" class="btn-default" data-setting="mac_cache_max_age_days" data-default="3600">
+                Predvolené
+              </button>
+            </div>
+            <div class="setting-description">
+              Počet dní, po ktoré sa uchovávajú GPS súradnice Wi-Fi prístupových bodov v cache. Vyššia hodnota šetrí API requesty.
+            </div>
+            <div class="setting-input-group">
+              <input type="number" id="macCacheMaxAgeDays" name="mac_cache_max_age_days"
+                     min="1" max="7200" step="30" placeholder="3600">
+              <span class="setting-unit">dní</span>
+              <span class="setting-range">(1 – 7200 dní)</span>
+            </div>
+          </div>
+
+          <!-- Google Force -->
+          <div class="setting-group">
+            <div class="setting-header">
+              <label for="googleForce">
+                <strong>Vynútiť Google Geolocation API</strong>
+                <span class="setting-current" id="currentGoogleForce">—</span>
+              </label>
+              <button type="button" class="btn-default" data-setting="google_force" data-default="0">
+                Predvolené
+              </button>
+            </div>
+            <div class="setting-description">
+              Ak je zapnuté, všetky Wi-Fi lokalizácie budú používať Google Geolocation API namiesto cache. Vypnuté šetrí API requesty a náklady.
+            </div>
+            <div class="setting-input-group">
+              <div class="toggle-switch">
+                <input type="checkbox" id="googleForce" name="google_force">
+                <label for="googleForce" class="toggle-label">
+                  <span class="toggle-inner"></span>
+                  <span class="toggle-switch-text"></span>
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <!-- Akčné tlačidlá -->
+          <div class="form-actions">
+            <button type="button" id="saveSettings" class="btn-primary">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
+                <polyline points="17 21 17 13 7 13 7 21"/>
+                <polyline points="7 3 7 8 15 8"/>
+              </svg>
+              Uložiť nastavenia
+            </button>
+            <button type="button" id="cancelSettings" class="btn-secondary">Zrušiť</button>
+            <button type="button" id="resetAllSettings" class="btn-reset">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
+                <path d="M3 3v5h5"/>
+                <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/>
+                <path d="M16 21h5v-5"/>
+              </svg>
+              Obnoviť všetko na predvolené
+            </button>
+          </div>
+        </form>
       </div>
     </div>
   </div>

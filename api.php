@@ -502,4 +502,209 @@ if ($action === 'get_device_status') {
     }
 }
 
+// ========== SETTINGS MANAGEMENT ==========
+
+if ($action === 'get_settings') {
+    try {
+        $settings = [
+            'hysteresis_meters' => (int)(getenv('HYSTERESIS_METERS') ?: 50),
+            'hysteresis_minutes' => (int)(getenv('HYSTERESIS_MINUTES') ?: 30),
+            'unique_precision' => (int)(getenv('UNIQUE_PRECISION') ?: 6),
+            'unique_bucket_minutes' => (int)(getenv('UNIQUE_BUCKET_MINUTES') ?: 30),
+            'mac_cache_max_age_days' => (int)(getenv('MAC_CACHE_MAX_AGE_DAYS') ?: 3600),
+            'google_force' => getenv('GOOGLE_FORCE') ?: '0'
+        ];
+
+        respond([
+            'ok' => true,
+            'data' => $settings
+        ]);
+    } catch (Throwable $e) {
+        respond(['ok' => false, 'error' => 'Failed to load settings: ' . $e->getMessage()], 500);
+    }
+}
+
+if ($action === 'save_settings' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    try {
+        $j = json_body();
+
+        // Validácia vstupných dát
+        $hysteresisMeters = isset($j['hysteresis_meters']) ? (int)$j['hysteresis_meters'] : null;
+        $hysteresisMinutes = isset($j['hysteresis_minutes']) ? (int)$j['hysteresis_minutes'] : null;
+        $uniquePrecision = isset($j['unique_precision']) ? (int)$j['unique_precision'] : null;
+        $uniqueBucketMinutes = isset($j['unique_bucket_minutes']) ? (int)$j['unique_bucket_minutes'] : null;
+        $macCacheMaxAgeDays = isset($j['mac_cache_max_age_days']) ? (int)$j['mac_cache_max_age_days'] : null;
+        $googleForce = isset($j['google_force']) ? (string)$j['google_force'] : null;
+
+        // Validácia hraničných hodnôt
+        if ($hysteresisMeters !== null && ($hysteresisMeters < 10 || $hysteresisMeters > 500)) {
+            respond(['ok' => false, 'error' => 'hysteresis_meters must be between 10 and 500'], 400);
+        }
+        if ($hysteresisMinutes !== null && ($hysteresisMinutes < 5 || $hysteresisMinutes > 180)) {
+            respond(['ok' => false, 'error' => 'hysteresis_minutes must be between 5 and 180'], 400);
+        }
+        if ($uniquePrecision !== null && ($uniquePrecision < 4 || $uniquePrecision > 8)) {
+            respond(['ok' => false, 'error' => 'unique_precision must be between 4 and 8'], 400);
+        }
+        if ($uniqueBucketMinutes !== null && ($uniqueBucketMinutes < 5 || $uniqueBucketMinutes > 180)) {
+            respond(['ok' => false, 'error' => 'unique_bucket_minutes must be between 5 and 180'], 400);
+        }
+        if ($macCacheMaxAgeDays !== null && ($macCacheMaxAgeDays < 1 || $macCacheMaxAgeDays > 7200)) {
+            respond(['ok' => false, 'error' => 'mac_cache_max_age_days must be between 1 and 7200'], 400);
+        }
+        if ($googleForce !== null && !in_array($googleForce, ['0', '1'], true)) {
+            respond(['ok' => false, 'error' => 'google_force must be "0" or "1"'], 400);
+        }
+
+        // Načítaj aktuálny .env súbor
+        $envPath = __DIR__ . '/.env';
+        if (!is_file($envPath)) {
+            respond(['ok' => false, 'error' => '.env file not found'], 500);
+        }
+
+        $lines = file($envPath, FILE_IGNORE_NEW_LINES);
+        if ($lines === false) {
+            respond(['ok' => false, 'error' => 'Failed to read .env file'], 500);
+        }
+
+        // Mapping medzi JSON kľúčmi a ENV premennými
+        $settingsMap = [
+            'hysteresis_meters' => 'HYSTERESIS_METERS',
+            'hysteresis_minutes' => 'HYSTERESIS_MINUTES',
+            'unique_precision' => 'UNIQUE_PRECISION',
+            'unique_bucket_minutes' => 'UNIQUE_BUCKET_MINUTES',
+            'mac_cache_max_age_days' => 'MAC_CACHE_MAX_AGE_DAYS',
+            'google_force' => 'GOOGLE_FORCE'
+        ];
+
+        $newSettings = [];
+        foreach ($settingsMap as $jsonKey => $envKey) {
+            if (isset($j[$jsonKey])) {
+                $newSettings[$envKey] = $j[$jsonKey];
+            }
+        }
+
+        // Aktualizuj riadky v .env
+        $updated = false;
+        $newLines = [];
+        foreach ($lines as $line) {
+            $trimmed = trim($line);
+
+            // Ponechaj prázdne riadky a komentáre
+            if ($trimmed === '' || $trimmed[0] === '#') {
+                $newLines[] = $line;
+                continue;
+            }
+
+            // Parsuj KEY=VALUE
+            if (strpos($line, '=') !== false) {
+                [$key, $value] = array_pad(explode('=', $line, 2), 2, '');
+                $key = trim($key);
+
+                // Ak je to nastavenie ktoré chceme aktualizovať
+                if (isset($newSettings[$key])) {
+                    $newLines[] = "$key=" . $newSettings[$key];
+                    unset($newSettings[$key]); // Odstráň zo zoznamu pridávaných
+                    $updated = true;
+                } else {
+                    $newLines[] = $line;
+                }
+            } else {
+                $newLines[] = $line;
+            }
+        }
+
+        // Pridaj nastavenia ktoré ešte neboli v súbore
+        foreach ($newSettings as $key => $value) {
+            $newLines[] = "$key=$value";
+            $updated = true;
+        }
+
+        // Zapíš späť do .env
+        if ($updated) {
+            $result = file_put_contents($envPath, implode("\n", $newLines) . "\n");
+            if ($result === false) {
+                respond(['ok' => false, 'error' => 'Failed to write .env file'], 500);
+            }
+        }
+
+        respond([
+            'ok' => true,
+            'message' => 'Settings saved successfully'
+        ]);
+    } catch (Throwable $e) {
+        respond(['ok' => false, 'error' => 'Failed to save settings: ' . $e->getMessage()], 500);
+    }
+}
+
+if ($action === 'reset_settings' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    try {
+        $envPath = __DIR__ . '/.env';
+        if (!is_file($envPath)) {
+            respond(['ok' => false, 'error' => '.env file not found'], 500);
+        }
+
+        $lines = file($envPath, FILE_IGNORE_NEW_LINES);
+        if ($lines === false) {
+            respond(['ok' => false, 'error' => 'Failed to read .env file'], 500);
+        }
+
+        // Default hodnoty
+        $defaults = [
+            'HYSTERESIS_METERS' => '50',
+            'HYSTERESIS_MINUTES' => '30',
+            'UNIQUE_PRECISION' => '6',
+            'UNIQUE_BUCKET_MINUTES' => '30',
+            'MAC_CACHE_MAX_AGE_DAYS' => '3600',
+            'GOOGLE_FORCE' => '0'
+        ];
+
+        // Aktualizuj riadky v .env
+        $newLines = [];
+        foreach ($lines as $line) {
+            $trimmed = trim($line);
+
+            // Ponechaj prázdne riadky a komentáre
+            if ($trimmed === '' || $trimmed[0] === '#') {
+                $newLines[] = $line;
+                continue;
+            }
+
+            // Parsuj KEY=VALUE
+            if (strpos($line, '=') !== false) {
+                [$key, $value] = array_pad(explode('=', $line, 2), 2, '');
+                $key = trim($key);
+
+                // Ak je to nastavenie ktoré chceme resetovať
+                if (isset($defaults[$key])) {
+                    $newLines[] = "$key=" . $defaults[$key];
+                    unset($defaults[$key]); // Odstráň zo zoznamu pridávaných
+                } else {
+                    $newLines[] = $line;
+                }
+            } else {
+                $newLines[] = $line;
+            }
+        }
+
+        // Pridaj nastavenia ktoré ešte neboli v súbore
+        foreach ($defaults as $key => $value) {
+            $newLines[] = "$key=$value";
+        }
+
+        // Zapíš späť do .env
+        $result = file_put_contents($envPath, implode("\n", $newLines) . "\n");
+        if ($result === false) {
+            respond(['ok' => false, 'error' => 'Failed to write .env file'], 500);
+        }
+
+        respond([
+            'ok' => true,
+            'message' => 'All settings reset to defaults'
+        ]);
+    } catch (Throwable $e) {
+        respond(['ok' => false, 'error' => 'Failed to reset settings: ' . $e->getMessage()], 500);
+    }
+}
+
 respond(['ok'=>false,'error'=>'unknown action'], 400);

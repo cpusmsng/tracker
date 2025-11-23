@@ -283,6 +283,12 @@ function initHamburgerMenu() {
     btn.classList.remove('active');
     openIBeaconListOverlay();
   });
+
+  $('#menuSettings').addEventListener('click', () => {
+    menu.classList.add('hidden');
+    btn.classList.remove('active');
+    openSettingsOverlay();
+  });
 }
 
 // --------- iBeacon Management Overlay ---------
@@ -467,6 +473,138 @@ async function loadIBeaconsIntoOverlay() {
     });
   } catch (err) {
     container.innerHTML = `<p style="color:#ef4444;padding:16px">Chyba: ${err.message}</p>`;
+  }
+}
+
+// --------- Settings Overlay ---------
+async function openSettingsOverlay() {
+  const overlay = $('#settingsOverlay');
+  overlay.classList.remove('hidden');
+
+  // Načítaj aktuálne nastavenia
+  await loadCurrentSettings();
+}
+
+function closeSettingsOverlay() {
+  $('#settingsOverlay').classList.add('hidden');
+}
+
+async function loadCurrentSettings() {
+  try {
+    const settings = await apiGet(`${API}?action=get_settings`);
+
+    if (settings && settings.ok) {
+      const data = settings.data;
+
+      // Naplň form fields
+      $('#hysteresisMeters').value = data.hysteresis_meters || 50;
+      $('#hysteresisMinutes').value = data.hysteresis_minutes || 30;
+      $('#uniquePrecision').value = data.unique_precision || 6;
+      $('#uniqueBucketMinutes').value = data.unique_bucket_minutes || 30;
+      $('#macCacheMaxAgeDays').value = data.mac_cache_max_age_days || 3600;
+      $('#googleForce').checked = data.google_force === '1' || data.google_force === 1;
+
+      // Aktualizuj "aktuálne hodnoty" labels
+      $('#currentHysteresisMeters').textContent = `(${data.hysteresis_meters || 50} m)`;
+      $('#currentHysteresisMinutes').textContent = `(${data.hysteresis_minutes || 30} min)`;
+      $('#currentUniquePrecision').textContent = `(${data.unique_precision || 6})`;
+      $('#currentUniqueBucketMinutes').textContent = `(${data.unique_bucket_minutes || 30} min)`;
+      $('#currentMacCacheMaxAgeDays').textContent = `(${data.mac_cache_max_age_days || 3600} dní)`;
+      $('#currentGoogleForce').textContent = (data.google_force === '1' || data.google_force === 1) ? '(Zapnuté)' : '(Vypnuté)';
+    }
+  } catch (err) {
+    console.error('Failed to load settings:', err);
+    alert(`Nepodarilo sa načítať nastavenia: ${err.message}`);
+  }
+}
+
+async function saveSettings() {
+  try {
+    // Zober hodnoty z formulára
+    const settings = {
+      hysteresis_meters: parseInt($('#hysteresisMeters').value) || 50,
+      hysteresis_minutes: parseInt($('#hysteresisMinutes').value) || 30,
+      unique_precision: parseInt($('#uniquePrecision').value) || 6,
+      unique_bucket_minutes: parseInt($('#uniqueBucketMinutes').value) || 30,
+      mac_cache_max_age_days: parseInt($('#macCacheMaxAgeDays').value) || 3600,
+      google_force: $('#googleForce').checked ? '1' : '0'
+    };
+
+    // Validácia hraničných hodnôt
+    if (settings.hysteresis_meters < 10 || settings.hysteresis_meters > 500) {
+      alert('Minimálna vzdialenosť zmeny polohy musí byť medzi 10 a 500 m');
+      return;
+    }
+    if (settings.hysteresis_minutes < 5 || settings.hysteresis_minutes > 180) {
+      alert('Minimálny čas zmeny polohy musí byť medzi 5 a 180 min');
+      return;
+    }
+    if (settings.unique_precision < 4 || settings.unique_precision > 8) {
+      alert('Presnosť súradníc musí byť medzi 4 a 8 desatinnými miestami');
+      return;
+    }
+    if (settings.unique_bucket_minutes < 5 || settings.unique_bucket_minutes > 180) {
+      alert('Časový interval pre unikátne polohy musí byť medzi 5 a 180 min');
+      return;
+    }
+    if (settings.mac_cache_max_age_days < 1 || settings.mac_cache_max_age_days > 7200) {
+      alert('Platnosť cache musí byť medzi 1 a 7200 dňami');
+      return;
+    }
+
+    // Ulož cez API
+    const result = await apiPost('save_settings', settings);
+
+    if (result && result.ok) {
+      alert('Nastavenia boli úspešne uložené!');
+      closeSettingsOverlay();
+    } else {
+      alert(`Chyba pri ukladaní: ${result.error || 'Neznáma chyba'}`);
+    }
+  } catch (err) {
+    alert(`Chyba pri ukladaní nastavení: ${err.message}`);
+  }
+}
+
+function resetSettingToDefault(settingName, defaultValue) {
+  const fieldMap = {
+    'hysteresis_meters': 'hysteresisMeters',
+    'hysteresis_minutes': 'hysteresisMinutes',
+    'unique_precision': 'uniquePrecision',
+    'unique_bucket_minutes': 'uniqueBucketMinutes',
+    'mac_cache_max_age_days': 'macCacheMaxAgeDays',
+    'google_force': 'googleForce'
+  };
+
+  const fieldId = fieldMap[settingName];
+  if (!fieldId) return;
+
+  const field = $(`#${fieldId}`);
+  if (!field) return;
+
+  if (field.type === 'checkbox') {
+    field.checked = (defaultValue === '1' || defaultValue === 1);
+  } else {
+    field.value = defaultValue;
+  }
+}
+
+async function resetAllSettings() {
+  if (!confirm('Naozaj chcete obnoviť všetky nastavenia na predvolené hodnoty?')) {
+    return;
+  }
+
+  try {
+    const result = await apiPost('reset_settings', {});
+
+    if (result && result.ok) {
+      alert('Všetky nastavenia boli obnovené na predvolené hodnoty!');
+      await loadCurrentSettings();
+    } else {
+      alert(`Chyba pri obnove nastavení: ${result.error || 'Neznáma chyba'}`);
+    }
+  } catch (err) {
+    alert(`Chyba pri obnove nastavení: ${err.message}`);
   }
 }
 
@@ -1038,7 +1176,22 @@ function addUIHandlers() {
   // Overlay controls
   $('#overlayClose').addEventListener('click', closeIBeaconOverlay);
   $('#listOverlayClose').addEventListener('click', closeIBeaconListOverlay);
-  
+  $('#settingsOverlayClose').addEventListener('click', closeSettingsOverlay);
+
+  // Settings form buttons
+  $('#saveSettings').addEventListener('click', saveSettings);
+  $('#cancelSettings').addEventListener('click', closeSettingsOverlay);
+  $('#resetAllSettings').addEventListener('click', resetAllSettings);
+
+  // Individual reset buttons
+  document.querySelectorAll('.btn-default').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const settingName = btn.getAttribute('data-setting');
+      const defaultValue = btn.getAttribute('data-default');
+      resetSettingToDefault(settingName, defaultValue);
+    });
+  });
+
   // Form buttons
   $('#selectOnMap').addEventListener('click', openMapSelector);
   $('#confirmLocation').addEventListener('click', confirmMapLocation);
@@ -1056,6 +1209,12 @@ function addUIHandlers() {
   $('#ibeaconListOverlay').addEventListener('click', (e) => {
     if (e.target === $('#ibeaconListOverlay')) {
       closeIBeaconListOverlay();
+    }
+  });
+
+  $('#settingsOverlay').addEventListener('click', (e) => {
+    if (e.target === $('#settingsOverlay')) {
+      closeSettingsOverlay();
     }
   });
 }
