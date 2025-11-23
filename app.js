@@ -285,9 +285,12 @@ function initHamburgerMenu() {
   });
 
   $('#menuSettings').addEventListener('click', () => {
+    console.log('Settings menu clicked');
     menu.classList.add('hidden');
     btn.classList.remove('active');
-    openSettingsOverlay();
+    openSettingsOverlay().catch(err => {
+      console.error('Error opening settings:', err);
+    });
   });
 }
 
@@ -478,11 +481,24 @@ async function loadIBeaconsIntoOverlay() {
 
 // --------- Settings Overlay ---------
 async function openSettingsOverlay() {
+  console.log('openSettingsOverlay called');
   const overlay = $('#settingsOverlay');
+  console.log('Settings overlay element:', overlay);
+
+  if (!overlay) {
+    console.error('Settings overlay not found in DOM!');
+    return;
+  }
+
   overlay.classList.remove('hidden');
+  console.log('Overlay should now be visible');
 
   // Načítaj aktuálne nastavenia
-  await loadCurrentSettings();
+  try {
+    await loadCurrentSettings();
+  } catch (err) {
+    console.error('Error loading settings:', err);
+  }
 }
 
 function closeSettingsOverlay() {
@@ -490,11 +506,15 @@ function closeSettingsOverlay() {
 }
 
 async function loadCurrentSettings() {
+  console.log('loadCurrentSettings called');
   try {
+    console.log('Fetching settings from API...');
     const settings = await apiGet(`${API}?action=get_settings`);
+    console.log('Settings response:', settings);
 
     if (settings && settings.ok) {
       const data = settings.data;
+      console.log('Settings data:', data);
 
       // Naplň form fields
       $('#hysteresisMeters').value = data.hysteresis_meters || 50;
@@ -511,6 +531,10 @@ async function loadCurrentSettings() {
       $('#currentUniqueBucketMinutes').textContent = `(${data.unique_bucket_minutes || 30} min)`;
       $('#currentMacCacheMaxAgeDays').textContent = `(${data.mac_cache_max_age_days || 3600} dní)`;
       $('#currentGoogleForce').textContent = (data.google_force === '1' || data.google_force === 1) ? '(Zapnuté)' : '(Vypnuté)';
+
+      console.log('Settings loaded successfully');
+    } else {
+      console.warn('Settings response not OK:', settings);
     }
   } catch (err) {
     console.error('Failed to load settings:', err);
