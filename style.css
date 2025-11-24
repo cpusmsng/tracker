@@ -12,6 +12,145 @@
   --battery-low:#ef4444;
 }
 
+/* ========== PIN ENTRY OVERLAY (SECURITY) ========== */
+.pin-overlay{
+  position:fixed;top:0;left:0;width:100%;height:100%;
+  background:linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  z-index:9999;display:flex;align-items:center;justify-content:center;
+}
+
+.pin-overlay.hidden{
+  display:none;
+}
+
+.pin-container{
+  background:var(--card-bg);border-radius:20px;
+  padding:40px 32px;max-width:400px;width:90%;
+  box-shadow:0 20px 60px rgba(0,0,0,0.3);
+  animation:slideUp 0.4s ease;
+}
+
+.pin-header{
+  text-align:center;margin-bottom:32px;
+}
+
+.lock-icon{
+  width:64px;height:64px;
+  color:var(--primary);margin:0 auto 16px;
+}
+
+.pin-header h2{
+  margin:0 0 8px;font-size:24px;font-weight:700;
+  color:var(--text);
+}
+
+.pin-header p{
+  margin:0;font-size:14px;color:var(--muted-text);
+}
+
+.pin-display{
+  display:flex;justify-content:center;gap:16px;
+  margin-bottom:24px;
+}
+
+.pin-dot{
+  width:16px;height:16px;border-radius:50%;
+  border:2px solid var(--border);
+  background:transparent;
+  transition:all 0.3s;
+}
+
+.pin-dot.filled{
+  background:var(--primary);
+  border-color:var(--primary);
+  transform:scale(1.2);
+}
+
+.pin-error{
+  text-align:center;color:#ef4444;
+  font-size:14px;font-weight:500;
+  margin-bottom:16px;padding:8px;
+  background:#fef2f2;border-radius:8px;
+  animation:shake 0.4s;
+}
+
+.pin-error.hidden{
+  display:none;
+}
+
+@keyframes shake{
+  0%, 100%{transform:translateX(0)}
+  25%{transform:translateX(-10px)}
+  75%{transform:translateX(10px)}
+}
+
+.pin-keypad{
+  display:grid;grid-template-columns:repeat(3, 1fr);
+  gap:12px;
+}
+
+.pin-key{
+  width:100%;aspect-ratio:1;
+  border:1px solid var(--border);background:#fff;
+  border-radius:12px;cursor:pointer;
+  font-size:24px;font-weight:600;color:var(--text);
+  transition:all 0.2s;
+  display:flex;align-items:center;justify-content:center;
+}
+
+.pin-key:hover:not(.empty){
+  background:var(--muted-bg);
+  transform:scale(1.05);
+}
+
+.pin-key:active:not(.empty){
+  transform:scale(0.95);
+}
+
+.pin-key.empty{
+  background:transparent;border:none;cursor:default;
+}
+
+.pin-key.delete{
+  background:#fef2f2;border-color:#fecaca;
+  color:#ef4444;font-size:18px;
+}
+
+.pin-key.delete:hover{
+  background:#fee2e2;
+}
+
+.pin-key svg{
+  width:24px;height:24px;
+}
+
+/* Mobile responsive PIN pad */
+@media (max-width:480px){
+  .pin-container{
+    padding:32px 24px;
+  }
+
+  .lock-icon{
+    width:48px;height:48px;
+  }
+
+  .pin-header h2{
+    font-size:20px;
+  }
+
+  .pin-dot{
+    width:14px;height:14px;
+  }
+
+  .pin-keypad{
+    gap:8px;
+  }
+
+  .pin-key{
+    font-size:20px;
+  }
+}
+
 *{box-sizing:border-box}
 html,body{
   margin:0;min-height:100%;
@@ -564,6 +703,130 @@ body{padding:16px 16px 0;display:flex;flex-direction:column}
 }
 .leaflet-control.custom-legend-container .leg-line{width:18px;height:3px;background:#3388ff;border-radius:2px;display:inline-block}
 
+/* ========== SETTINGS OVERLAY ========== */
+.settings-content{
+  max-width:800px;
+}
+
+#settingsForm{
+  display:flex;flex-direction:column;gap:24px;
+}
+
+.setting-group{
+  padding:20px;background:var(--muted-bg);border-radius:10px;
+  border:1px solid var(--border);
+}
+
+.setting-header{
+  display:flex;justify-content:space-between;align-items:flex-start;
+  margin-bottom:8px;gap:12px;
+}
+
+.setting-header label{
+  flex:1;display:flex;flex-direction:column;gap:4px;
+}
+
+.setting-header label strong{
+  font-size:15px;color:var(--text);
+}
+
+.setting-current{
+  font-size:12px;color:var(--primary);font-weight:600;
+}
+
+.btn-default{
+  padding:6px 12px;border:1px solid var(--border);
+  background:#fff;border-radius:6px;cursor:pointer;
+  font-size:12px;color:var(--muted-text);
+  transition:all 0.2s;white-space:nowrap;
+  flex-shrink:0;
+}
+
+.btn-default:hover{
+  background:var(--primary);color:#fff;
+  border-color:var(--primary);
+}
+
+.setting-description{
+  font-size:13px;color:var(--muted-text);
+  line-height:1.5;margin-bottom:12px;
+}
+
+.setting-input-group{
+  display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+}
+
+.setting-input-group input[type="number"]{
+  padding:10px 12px;border:1px solid var(--border);
+  border-radius:8px;font-size:14px;width:120px;
+  transition:border-color 0.2s;
+}
+
+.setting-input-group input[type="number"]:focus{
+  outline:none;border-color:var(--primary);
+  box-shadow:0 0 0 3px rgba(14,165,233,0.1);
+}
+
+.setting-unit{
+  font-size:13px;color:var(--muted-text);font-weight:500;
+}
+
+.setting-range{
+  font-size:12px;color:#999;font-style:italic;
+}
+
+/* Toggle Switch */
+.toggle-switch{
+  display:inline-block;position:relative;
+}
+
+.toggle-switch input[type="checkbox"]{
+  display:none;
+}
+
+.toggle-label{
+  display:flex;align-items:center;cursor:pointer;
+  width:56px;height:28px;background:#ccc;
+  border-radius:28px;position:relative;
+  transition:background-color 0.3s;
+}
+
+.toggle-inner{
+  content:'';position:absolute;width:22px;height:22px;
+  background:#fff;border-radius:50%;
+  top:3px;left:3px;
+  transition:transform 0.3s;
+  box-shadow:0 2px 4px rgba(0,0,0,0.2);
+}
+
+.toggle-switch input:checked + .toggle-label{
+  background:var(--highlight);
+}
+
+.toggle-switch input:checked + .toggle-label .toggle-inner{
+  transform:translateX(28px);
+}
+
+.toggle-switch-text{
+  margin-left:64px;font-size:13px;color:var(--text);
+}
+
+/* Reset all button */
+.btn-reset{
+  padding:10px 20px;border:1px solid #ef4444;
+  background:#fff;border-radius:8px;cursor:pointer;
+  color:#ef4444;font-weight:500;
+  transition:all 0.2s;display:flex;align-items:center;gap:8px;
+}
+
+.btn-reset:hover{
+  background:#ef4444;color:#fff;
+}
+
+.btn-reset svg{
+  width:18px;height:18px;
+}
+
 /* Footer */
 .site-footer{
   background:var(--footer-bg);padding:16px;text-align:center;
@@ -573,67 +836,287 @@ body{padding:16px 16px 0;display:flex;flex-direction:column}
 
 /* Responsive */
 @media (max-width:768px){
+  body{
+    padding:8px 8px 0;
+  }
+
+  .container{
+    gap:12px;
+  }
+
+  #topbar{
+    padding:8px 10px;gap:6px;
+    flex-wrap:wrap;
+  }
+
   .topbar-left{
     display:none;
   }
-  
+
   .topbar-center{
-    flex:1;
+    flex:1;min-width:200px;
   }
-  
+
+  .topbar-right{
+    gap:8px;min-width:auto;
+  }
+
   /* Keep last online info on mobile (important info) */
   .last-online-info{
     padding:4px 6px;
     font-size:11px;
   }
-  
+
   .last-online-info .clock-icon{
     width:16px;height:16px;
   }
-  
+
+  #lastOnlineText{
+    font-size:11px;
+  }
+
   /* Make battery indicator smaller on mobile */
   .battery-indicator{
     padding:6px 8px;
     min-width:auto;
   }
-  
+
+  .battery-icon{
+    width:20px;height:20px;
+  }
+
+  /* Hamburger button smaller on mobile */
+  .hamburger-btn{
+    width:36px;height:36px;
+  }
+
+  .hamburger-btn span{
+    width:18px;
+  }
+
+  /* Hamburger menu full width on mobile */
+  .hamburger-menu{
+    min-width:200px;
+    right:-8px;
+  }
+
+  .menu-item{
+    padding:10px 12px;
+    font-size:13px;
+  }
+
+  /* Date controls */
+  #topbar button{
+    padding:6px 8px;
+    font-size:13px;
+  }
+
+  #calendarToggle{
+    padding:6px 10px;
+    min-width:120px;
+    font-size:13px;
+  }
+
+  /* Map height adjustment */
+  #map{
+    height:50vh;
+  }
+
+  /* iBeacon form responsive */
   #ibeaconForm{
     grid-template-columns:1fr;
   }
-  
+
   .form-actions{
     flex-direction:column;
   }
-  
+
   .form-actions button{
     width:100%;justify-content:center;
   }
-  
+
+  /* Settings overlay responsive */
+  .settings-content{
+    width:95%;max-width:95%;
+  }
+
+  .setting-group{
+    padding:16px;
+  }
+
+  .setting-header{
+    flex-direction:column;align-items:flex-start;
+  }
+
+  .btn-default{
+    align-self:flex-start;
+  }
+
+  .setting-input-group{
+    flex-wrap:wrap;
+  }
+
+  .setting-input-group input[type="number"]{
+    width:100%;
+  }
+
+  #settingsForm .form-actions{
+    flex-direction:column;
+  }
+
+  #settingsForm .form-actions button{
+    width:100%;justify-content:center;
+  }
+
+  /* Overlay content */
   .overlay-content{
     width:95%;max-height:95vh;
   }
-  
+
+  .overlay-header{
+    padding:16px 20px;
+  }
+
+  .overlay-header h2{
+    font-size:18px;
+  }
+
+  .overlay-body{
+    padding:16px;
+  }
+
   /* Table horizontal scroll on mobile */
   #positionsTable{
     overflow-x:auto;
+    padding:8px;
   }
-  
+
   #positionsTable tbody{
     overflow-x:visible;
+  }
+
+  #positionsTable th,#positionsTable td{
+    padding:6px 8px;
+    font-size:13px;
+  }
+
+  /* Calendar */
+  .calendar-dropdown{
+    min-width:260px;
+  }
+
+  .calendar-grid{
+    gap:2px;
+  }
+
+  .calendar-day{
+    padding:6px 2px;
+    font-size:12px;
+  }
+
+  /* Legend */
+  .legend-content{
+    font-size:12px;
+    padding:8px 10px;
+  }
+
+  /* Footer */
+  .site-footer{
+    margin:24px -8px 0;
+    font-size:13px;
   }
 }
 
 @media (max-width:480px){
+  body{
+    padding:4px 4px 0;
+  }
+
+  #topbar{
+    padding:8px;
+    flex-direction:column;
+    align-items:stretch;
+  }
+
   .topbar-center{
     flex-wrap:wrap;
+    order:1;
+    width:100%;
   }
-  
+
+  .topbar-right{
+    order:2;
+    width:100%;
+    margin-top:8px;
+    justify-content:space-between;
+  }
+
   #calendarToggle{
-    order:-1;width:100%;
+    width:100%;
+    order:-1;
   }
-  
+
+  #prevDay, #nextDay, #today{
+    flex:1;
+  }
+
   .calendar-dropdown{
-    left:12px;right:12px;
+    left:4px;right:4px;
     transform:none;
+  }
+
+  /* Hamburger menu positioned better on small screens */
+  .hamburger-menu{
+    right:-4px;
+    min-width:180px;
+  }
+
+  /* Map smaller on very small screens */
+  #map{
+    height:40vh;
+  }
+
+  /* Overlay adjustments */
+  .overlay-content{
+    width:98%;
+    max-height:98vh;
+    border-radius:8px;
+  }
+
+  .overlay-header{
+    padding:12px 16px;
+  }
+
+  .overlay-header h2{
+    font-size:16px;
+  }
+
+  .overlay-body{
+    padding:12px;
+  }
+
+  /* Settings */
+  .setting-group{
+    padding:12px;
+  }
+
+  .setting-header label strong{
+    font-size:14px;
+  }
+
+  .setting-description{
+    font-size:12px;
+  }
+
+  /* Map selector */
+  #selectorMap{
+    height:300px;
+  }
+
+  /* Footer */
+  .site-footer{
+    margin:16px -4px 0;
+    padding:12px;
+    font-size:12px;
   }
 }

@@ -2,6 +2,178 @@
 
 const API = 'api.php';
 
+// --------- PIN Security ---------
+let pinCode = '';
+const PIN_LENGTH = 4;
+const SESSION_DURATION = 24 * 60 * 60 * 1000; // 24 hodín
+
+function initPinSecurity() {
+  // Skontroluj či je užívateľ autentifikovaný
+  const authToken = sessionStorage.getItem('tracker_auth');
+  const authTime = sessionStorage.getItem('tracker_auth_time');
+
+  if (authToken && authTime) {
+    const elapsed = Date.now() - parseInt(authTime);
+    if (elapsed < SESSION_DURATION) {
+      // Autentifikácia je platná
+      hidePinOverlay();
+      return;
+    }
+  }
+
+  // Zobraz PIN overlay
+  showPinOverlay();
+  setupPinHandlers();
+}
+
+function showPinOverlay() {
+  const overlay = $('#pinOverlay');
+  if (overlay) {
+    overlay.classList.remove('hidden');
+  }
+}
+
+function hidePinOverlay() {
+  const overlay = $('#pinOverlay');
+  if (overlay) {
+    overlay.classList.add('hidden');
+  }
+}
+
+function setupPinHandlers() {
+  // Číselné tlačidlá
+  document.querySelectorAll('.pin-key[data-key]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const key = btn.getAttribute('data-key');
+      addPinDigit(key);
+    });
+  });
+
+  // Delete tlačidlo
+  const deleteBtn = $('#pinDelete');
+  if (deleteBtn) {
+    deleteBtn.addEventListener('click', removePinDigit);
+  }
+
+  // Klávesnica
+  document.addEventListener('keydown', handlePinKeyboard);
+}
+
+function addPinDigit(digit) {
+  if (pinCode.length < PIN_LENGTH) {
+    pinCode += digit;
+    updatePinDisplay();
+
+    // Ak je PIN kompletný, over ho
+    if (pinCode.length === PIN_LENGTH) {
+      setTimeout(() => verifyPin(), 300);
+    }
+  }
+}
+
+function removePinDigit() {
+  if (pinCode.length > 0) {
+    pinCode = pinCode.slice(0, -1);
+    updatePinDisplay();
+    hidePinError();
+  }
+}
+
+function handlePinKeyboard(e) {
+  const overlay = $('#pinOverlay');
+  if (overlay && overlay.classList.contains('hidden')) {
+    document.removeEventListener('keydown', handlePinKeyboard);
+    return;
+  }
+
+  if (e.key >= '0' && e.key <= '9') {
+    e.preventDefault();
+    addPinDigit(e.key);
+  } else if (e.key === 'Backspace' || e.key === 'Delete') {
+    e.preventDefault();
+    removePinDigit();
+  } else if (e.key === 'Enter' && pinCode.length === PIN_LENGTH) {
+    e.preventDefault();
+    verifyPin();
+  }
+}
+
+function updatePinDisplay() {
+  for (let i = 1; i <= PIN_LENGTH; i++) {
+    const dot = $(`#pinDot${i}`);
+    if (dot) {
+      if (i <= pinCode.length) {
+        dot.classList.add('filled');
+      } else {
+        dot.classList.remove('filled');
+      }
+    }
+  }
+}
+
+async function verifyPin() {
+  try {
+    const response = await apiPost('verify_pin', { pin: pinCode });
+
+    if (response && response.ok) {
+      // PIN správny - ulož autentifikáciu
+      const token = btoa(pinCode + Date.now());
+      sessionStorage.setItem('tracker_auth', token);
+      sessionStorage.setItem('tracker_auth_time', Date.now().toString());
+
+      // Skry overlay
+      hidePinOverlay();
+      document.removeEventListener('keydown', handlePinKeyboard);
+
+      // Inicializuj aplikáciu
+      initializeApp();
+    } else {
+      // PIN nesprávny
+      showPinError();
+      resetPin();
+    }
+  } catch (err) {
+    console.error('PIN verification error:', err);
+    showPinError();
+    resetPin();
+  }
+}
+
+function showPinError() {
+  const error = $('#pinError');
+  if (error) {
+    error.classList.remove('hidden');
+  }
+}
+
+function hidePinError() {
+  const error = $('#pinError');
+  if (error) {
+    error.classList.add('hidden');
+  }
+}
+
+function resetPin() {
+  pinCode = '';
+  updatePinDisplay();
+}
+
+async function initializeApp() {
+  initMap();
+  initCalendar();
+  initHamburgerMenu();
+  addUIHandlers();
+  await loadAvailableDates();
+  await refresh();
+
+  // Update battery a last online každých 30 sekúnd pre real-time info
+  setInterval(() => {
+    updateBatteryStatus();
+  }, 30 * 1000);
+}
+
+// --------- Helpers ---------
+
 // --------- Helpers ---------
 const $ = (sel) => document.querySelector(sel);
 const fmt = (d) => {
@@ -240,17 +412,21 @@ async function updateBatteryStatus() {
 function initHamburgerMenu() {
   const btn = $('#hamburgerBtn');
   const menu = $('#hamburgerMenu');
-  
+
+  console.log('Initializing hamburger menu...');
+  console.log('Menu button:', btn);
+  console.log('Menu:', menu);
+
   btn.addEventListener('click', () => {
     const isOpen = !menu.classList.contains('hidden');
-    
+
     if (isOpen) {
       menu.classList.add('hidden');
       btn.classList.remove('active');
     } else {
       menu.classList.remove('hidden');
       btn.classList.add('active');
-      
+
       // Zavri menu pri kliknuti mimo
       setTimeout(() => {
         const closeHandler = (e) => {
@@ -264,25 +440,59 @@ function initHamburgerMenu() {
       }, 0);
     }
   });
-  
+
   // Menu items
-  $('#menuRefetch').addEventListener('click', () => {
-    menu.classList.add('hidden');
-    btn.classList.remove('active');
-    refetchDay();
-  });
-  
-  $('#menuManageIBeacons').addEventListener('click', () => {
-    menu.classList.add('hidden');
-    btn.classList.remove('active');
-    openIBeaconOverlay();
-  });
-  
-  $('#menuViewIBeacons').addEventListener('click', () => {
-    menu.classList.add('hidden');
-    btn.classList.remove('active');
-    openIBeaconListOverlay();
-  });
+  const menuRefetch = $('#menuRefetch');
+  const menuManageIBeacons = $('#menuManageIBeacons');
+  const menuViewIBeacons = $('#menuViewIBeacons');
+  const menuSettings = $('#menuSettings');
+
+  console.log('Menu items found:');
+  console.log('- Refetch:', menuRefetch);
+  console.log('- Manage iBeacons:', menuManageIBeacons);
+  console.log('- View iBeacons:', menuViewIBeacons);
+  console.log('- Settings:', menuSettings);
+
+  if (menuRefetch) {
+    menuRefetch.addEventListener('click', () => {
+      console.log('Refetch clicked');
+      menu.classList.add('hidden');
+      btn.classList.remove('active');
+      refetchDay();
+    });
+  }
+
+  if (menuManageIBeacons) {
+    menuManageIBeacons.addEventListener('click', () => {
+      console.log('Manage iBeacons clicked');
+      menu.classList.add('hidden');
+      btn.classList.remove('active');
+      openIBeaconOverlay();
+    });
+  }
+
+  if (menuViewIBeacons) {
+    menuViewIBeacons.addEventListener('click', () => {
+      console.log('View iBeacons clicked');
+      menu.classList.add('hidden');
+      btn.classList.remove('active');
+      openIBeaconListOverlay();
+    });
+  }
+
+  if (menuSettings) {
+    console.log('Attaching click handler to Settings menu item');
+    menuSettings.addEventListener('click', () => {
+      console.log('Settings menu clicked');
+      menu.classList.add('hidden');
+      btn.classList.remove('active');
+      openSettingsOverlay().catch(err => {
+        console.error('Error opening settings:', err);
+      });
+    });
+  } else {
+    console.error('Settings menu item not found! Check if index.html has been updated.');
+  }
 }
 
 // --------- iBeacon Management Overlay ---------
@@ -467,6 +677,159 @@ async function loadIBeaconsIntoOverlay() {
     });
   } catch (err) {
     container.innerHTML = `<p style="color:#ef4444;padding:16px">Chyba: ${err.message}</p>`;
+  }
+}
+
+// --------- Settings Overlay ---------
+async function openSettingsOverlay() {
+  console.log('openSettingsOverlay called');
+  const overlay = $('#settingsOverlay');
+  console.log('Settings overlay element:', overlay);
+
+  if (!overlay) {
+    console.error('Settings overlay not found in DOM!');
+    return;
+  }
+
+  overlay.classList.remove('hidden');
+  console.log('Overlay should now be visible');
+
+  // Načítaj aktuálne nastavenia
+  try {
+    await loadCurrentSettings();
+  } catch (err) {
+    console.error('Error loading settings:', err);
+  }
+}
+
+function closeSettingsOverlay() {
+  $('#settingsOverlay').classList.add('hidden');
+}
+
+async function loadCurrentSettings() {
+  console.log('loadCurrentSettings called');
+  try {
+    console.log('Fetching settings from API...');
+    const settings = await apiGet(`${API}?action=get_settings`);
+    console.log('Settings response:', settings);
+
+    if (settings && settings.ok) {
+      const data = settings.data;
+      console.log('Settings data:', data);
+
+      // Naplň form fields
+      $('#hysteresisMeters').value = data.hysteresis_meters || 50;
+      $('#hysteresisMinutes').value = data.hysteresis_minutes || 30;
+      $('#uniquePrecision').value = data.unique_precision || 6;
+      $('#uniqueBucketMinutes').value = data.unique_bucket_minutes || 30;
+      $('#macCacheMaxAgeDays').value = data.mac_cache_max_age_days || 3600;
+      $('#googleForce').checked = data.google_force === '1' || data.google_force === 1;
+
+      // Aktualizuj "aktuálne hodnoty" labels
+      $('#currentHysteresisMeters').textContent = `(${data.hysteresis_meters || 50} m)`;
+      $('#currentHysteresisMinutes').textContent = `(${data.hysteresis_minutes || 30} min)`;
+      $('#currentUniquePrecision').textContent = `(${data.unique_precision || 6})`;
+      $('#currentUniqueBucketMinutes').textContent = `(${data.unique_bucket_minutes || 30} min)`;
+      $('#currentMacCacheMaxAgeDays').textContent = `(${data.mac_cache_max_age_days || 3600} dní)`;
+      $('#currentGoogleForce').textContent = (data.google_force === '1' || data.google_force === 1) ? '(Zapnuté)' : '(Vypnuté)';
+
+      console.log('Settings loaded successfully');
+    } else {
+      console.warn('Settings response not OK:', settings);
+    }
+  } catch (err) {
+    console.error('Failed to load settings:', err);
+    alert(`Nepodarilo sa načítať nastavenia: ${err.message}`);
+  }
+}
+
+async function saveSettings() {
+  try {
+    // Zober hodnoty z formulára
+    const settings = {
+      hysteresis_meters: parseInt($('#hysteresisMeters').value) || 50,
+      hysteresis_minutes: parseInt($('#hysteresisMinutes').value) || 30,
+      unique_precision: parseInt($('#uniquePrecision').value) || 6,
+      unique_bucket_minutes: parseInt($('#uniqueBucketMinutes').value) || 30,
+      mac_cache_max_age_days: parseInt($('#macCacheMaxAgeDays').value) || 3600,
+      google_force: $('#googleForce').checked ? '1' : '0'
+    };
+
+    // Validácia hraničných hodnôt
+    if (settings.hysteresis_meters < 10 || settings.hysteresis_meters > 500) {
+      alert('Minimálna vzdialenosť zmeny polohy musí byť medzi 10 a 500 m');
+      return;
+    }
+    if (settings.hysteresis_minutes < 5 || settings.hysteresis_minutes > 180) {
+      alert('Minimálny čas zmeny polohy musí byť medzi 5 a 180 min');
+      return;
+    }
+    if (settings.unique_precision < 4 || settings.unique_precision > 8) {
+      alert('Presnosť súradníc musí byť medzi 4 a 8 desatinnými miestami');
+      return;
+    }
+    if (settings.unique_bucket_minutes < 5 || settings.unique_bucket_minutes > 180) {
+      alert('Časový interval pre unikátne polohy musí byť medzi 5 a 180 min');
+      return;
+    }
+    if (settings.mac_cache_max_age_days < 1 || settings.mac_cache_max_age_days > 7200) {
+      alert('Platnosť cache musí byť medzi 1 a 7200 dňami');
+      return;
+    }
+
+    // Ulož cez API
+    const result = await apiPost('save_settings', settings);
+
+    if (result && result.ok) {
+      alert('Nastavenia boli úspešne uložené!');
+      closeSettingsOverlay();
+    } else {
+      alert(`Chyba pri ukladaní: ${result.error || 'Neznáma chyba'}`);
+    }
+  } catch (err) {
+    alert(`Chyba pri ukladaní nastavení: ${err.message}`);
+  }
+}
+
+function resetSettingToDefault(settingName, defaultValue) {
+  const fieldMap = {
+    'hysteresis_meters': 'hysteresisMeters',
+    'hysteresis_minutes': 'hysteresisMinutes',
+    'unique_precision': 'uniquePrecision',
+    'unique_bucket_minutes': 'uniqueBucketMinutes',
+    'mac_cache_max_age_days': 'macCacheMaxAgeDays',
+    'google_force': 'googleForce'
+  };
+
+  const fieldId = fieldMap[settingName];
+  if (!fieldId) return;
+
+  const field = $(`#${fieldId}`);
+  if (!field) return;
+
+  if (field.type === 'checkbox') {
+    field.checked = (defaultValue === '1' || defaultValue === 1);
+  } else {
+    field.value = defaultValue;
+  }
+}
+
+async function resetAllSettings() {
+  if (!confirm('Naozaj chcete obnoviť všetky nastavenia na predvolené hodnoty?')) {
+    return;
+  }
+
+  try {
+    const result = await apiPost('reset_settings', {});
+
+    if (result && result.ok) {
+      alert('Všetky nastavenia boli obnovené na predvolené hodnoty!');
+      await loadCurrentSettings();
+    } else {
+      alert(`Chyba pri obnove nastavení: ${result.error || 'Neznáma chyba'}`);
+    }
+  } catch (err) {
+    alert(`Chyba pri obnove nastavení: ${err.message}`);
   }
 }
 
@@ -1038,7 +1401,22 @@ function addUIHandlers() {
   // Overlay controls
   $('#overlayClose').addEventListener('click', closeIBeaconOverlay);
   $('#listOverlayClose').addEventListener('click', closeIBeaconListOverlay);
-  
+  $('#settingsOverlayClose').addEventListener('click', closeSettingsOverlay);
+
+  // Settings form buttons
+  $('#saveSettings').addEventListener('click', saveSettings);
+  $('#cancelSettings').addEventListener('click', closeSettingsOverlay);
+  $('#resetAllSettings').addEventListener('click', resetAllSettings);
+
+  // Individual reset buttons
+  document.querySelectorAll('.btn-default').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const settingName = btn.getAttribute('data-setting');
+      const defaultValue = btn.getAttribute('data-default');
+      resetSettingToDefault(settingName, defaultValue);
+    });
+  });
+
   // Form buttons
   $('#selectOnMap').addEventListener('click', openMapSelector);
   $('#confirmLocation').addEventListener('click', confirmMapLocation);
@@ -1058,19 +1436,16 @@ function addUIHandlers() {
       closeIBeaconListOverlay();
     }
   });
+
+  $('#settingsOverlay').addEventListener('click', (e) => {
+    if (e.target === $('#settingsOverlay')) {
+      closeSettingsOverlay();
+    }
+  });
 }
 
 // --------- boot ---------
-window.addEventListener('DOMContentLoaded', async () => {
-  initMap();
-  initCalendar();
-  initHamburgerMenu();
-  addUIHandlers();
-  await loadAvailableDates();
-  await refresh();
-  
-  // Update battery a last online každých 30 sekúnd pre real-time info
-  setInterval(() => {
-    updateBatteryStatus();
-  }, 30 * 1000);
+window.addEventListener('DOMContentLoaded', () => {
+  // Inicializuj PIN security najprv
+  initPinSecurity();
 });

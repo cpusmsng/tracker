@@ -1,0 +1,32 @@
+# Ochrana .env súboru pred priamym prístupom
+<FilesMatch "^\.env">
+    Require all denied
+</FilesMatch>
+
+# Ochrana config.php pred priamym prístupom
+<FilesMatch "^config\.php$">
+    Require all denied
+</FilesMatch>
+
+# Ochrana PHP súborov ktoré sú len pre CLI
+<FilesMatch "^(fetch_data|smart_refetch_v2)\.php$">
+    Require all denied
+</FilesMatch>
+
+# Ochrana SQLite databázy
+<FilesMatch "\.sqlite$">
+    Require all denied
+</FilesMatch>
+
+# Ochrana log súborov
+<FilesMatch "\.(log|txt)$">
+    Require all denied
+</FilesMatch>
+
+# Základné bezpečnostné hlavičky
+<IfModule mod_headers.c>
+    Header set X-Content-Type-Options "nosniff"
+    Header set X-Frame-Options "SAMEORIGIN"
+    Header set X-XSS-Protection "1; mode=block"
+    Header set Referrer-Policy "strict-origin-when-cross-origin"
+</IfModule>
