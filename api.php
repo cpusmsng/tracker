@@ -1037,4 +1037,90 @@ if ($action === 'get_perimeter_email_settings') {
     }
 }
 
+// Test email sending
+if ($action === 'test_email' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    try {
+        $j = json_body();
+        $testEmail = trim($j['email'] ?? '');
+
+        if (empty($testEmail) || !filter_var($testEmail, FILTER_VALIDATE_EMAIL)) {
+            respond(['ok' => false, 'error' => 'Neplatná e-mailová adresa'], 400);
+        }
+
+        $emailServiceUrl = getenv('EMAIL_SERVICE_URL') ?: 'http://email-service:3004/send';
+        $apiKey = getenv('EMAIL_API_KEY') ?: '';
+        $fromEmail = getenv('EMAIL_FROM') ?: 'tracker@bagron.eu';
+        $fromName = getenv('EMAIL_FROM_NAME') ?: 'Tracker Alert';
+
+        if (empty($apiKey)) {
+            respond(['ok' => false, 'error' => 'EMAIL_API_KEY nie je nakonfigurovaný v .env súbore'], 400);
+        }
+
+        $htmlBody = '
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="utf-8">
+            <style>
+                body { font-family: Arial, sans-serif; background-color: #f5f5f5; padding: 20px; }
+                .container { max-width: 500px; margin: 0 auto; background: white; border-radius: 8px; padding: 30px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+                h1 { color: #4CAF50; margin-top: 0; }
+                p { color: #333; line-height: 1.6; }
+                .footer { margin-top: 30px; padding-top: 20px; border-top: 1px solid #eee; color: #666; font-size: 12px; }
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <h1>✓ Test úspešný!</h1>
+                <p>Toto je testovací e-mail z GPS Tracker aplikácie.</p>
+                <p>Ak vidíte túto správu, e-mailové notifikácie sú správne nakonfigurované.</p>
+                <p><strong>Čas odoslania:</strong> ' . date('d.m.Y H:i:s') . '</p>
+                <div class="footer">
+                    GPS Tracker - Perimeter Alert System
+                </div>
+            </div>
+        </body>
+        </html>';
+
+        $payload = [
+            'to_email' => $testEmail,
+            'subject' => 'Test e-mailovej služby - GPS Tracker',
+            'html_body' => $htmlBody,
+            'from_email' => $fromEmail,
+            'from_name' => $fromName,
+            'api_key' => $apiKey
+        ];
+
+        $ch = curl_init($emailServiceUrl);
+        curl_setopt_array($ch, [
+            CURLOPT_POST => true,
+            CURLOPT_POSTFIELDS => json_encode($payload),
+            CURLOPT_HTTPHEADER => ['Content-Type: application/json'],
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_TIMEOUT => 30,
+            CURLOPT_CONNECTTIMEOUT => 10
+        ]);
+
+        $response = curl_exec($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $curlError = curl_error($ch);
+        curl_close($ch);
+
+        if ($curlError) {
+            respond(['ok' => false, 'error' => 'Chyba pripojenia k email službe: ' . $curlError, 'debug' => ['url' => $emailServiceUrl]], 500);
+        }
+
+        $responseData = json_decode($response, true);
+
+        if ($httpCode >= 200 && $httpCode < 300) {
+            respond(['ok' => true, 'message' => 'Testovací e-mail bol odoslaný na ' . $testEmail, 'debug' => ['http_code' => $httpCode, 'response' => $responseData]]);
+        } else {
+            respond(['ok' => false, 'error' => 'Email služba vrátila chybu (HTTP ' . $httpCode . ')', 'debug' => ['http_code' => $httpCode, 'response' => $responseData, 'url' => $emailServiceUrl]], 500);
+        }
+
+    } catch (Throwable $e) {
+        respond(['ok' => false, 'error' => $e->getMessage()], 500);
+    }
+}
+
 respond(['ok'=>false,'error'=>'unknown action'], 400);

@@ -1486,6 +1486,11 @@ function addUIHandlers() {
     perimeterColorInput.addEventListener('change', drawPolygonOnMap);
   }
 
+  const sendTestEmailBtn = $('#sendTestEmail');
+  if (sendTestEmailBtn) {
+    sendTestEmailBtn.addEventListener('click', sendTestEmail);
+  }
+
   const perimeterOverlay = $('#perimeterOverlay');
   if (perimeterOverlay) {
     perimeterOverlay.addEventListener('click', (e) => {
@@ -1857,6 +1862,65 @@ async function loadPerimetersOnMainMap() {
     });
   } catch (err) {
     console.error('Error loading perimeters on map:', err);
+  }
+}
+
+// Test email function
+async function sendTestEmail() {
+  const emailInput = $('#testEmailAddress');
+  const resultEl = $('#testEmailResult');
+  const btn = $('#sendTestEmail');
+
+  const email = emailInput?.value?.trim();
+
+  if (!email) {
+    resultEl.textContent = 'Zadajte e-mailovú adresu';
+    resultEl.className = 'test-email-result error';
+    return;
+  }
+
+  // Basic email validation
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(email)) {
+    resultEl.textContent = 'Neplatná e-mailová adresa';
+    resultEl.className = 'test-email-result error';
+    return;
+  }
+
+  // Show loading state
+  btn.disabled = true;
+  resultEl.textContent = 'Odosielam testovací e-mail...';
+  resultEl.className = 'test-email-result loading';
+
+  try {
+    const response = await apiPost('test_email', { email });
+
+    if (response.ok) {
+      resultEl.textContent = response.message || 'Testovací e-mail bol odoslaný!';
+      resultEl.className = 'test-email-result success';
+
+      // Show debug info in console
+      if (response.debug) {
+        console.log('Test email debug:', response.debug);
+      }
+    } else {
+      let errorMsg = response.error || 'Neznáma chyba pri odosielaní';
+
+      // Show debug info for errors
+      if (response.debug) {
+        console.error('Test email error debug:', response.debug);
+        errorMsg += ` (URL: ${response.debug.url || 'neznáma'})`;
+      }
+
+      resultEl.textContent = errorMsg;
+      resultEl.className = 'test-email-result error';
+    }
+  } catch (err) {
+    console.error('Test email error:', err);
+    resultEl.textContent = 'Chyba pri komunikácii so serverom: ' + err.message;
+    resultEl.className = 'test-email-result error';
+  } finally {
+    btn.disabled = false;
   }
 }
 
