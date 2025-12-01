@@ -1023,7 +1023,15 @@ body{padding:16px 16px 0;display:flex;flex-direction:column}
 
 .test-email-form button{
   display:flex;align-items:center;gap:6px;
-  white-space:nowrap;
+  white-space:nowrap;cursor:pointer;
+}
+
+.test-email-form button:hover{
+  opacity:0.9;
+}
+
+.test-email-form button:active{
+  transform:scale(0.98);
 }
 
 .test-email-result{
