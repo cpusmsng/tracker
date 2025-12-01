@@ -430,6 +430,247 @@ function google_geolocate(string $apiKey, array $aps, int $minAps, string $times
     return null;
 }
 
+// ============== PERIMETER ZONE DETECTION ==============
+
+function point_in_polygon(float $lat, float $lng, array $polygon): bool {
+    $n = count($polygon);
+    if ($n < 3) return false;
+
+    $inside = false;
+    $j = $n - 1;
+
+    for ($i = 0; $i < $n; $j = $i++) {
+        $xi = $polygon[$i]['lng'];
+        $yi = $polygon[$i]['lat'];
+        $xj = $polygon[$j]['lng'];
+        $yj = $polygon[$j]['lat'];
+
+        if ((($yi > $lat) !== ($yj > $lat)) &&
+            ($lng < ($xj - $xi) * ($lat - $yi) / ($yj - $yi) + $xi)) {
+            $inside = !$inside;
+        }
+    }
+
+    return $inside;
+}
+
+function load_active_perimeters(PDO $pdo): array {
+    $perimeters = [];
+    try {
+        $stmt = $pdo->query("
+            SELECT id, name, polygon, alert_on_enter, alert_on_exit, notification_email
+            FROM perimeters
+            WHERE is_active = 1
+        ");
+        while ($r = $stmt->fetch()) {
+            $perimeters[] = [
+                'id' => (int)$r['id'],
+                'name' => $r['name'],
+                'polygon' => json_decode($r['polygon'], true),
+                'alert_on_enter' => (bool)$r['alert_on_enter'],
+                'alert_on_exit' => (bool)$r['alert_on_exit'],
+                'notification_email' => $r['notification_email']
+            ];
+        }
+        debug_log("PERIMETERS: loaded ".count($perimeters)." active zones");
+    } catch (Throwable $e) {
+        debug_log("PERIMETERS ERROR: ".$e->getMessage());
+    }
+    return $perimeters;
+}
+
+function get_position_perimeter_states(float $lat, float $lng, array $perimeters): array {
+    $states = [];
+    foreach ($perimeters as $p) {
+        $states[$p['id']] = point_in_polygon($lat, $lng, $p['polygon']);
+    }
+    return $states;
+}
+
+function check_perimeter_breaches(
+    PDO $pdo,
+    float $lat,
+    float $lng,
+    string $timestamp,
+    array $perimeters,
+    array $currentStates,
+    array $previousStates
+): array {
+    $breaches = [];
+
+    foreach ($perimeters as $p) {
+        $pid = $p['id'];
+        $wasInside = isset($previousStates[$pid]) ? $previousStates[$pid] : null;
+        $isInside = $currentStates[$pid];
+
+        // Skip if no previous state (first position)
+        if ($wasInside === null) {
+            debug_log("    PERIMETER '{$p['name']}': first position, inside=".($isInside?'YES':'NO'));
+            continue;
+        }
+
+        // Detect breach
+        if (!$wasInside && $isInside && $p['alert_on_enter']) {
+            // ENTERED the zone
+            $breaches[] = [
+                'perimeter' => $p,
+                'type' => 'enter',
+                'lat' => $lat,
+                'lng' => $lng,
+                'timestamp' => $timestamp
+            ];
+            debug_log("    PERIMETER BREACH: ENTERED '{$p['name']}'");
+        } elseif ($wasInside && !$isInside && $p['alert_on_exit']) {
+            // EXITED the zone
+            $breaches[] = [
+                'perimeter' => $p,
+                'type' => 'exit',
+                'lat' => $lat,
+                'lng' => $lng,
+                'timestamp' => $timestamp
+            ];
+            debug_log("    PERIMETER BREACH: EXITED '{$p['name']}'");
+        }
+    }
+
+    return $breaches;
+}
+
+function send_perimeter_alert_email(array $breach): bool {
+    $p = $breach['perimeter'];
+    $email = $p['notification_email'];
+
+    if (!$email) {
+        debug_log("    EMAIL SKIP: no notification email configured for '{$p['name']}'");
+        return false;
+    }
+
+    $emailServiceUrl = getenv('EMAIL_SERVICE_URL') ?: 'http://email-service:3004/send';
+    $apiKey = getenv('EMAIL_API_KEY') ?: '';
+    $fromEmail = getenv('EMAIL_FROM') ?: 'tracker@bagron.eu';
+    $fromName = getenv('EMAIL_FROM_NAME') ?: 'Tracker Alert';
+
+    if (!$apiKey) {
+        debug_log("    EMAIL SKIP: EMAIL_API_KEY not configured");
+        return false;
+    }
+
+    $alertType = $breach['type'] === 'enter' ? 'VSTUP DO ZÓNY' : 'OPUSTENIE ZÓNY';
+    $alertTypeEn = $breach['type'] === 'enter' ? 'Zone Entry' : 'Zone Exit';
+    $subject = "Tracker Alert: $alertType - {$p['name']}";
+
+    // Format timestamp for display
+    try {
+        $dt = new DateTimeImmutable($breach['timestamp'], new DateTimeZone('UTC'));
+        $dt = $dt->setTimezone(new DateTimeZone('Europe/Bratislava'));
+        $formattedTime = $dt->format('d.m.Y H:i:s');
+    } catch (Throwable $e) {
+        $formattedTime = $breach['timestamp'];
+    }
+
+    $mapsUrl = "https://www.google.com/maps?q={$breach['lat']},{$breach['lng']}";
+
+    $htmlBody = "
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset='utf-8'>
+        <style>
+            body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+            .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+            .header { background: " . ($breach['type'] === 'enter' ? '#10b981' : '#ef4444') . "; color: white; padding: 20px; border-radius: 8px 8px 0 0; }
+            .content { background: #f8fafc; padding: 20px; border: 1px solid #e5e5e5; border-top: none; border-radius: 0 0 8px 8px; }
+            .info-row { margin: 10px 0; }
+            .label { font-weight: bold; color: #555; }
+            .btn { display: inline-block; padding: 12px 24px; background: #0ea5e9; color: white; text-decoration: none; border-radius: 6px; margin-top: 15px; }
+            .footer { margin-top: 20px; font-size: 12px; color: #888; }
+        </style>
+    </head>
+    <body>
+        <div class='container'>
+            <div class='header'>
+                <h2 style='margin:0;'>$alertType</h2>
+                <p style='margin:5px 0 0;opacity:0.9;'>Tracker Alert System</p>
+            </div>
+            <div class='content'>
+                <div class='info-row'>
+                    <span class='label'>Zóna:</span> {$p['name']}
+                </div>
+                <div class='info-row'>
+                    <span class='label'>Čas:</span> $formattedTime
+                </div>
+                <div class='info-row'>
+                    <span class='label'>Poloha:</span> {$breach['lat']}, {$breach['lng']}
+                </div>
+                <a href='$mapsUrl' class='btn'>Zobraziť na mape</a>
+                <div class='footer'>
+                    Táto správa bola automaticky vygenerovaná systémom Tracker Alert.
+                </div>
+            </div>
+        </div>
+    </body>
+    </html>";
+
+    $payload = json_encode([
+        'to_email' => $email,
+        'subject' => $subject,
+        'html_body' => $htmlBody,
+        'from_email' => $fromEmail,
+        'from_name' => $fromName,
+        'api_key' => $apiKey
+    ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+
+    debug_log("    EMAIL SENDING: to=$email subject=$subject");
+
+    $ch = curl_init($emailServiceUrl);
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_POST => true,
+        CURLOPT_POSTFIELDS => $payload,
+        CURLOPT_HTTPHEADER => ['Content-Type: application/json'],
+        CURLOPT_TIMEOUT => 15,
+        CURLOPT_CONNECTTIMEOUT => 10
+    ]);
+
+    $response = curl_exec($ch);
+    $httpCode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $curlError = curl_error($ch);
+    curl_close($ch);
+
+    if ($curlError) {
+        debug_log("    EMAIL ERROR: curl error - $curlError");
+        return false;
+    }
+
+    if ($httpCode >= 200 && $httpCode < 300) {
+        debug_log("    EMAIL SUCCESS: http=$httpCode");
+        return true;
+    } else {
+        debug_log("    EMAIL ERROR: http=$httpCode response=".substr($response, 0, 200));
+        return false;
+    }
+}
+
+function record_perimeter_alert(PDO $pdo, array $breach, bool $emailSent): void {
+    try {
+        $stmt = $pdo->prepare("
+            INSERT INTO perimeter_alerts (perimeter_id, alert_type, latitude, longitude, sent_at, email_sent)
+            VALUES (:pid, :type, :lat, :lng, :sent, :email)
+        ");
+        $stmt->execute([
+            ':pid' => $breach['perimeter']['id'],
+            ':type' => $breach['type'],
+            ':lat' => $breach['lat'],
+            ':lng' => $breach['lng'],
+            ':sent' => (new DateTimeImmutable())->format('Y-m-d H:i:s'),
+            ':email' => $emailSent ? 1 : 0
+        ]);
+        debug_log("    ALERT RECORDED: perimeter_id={$breach['perimeter']['id']} type={$breach['type']}");
+    } catch (Throwable $e) {
+        debug_log("    ALERT RECORD ERROR: ".$e->getMessage());
+    }
+}
+
 function load_ibeacon_map(PDO $pdo): array {
     $map = [];
     try {
@@ -702,6 +943,20 @@ try {
     $ibeaconMap = load_ibeacon_map($pdo);
     $macCache = load_mac_cache($pdo, $MAC_CACHE_MAX_AGE);
 
+    // Load active perimeters for breach detection
+    $activePerimeters = load_active_perimeters($pdo);
+    $previousPerimeterStates = [];
+
+    // Initialize perimeter states from last known position
+    if ($lastInsertedPos) {
+        $previousPerimeterStates = get_position_perimeter_states(
+            $lastInsertedPos['lat'],
+            $lastInsertedPos['lng'],
+            $activePerimeters
+        );
+        debug_log("PERIMETER INIT: initialized states from last position");
+    }
+
     $tsSet = [];
     foreach (array_keys($gnssBuckets) as $iso) $tsSet[$iso] = true;
     foreach ($wifiBuckets as $w) $tsSet[$w['iso']] = true;
@@ -728,7 +983,26 @@ try {
 
     $inserted=0; $skipped=0; $googled=0; $ibeaconHits=0; $cacheHits=0; $cachedFails=0;
     $hysteresisSkips=0; $dbErrors=0;
-    
+    $perimeterAlerts=0; $emailsSent=0;
+
+    // Helper function to check perimeters after successful insert
+    $checkPerimetersAfterInsert = function(float $lat, float $lng, string $iso) use ($pdo, $activePerimeters, &$previousPerimeterStates, &$perimeterAlerts, &$emailsSent) {
+        if (empty($activePerimeters)) return;
+
+        $currentStates = get_position_perimeter_states($lat, $lng, $activePerimeters);
+        $breaches = check_perimeter_breaches($pdo, $lat, $lng, $iso, $activePerimeters, $currentStates, $previousPerimeterStates);
+
+        foreach ($breaches as $breach) {
+            $emailSent = send_perimeter_alert_email($breach);
+            record_perimeter_alert($pdo, $breach, $emailSent);
+            $perimeterAlerts++;
+            if ($emailSent) $emailsSent++;
+        }
+
+        // Update previous states for next iteration
+        $previousPerimeterStates = $currentStates;
+    };
+
     if ($REFETCH_MODE && $refetchDayStart) {
         $lastInsertedPos = get_last_position($pdo, $refetchDayStart->format('Y-m-d H:i:s'));
         if ($lastInsertedPos) {
@@ -769,6 +1043,7 @@ try {
             $result = insert_position_with_hysteresis($pdo, $iso, $lat, $lng, 'gnss', $HYSTERESIS_METERS, $lastInsertedPos);
             if ($result['inserted']) {
                 $inserted++;
+                $checkPerimetersAfterInsert($lat, $lng, $iso);
             } else {
                 $skipped++;
                 if ($result['reason'] === 'hysteresis') $hysteresisSkips++;
@@ -805,6 +1080,7 @@ try {
                 $result = insert_position_with_hysteresis($pdo, $iso, $matchedLatLng[0], $matchedLatLng[1], 'ibeacon', $HYSTERESIS_METERS, $lastInsertedPos);
                 if ($result['inserted']) {
                     $inserted++; $ibeaconHits++;
+                    $checkPerimetersAfterInsert($matchedLatLng[0], $matchedLatLng[1], $iso);
                 } else {
                     $skipped++;
                     if ($result['reason'] === 'hysteresis') $hysteresisSkips++;
@@ -846,6 +1122,7 @@ try {
             $result = insert_position_with_hysteresis($pdo, $iso, $matchedLatLng[0], $matchedLatLng[1], 'ibeacon', $HYSTERESIS_METERS, $lastInsertedPos);
             if ($result['inserted']) {
                 $inserted++; $ibeaconHits++;
+                $checkPerimetersAfterInsert($matchedLatLng[0], $matchedLatLng[1], $iso);
             } else {
                 $skipped++;
                 if ($result['reason'] === 'hysteresis') $hysteresisSkips++;
@@ -886,6 +1163,7 @@ try {
             $result = insert_position_with_hysteresis($pdo, $iso, $positiveCache['lat'], $positiveCache['lng'], 'wifi-cache', $HYSTERESIS_METERS, $lastInsertedPos);
             if ($result['inserted']) {
                 $inserted++; $cacheHits++;
+                $checkPerimetersAfterInsert($positiveCache['lat'], $positiveCache['lng'], $iso);
             } else {
                 $skipped++;
                 if ($result['reason'] === 'hysteresis') $hysteresisSkips++;
@@ -912,6 +1190,7 @@ try {
             $result = insert_position_with_hysteresis($pdo, $iso, $lat, $lng, 'wifi-google', $HYSTERESIS_METERS, $lastInsertedPos);
             if ($result['inserted']) {
                 $inserted++;
+                $checkPerimetersAfterInsert($lat, $lng, $iso);
             } else {
                 $skipped++;
                 if ($result['reason'] === 'hysteresis') $hysteresisSkips++;
@@ -986,7 +1265,7 @@ try {
 
     $mode = $REFETCH_MODE ? "REFETCH($REFETCH_DATE)" : "NORMAL";
     info_log(sprintf(
-        'SUMMARY [%s]: fetched=%d (gnss_lon=%d gnss_lat=%d wifi=%d bt=%d) | buckets: gnss=%d wifi=%d bt=%d | inserted=%d skipped=%d (hysteresis=%d db_errors=%d) | google_calls=%d ibeacon_hits=%d cache_hits=%d cached_fails=%d',
+        'SUMMARY [%s]: fetched=%d (gnss_lon=%d gnss_lat=%d wifi=%d bt=%d) | buckets: gnss=%d wifi=%d bt=%d | inserted=%d skipped=%d (hysteresis=%d db_errors=%d) | google_calls=%d ibeacon_hits=%d cache_hits=%d cached_fails=%d | perimeter_alerts=%d emails_sent=%d',
         $mode,
         count($gnssLon) + count($gnssLat) + count($wifiRaw) + count($btRaw),
         count($gnssLon),
@@ -1003,7 +1282,9 @@ try {
         $googled,
         $ibeaconHits,
         $cacheHits,
-        $cachedFails
+        $cachedFails,
+        $perimeterAlerts,
+        $emailsSent
     ));
 
     info_log('=== FETCH END ===');

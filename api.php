@@ -741,4 +741,300 @@ if ($action === 'reset_settings' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
+// ========== PERIMETER ZONES MANAGEMENT ==========
+
+// Create perimeters table if not exists
+try {
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS perimeters (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            polygon TEXT NOT NULL,
+            alert_on_enter INTEGER DEFAULT 1,
+            alert_on_exit INTEGER DEFAULT 1,
+            notification_email TEXT,
+            is_active INTEGER DEFAULT 1,
+            color TEXT DEFAULT '#ff6b6b',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+    ");
+
+    // Create perimeter_alerts table for tracking sent notifications
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS perimeter_alerts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            perimeter_id INTEGER NOT NULL,
+            alert_type TEXT NOT NULL,
+            position_id INTEGER,
+            latitude REAL NOT NULL,
+            longitude REAL NOT NULL,
+            sent_at TEXT NOT NULL,
+            email_sent INTEGER DEFAULT 0,
+            FOREIGN KEY (perimeter_id) REFERENCES perimeters(id) ON DELETE CASCADE
+        )
+    ");
+} catch (Throwable $e) {
+    // Tables might already exist
+}
+
+if ($action === 'get_perimeters') {
+    try {
+        $q = $pdo->query("SELECT id, name, polygon, alert_on_enter, alert_on_exit, notification_email, is_active, color, created_at, updated_at
+                          FROM perimeters
+                          ORDER BY id ASC");
+        $out = [];
+        while ($r = $q->fetch()) {
+            $out[] = [
+                'id' => (int)$r['id'],
+                'name' => (string)$r['name'],
+                'polygon' => json_decode($r['polygon'], true),
+                'alert_on_enter' => (bool)$r['alert_on_enter'],
+                'alert_on_exit' => (bool)$r['alert_on_exit'],
+                'notification_email' => $r['notification_email'],
+                'is_active' => (bool)$r['is_active'],
+                'color' => $r['color'] ?? '#ff6b6b',
+                'created_at' => $r['created_at'],
+                'updated_at' => $r['updated_at']
+            ];
+        }
+        respond(['ok' => true, 'data' => $out]);
+    } catch (Throwable $e) {
+        respond(['ok' => false, 'error' => $e->getMessage()], 500);
+    }
+}
+
+if ($action === 'save_perimeter' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    try {
+        $j = json_body();
+        $id = isset($j['id']) ? (int)$j['id'] : null;
+        $name = trim((string)($j['name'] ?? ''));
+        $polygon = $j['polygon'] ?? [];
+        $alertOnEnter = isset($j['alert_on_enter']) ? (int)(bool)$j['alert_on_enter'] : 1;
+        $alertOnExit = isset($j['alert_on_exit']) ? (int)(bool)$j['alert_on_exit'] : 1;
+        $notificationEmail = trim((string)($j['notification_email'] ?? ''));
+        $isActive = isset($j['is_active']) ? (int)(bool)$j['is_active'] : 1;
+        $color = trim((string)($j['color'] ?? '#ff6b6b'));
+
+        if ($name === '') {
+            respond(['ok' => false, 'error' => 'Názov perimetra je povinný'], 400);
+        }
+        if (!is_array($polygon) || count($polygon) < 3) {
+            respond(['ok' => false, 'error' => 'Perimeter musí mať aspoň 3 body'], 400);
+        }
+        if ($notificationEmail !== '' && !filter_var($notificationEmail, FILTER_VALIDATE_EMAIL)) {
+            respond(['ok' => false, 'error' => 'Neplatná e-mailová adresa'], 400);
+        }
+
+        $polygonJson = json_encode($polygon);
+        $now = (new DateTimeImmutable())->format('Y-m-d H:i:s');
+
+        if ($id) {
+            // Update existing
+            $stmt = $pdo->prepare("
+                UPDATE perimeters SET
+                    name = :name,
+                    polygon = :polygon,
+                    alert_on_enter = :enter,
+                    alert_on_exit = :exit,
+                    notification_email = :email,
+                    is_active = :active,
+                    color = :color,
+                    updated_at = :updated
+                WHERE id = :id
+            ");
+            $stmt->execute([
+                ':id' => $id,
+                ':name' => $name,
+                ':polygon' => $polygonJson,
+                ':enter' => $alertOnEnter,
+                ':exit' => $alertOnExit,
+                ':email' => $notificationEmail ?: null,
+                ':active' => $isActive,
+                ':color' => $color,
+                ':updated' => $now
+            ]);
+            respond(['ok' => true, 'message' => 'Perimeter aktualizovaný', 'id' => $id]);
+        } else {
+            // Insert new
+            $stmt = $pdo->prepare("
+                INSERT INTO perimeters (name, polygon, alert_on_enter, alert_on_exit, notification_email, is_active, color, created_at, updated_at)
+                VALUES (:name, :polygon, :enter, :exit, :email, :active, :color, :created, :updated)
+            ");
+            $stmt->execute([
+                ':name' => $name,
+                ':polygon' => $polygonJson,
+                ':enter' => $alertOnEnter,
+                ':exit' => $alertOnExit,
+                ':email' => $notificationEmail ?: null,
+                ':active' => $isActive,
+                ':color' => $color,
+                ':created' => $now,
+                ':updated' => $now
+            ]);
+            $newId = (int)$pdo->lastInsertId();
+            respond(['ok' => true, 'message' => 'Perimeter vytvorený', 'id' => $newId]);
+        }
+    } catch (Throwable $e) {
+        respond(['ok' => false, 'error' => $e->getMessage()], 500);
+    }
+}
+
+if ($action === 'delete_perimeter') {
+    try {
+        $id = qparam('id');
+        if (!$id) {
+            $j = json_body();
+            $id = isset($j['id']) ? (int)$j['id'] : null;
+        }
+        if (!$id) {
+            respond(['ok' => false, 'error' => 'Missing perimeter id'], 400);
+        }
+
+        $stmt = $pdo->prepare("DELETE FROM perimeters WHERE id = :id");
+        $stmt->execute([':id' => (int)$id]);
+
+        // Also delete related alerts
+        $stmt = $pdo->prepare("DELETE FROM perimeter_alerts WHERE perimeter_id = :id");
+        $stmt->execute([':id' => (int)$id]);
+
+        respond(['ok' => true, 'message' => 'Perimeter zmazaný']);
+    } catch (Throwable $e) {
+        respond(['ok' => false, 'error' => $e->getMessage()], 500);
+    }
+}
+
+if ($action === 'toggle_perimeter' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    try {
+        $j = json_body();
+        $id = isset($j['id']) ? (int)$j['id'] : null;
+        $isActive = isset($j['is_active']) ? (int)(bool)$j['is_active'] : 0;
+
+        if (!$id) {
+            respond(['ok' => false, 'error' => 'Missing perimeter id'], 400);
+        }
+
+        $stmt = $pdo->prepare("UPDATE perimeters SET is_active = :active, updated_at = :updated WHERE id = :id");
+        $stmt->execute([
+            ':id' => $id,
+            ':active' => $isActive,
+            ':updated' => (new DateTimeImmutable())->format('Y-m-d H:i:s')
+        ]);
+
+        respond(['ok' => true, 'message' => $isActive ? 'Perimeter aktivovaný' : 'Perimeter deaktivovaný']);
+    } catch (Throwable $e) {
+        respond(['ok' => false, 'error' => $e->getMessage()], 500);
+    }
+}
+
+if ($action === 'get_perimeter_alerts') {
+    try {
+        $perimeterId = qparam('perimeter_id');
+        $limit = (int)(qparam('limit') ?: 50);
+
+        $sql = "SELECT pa.*, p.name as perimeter_name
+                FROM perimeter_alerts pa
+                LEFT JOIN perimeters p ON pa.perimeter_id = p.id";
+
+        if ($perimeterId) {
+            $sql .= " WHERE pa.perimeter_id = :pid";
+        }
+        $sql .= " ORDER BY pa.sent_at DESC LIMIT :limit";
+
+        $stmt = $pdo->prepare($sql);
+        if ($perimeterId) {
+            $stmt->bindValue(':pid', (int)$perimeterId, PDO::PARAM_INT);
+        }
+        $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
+        $stmt->execute();
+
+        $out = [];
+        while ($r = $stmt->fetch()) {
+            $out[] = [
+                'id' => (int)$r['id'],
+                'perimeter_id' => (int)$r['perimeter_id'],
+                'perimeter_name' => $r['perimeter_name'],
+                'alert_type' => $r['alert_type'],
+                'latitude' => (float)$r['latitude'],
+                'longitude' => (float)$r['longitude'],
+                'sent_at' => $r['sent_at'],
+                'email_sent' => (bool)$r['email_sent']
+            ];
+        }
+        respond(['ok' => true, 'data' => $out]);
+    } catch (Throwable $e) {
+        respond(['ok' => false, 'error' => $e->getMessage()], 500);
+    }
+}
+
+// Check position against perimeters (for manual testing)
+if ($action === 'check_perimeter' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    try {
+        $j = json_body();
+        $lat = isset($j['latitude']) ? (float)$j['latitude'] : null;
+        $lng = isset($j['longitude']) ? (float)$j['longitude'] : null;
+
+        if ($lat === null || $lng === null) {
+            respond(['ok' => false, 'error' => 'Missing latitude or longitude'], 400);
+        }
+
+        // Point-in-polygon algorithm (ray casting)
+        function point_in_polygon(float $lat, float $lng, array $polygon): bool {
+            $n = count($polygon);
+            if ($n < 3) return false;
+
+            $inside = false;
+            $j = $n - 1;
+
+            for ($i = 0; $i < $n; $j = $i++) {
+                $xi = $polygon[$i]['lng'];
+                $yi = $polygon[$i]['lat'];
+                $xj = $polygon[$j]['lng'];
+                $yj = $polygon[$j]['lat'];
+
+                if ((($yi > $lat) !== ($yj > $lat)) &&
+                    ($lng < ($xj - $xi) * ($lat - $yi) / ($yj - $yi) + $xi)) {
+                    $inside = !$inside;
+                }
+            }
+
+            return $inside;
+        }
+
+        $stmt = $pdo->query("SELECT id, name, polygon, alert_on_enter, alert_on_exit FROM perimeters WHERE is_active = 1");
+        $results = [];
+
+        while ($r = $stmt->fetch()) {
+            $polygon = json_decode($r['polygon'], true);
+            $isInside = point_in_polygon($lat, $lng, $polygon);
+            $results[] = [
+                'perimeter_id' => (int)$r['id'],
+                'perimeter_name' => $r['name'],
+                'is_inside' => $isInside,
+                'alert_on_enter' => (bool)$r['alert_on_enter'],
+                'alert_on_exit' => (bool)$r['alert_on_exit']
+            ];
+        }
+
+        respond(['ok' => true, 'data' => $results]);
+    } catch (Throwable $e) {
+        respond(['ok' => false, 'error' => $e->getMessage()], 500);
+    }
+}
+
+// Get email settings for perimeter alerts
+if ($action === 'get_perimeter_email_settings') {
+    try {
+        $settings = [
+            'email_service_url' => getenv('EMAIL_SERVICE_URL') ?: 'http://email-service:3004/send',
+            'email_api_key_set' => (getenv('EMAIL_API_KEY') !== false && getenv('EMAIL_API_KEY') !== ''),
+            'default_from_email' => getenv('EMAIL_FROM') ?: 'tracker@bagron.eu',
+            'default_from_name' => getenv('EMAIL_FROM_NAME') ?: 'Tracker Alert'
+        ];
+        respond(['ok' => true, 'data' => $settings]);
+    } catch (Throwable $e) {
+        respond(['ok' => false, 'error' => $e->getMessage()], 500);
+    }
+}
+
 respond(['ok'=>false,'error'=>'unknown action'], 400);

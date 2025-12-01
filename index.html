@@ -5,6 +5,7 @@
   <title>Tracker - denné úseky</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -131,6 +132,14 @@
           <polyline points="9 22 9 12 15 12 15 22"/>
         </svg>
         Zoznam iBeaconov
+      </button>
+      <button class="menu-item" id="menuPerimeters">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polygon points="12 2 22 8.5 22 15.5 12 22 2 15.5 2 8.5"/>
+          <line x1="12" y1="22" x2="12" y2="15.5"/>
+          <polyline points="22 8.5 12 15.5 2 8.5"/>
+        </svg>
+        Perimeter zóny
       </button>
       <button class="menu-item" id="menuSettings">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -400,7 +409,104 @@
     </div>
   </div>
 
+  <!-- Perimeter Management Overlay -->
+  <div id="perimeterOverlay" class="overlay hidden">
+    <div class="overlay-content perimeter-content">
+      <div class="overlay-header">
+        <h2 id="perimeterOverlayTitle">Perimeter zóny</h2>
+        <button id="perimeterOverlayClose" class="overlay-close" aria-label="Zavrieť">&times;</button>
+      </div>
+
+      <div class="overlay-body">
+        <!-- Perimeter List View -->
+        <div id="perimeterListView">
+          <div class="perimeter-actions-top">
+            <button type="button" id="addNewPerimeter" class="btn-primary">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="12" y1="5" x2="12" y2="19"/>
+                <line x1="5" y1="12" x2="19" y2="12"/>
+              </svg>
+              Pridať nový perimeter
+            </button>
+          </div>
+          <div id="perimeterList" class="perimeter-list">
+            <p class="perimeter-loading">Načítavam...</p>
+          </div>
+        </div>
+
+        <!-- Perimeter Edit/Create View -->
+        <div id="perimeterEditView" class="hidden">
+          <form id="perimeterForm" novalidate>
+            <input type="hidden" id="perimeterId" value="">
+
+            <div class="form-row">
+              <label for="perimeterName">Názov perimetra
+                <input type="text" id="perimeterName" placeholder="Napr. Domov, Práca, Škola" autocomplete="off" required>
+              </label>
+            </div>
+
+            <div class="form-row">
+              <label for="perimeterEmail">E-mail pre notifikácie
+                <input type="email" id="perimeterEmail" placeholder="email@example.com" autocomplete="off">
+              </label>
+            </div>
+
+            <div class="form-row form-row-inline">
+              <div class="checkbox-group">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="alertOnEnter" checked>
+                  <span>Upozorniť pri vstupe</span>
+                </label>
+              </div>
+              <div class="checkbox-group">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="alertOnExit" checked>
+                  <span>Upozorniť pri opustení</span>
+                </label>
+              </div>
+            </div>
+
+            <div class="form-row">
+              <label for="perimeterColor">Farba zóny
+                <input type="color" id="perimeterColor" value="#ff6b6b">
+              </label>
+            </div>
+
+            <div class="perimeter-map-section">
+              <p class="map-help">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                  <circle cx="12" cy="12" r="10"/>
+                  <line x1="12" y1="16" x2="12" y2="12"/>
+                  <line x1="12" y1="8" x2="12.01" y2="8"/>
+                </svg>
+                Kliknutím na mapu pridaj body polygónu. Minimálne 3 body.
+              </p>
+              <div id="perimeterDrawMap"></div>
+              <div class="polygon-info">
+                <span id="polygonPointCount">Body: 0</span>
+                <button type="button" id="clearPolygon" class="btn-small btn-secondary">Vymazať polygón</button>
+              </div>
+            </div>
+
+            <div class="form-actions">
+              <button type="button" id="savePerimeter" class="btn-primary">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
+                  <polyline points="17 21 17 13 7 13 7 21"/>
+                  <polyline points="7 3 7 8 15 8"/>
+                </svg>
+                Uložiť perimeter
+              </button>
+              <button type="button" id="cancelPerimeterEdit" class="btn-secondary">Zrušiť</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
   <script src="app.js" defer></script>
 </body>
 </html>
