@@ -1865,8 +1865,8 @@ async function loadPerimetersOnMainMap() {
   }
 }
 
-// Test email function
-async function sendTestEmail() {
+// Test email function - defined on window for onclick access
+window.sendTestEmail = async function() {
   const emailInput = $('#testEmailAddress');
   const resultEl = $('#testEmailResult');
   const btn = $('#sendTestEmail');
@@ -1922,10 +1922,7 @@ async function sendTestEmail() {
   } finally {
     btn.disabled = false;
   }
-}
-
-// Expose to global scope for onclick handler
-window.sendTestEmail = sendTestEmail;
+};
 
 // --------- boot ---------
 window.addEventListener('DOMContentLoaded', () => {
