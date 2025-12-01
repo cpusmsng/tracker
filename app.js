@@ -1481,6 +1481,11 @@ function addUIHandlers() {
     clearPolygonBtn.addEventListener('click', clearPolygon);
   }
 
+  const addPerimeterEmailBtn = $('#addPerimeterEmail');
+  if (addPerimeterEmailBtn) {
+    addPerimeterEmailBtn.addEventListener('click', addEmailEntry);
+  }
+
   const perimeterColorInput = $('#perimeterColor');
   if (perimeterColorInput) {
     perimeterColorInput.addEventListener('change', drawPolygonOnMap);
@@ -1536,21 +1541,21 @@ function showPerimeterEditView(perimeter = null) {
     $('#perimeterOverlayTitle').textContent = 'Upraviť perimeter';
     $('#perimeterId').value = perimeter.id;
     $('#perimeterName').value = perimeter.name;
-    $('#perimeterEmail').value = perimeter.notification_email || '';
-    $('#alertOnEnter').checked = perimeter.alert_on_enter;
-    $('#alertOnExit').checked = perimeter.alert_on_exit;
     $('#perimeterColor').value = perimeter.color || '#ff6b6b';
     perimeterPolygonPoints = perimeter.polygon || [];
+
+    // Populate emails list
+    renderEmailsList(perimeter.emails || []);
   } else {
     editingPerimeterId = null;
     $('#perimeterOverlayTitle').textContent = 'Nový perimeter';
     $('#perimeterId').value = '';
     $('#perimeterName').value = '';
-    $('#perimeterEmail').value = '';
-    $('#alertOnEnter').checked = true;
-    $('#alertOnExit').checked = true;
     $('#perimeterColor').value = '#ff6b6b';
     perimeterPolygonPoints = [];
+
+    // Start with one empty email entry
+    renderEmailsList([{ email: '', alert_on_enter: true, alert_on_exit: true }]);
   }
 
   updatePolygonPointCount();
@@ -1561,6 +1566,106 @@ function showPerimeterEditView(perimeter = null) {
     drawPolygonOnMap();
   }, 100);
 }
+
+// Multiple emails management
+function renderEmailsList(emails) {
+  const container = $('#perimeterEmailsList');
+  if (!container) return;
+
+  container.innerHTML = '';
+
+  if (emails.length === 0) {
+    container.innerHTML = '<p class="perimeter-emails-empty">Žiadne e-maily. Pridajte aspoň jeden pre prijímanie notifikácií.</p>';
+    return;
+  }
+
+  emails.forEach((emailData, index) => {
+    container.appendChild(createEmailEntry(emailData, index));
+  });
+}
+
+function createEmailEntry(emailData = {}, index = 0) {
+  const div = document.createElement('div');
+  div.className = 'perimeter-email-entry';
+  div.dataset.index = index;
+
+  const email = emailData.email || '';
+  const alertOnEnter = emailData.alert_on_enter !== false;
+  const alertOnExit = emailData.alert_on_exit !== false;
+
+  div.innerHTML = `
+    <input type="email" class="email-input" value="${email}" placeholder="email@example.com" autocomplete="off">
+    <div class="perimeter-email-options">
+      <label class="checkbox-label">
+        <input type="checkbox" class="alert-enter" ${alertOnEnter ? 'checked' : ''}>
+        <span>Vstup</span>
+      </label>
+      <label class="checkbox-label">
+        <input type="checkbox" class="alert-exit" ${alertOnExit ? 'checked' : ''}>
+        <span>Výstup</span>
+      </label>
+      <button type="button" class="btn-remove-email" onclick="removeEmailEntry(this)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12">
+          <line x1="18" y1="6" x2="6" y2="18"/>
+          <line x1="6" y1="6" x2="18" y2="18"/>
+        </svg>
+        Odstrániť
+      </button>
+    </div>
+  `;
+
+  return div;
+}
+
+function addEmailEntry() {
+  const container = $('#perimeterEmailsList');
+  if (!container) return;
+
+  // Remove empty message if present
+  const emptyMsg = container.querySelector('.perimeter-emails-empty');
+  if (emptyMsg) emptyMsg.remove();
+
+  const index = container.querySelectorAll('.perimeter-email-entry').length;
+  container.appendChild(createEmailEntry({ email: '', alert_on_enter: true, alert_on_exit: true }, index));
+}
+
+function removeEmailEntry(btn) {
+  const entry = btn.closest('.perimeter-email-entry');
+  if (entry) {
+    entry.remove();
+
+    // Show empty message if no entries left
+    const container = $('#perimeterEmailsList');
+    if (container && container.querySelectorAll('.perimeter-email-entry').length === 0) {
+      container.innerHTML = '<p class="perimeter-emails-empty">Žiadne e-maily. Pridajte aspoň jeden pre prijímanie notifikácií.</p>';
+    }
+  }
+}
+
+function getEmailsFromList() {
+  const container = $('#perimeterEmailsList');
+  if (!container) return [];
+
+  const emails = [];
+  container.querySelectorAll('.perimeter-email-entry').forEach(entry => {
+    const email = entry.querySelector('.email-input')?.value?.trim() || '';
+    const alertOnEnter = entry.querySelector('.alert-enter')?.checked ?? true;
+    const alertOnExit = entry.querySelector('.alert-exit')?.checked ?? true;
+
+    if (email) {
+      emails.push({
+        email: email,
+        alert_on_enter: alertOnEnter,
+        alert_on_exit: alertOnExit
+      });
+    }
+  });
+
+  return emails;
+}
+
+// Expose to global scope for onclick
+window.removeEmailEntry = removeEmailEntry;
 
 function initPerimeterDrawMap() {
   if (perimeterDrawMap) {
@@ -1743,10 +1848,8 @@ async function loadPerimeterList() {
 
 async function savePerimeter() {
   const name = $('#perimeterName').value.trim();
-  const email = $('#perimeterEmail').value.trim();
-  const alertOnEnter = $('#alertOnEnter').checked;
-  const alertOnExit = $('#alertOnExit').checked;
   const color = $('#perimeterColor').value;
+  const emails = getEmailsFromList();
 
   if (!name) {
     alert('Zadajte názov perimetra');
@@ -1758,18 +1861,19 @@ async function savePerimeter() {
     return;
   }
 
-  if (email && !isValidEmail(email)) {
-    alert('Zadajte platný e-mail alebo pole nechajte prázdne');
-    return;
+  // Validate emails
+  for (const e of emails) {
+    if (!isValidEmail(e.email)) {
+      alert(`Neplatný e-mail: ${e.email}`);
+      return;
+    }
   }
 
   try {
     const payload = {
       name: name,
       polygon: perimeterPolygonPoints,
-      alert_on_enter: alertOnEnter,
-      alert_on_exit: alertOnExit,
-      notification_email: email,
+      emails: emails,
       color: color,
       is_active: true
     };
@@ -1784,6 +1888,7 @@ async function savePerimeter() {
       alert(editingPerimeterId ? 'Perimeter aktualizovaný!' : 'Perimeter vytvorený!');
       showPerimeterListView();
       await loadPerimeterList();
+      await loadPerimetersOnMainMap();
     } else {
       alert(`Chyba: ${result.error || 'Neznáma chyba'}`);
     }

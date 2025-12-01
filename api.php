@@ -760,6 +760,18 @@ try {
         )
     ");
 
+    // Create perimeter_emails table for multiple emails per perimeter
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS perimeter_emails (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            perimeter_id INTEGER NOT NULL,
+            email TEXT NOT NULL,
+            alert_on_enter INTEGER DEFAULT 1,
+            alert_on_exit INTEGER DEFAULT 1,
+            FOREIGN KEY (perimeter_id) REFERENCES perimeters(id) ON DELETE CASCADE
+        )
+    ");
+
     // Create perimeter_alerts table for tracking sent notifications
     $pdo->exec("
         CREATE TABLE IF NOT EXISTS perimeter_alerts (
@@ -785,13 +797,39 @@ if ($action === 'get_perimeters') {
                           ORDER BY id ASC");
         $out = [];
         while ($r = $q->fetch()) {
+            $perimeterId = (int)$r['id'];
+
+            // Get emails for this perimeter
+            $emailStmt = $pdo->prepare("SELECT id, email, alert_on_enter, alert_on_exit FROM perimeter_emails WHERE perimeter_id = :pid ORDER BY id ASC");
+            $emailStmt->execute([':pid' => $perimeterId]);
+            $emails = [];
+            while ($e = $emailStmt->fetch()) {
+                $emails[] = [
+                    'id' => (int)$e['id'],
+                    'email' => $e['email'],
+                    'alert_on_enter' => (bool)$e['alert_on_enter'],
+                    'alert_on_exit' => (bool)$e['alert_on_exit']
+                ];
+            }
+
+            // Backwards compatibility: if no emails in new table but has notification_email, migrate it
+            if (empty($emails) && !empty($r['notification_email'])) {
+                $emails[] = [
+                    'id' => null,
+                    'email' => $r['notification_email'],
+                    'alert_on_enter' => (bool)$r['alert_on_enter'],
+                    'alert_on_exit' => (bool)$r['alert_on_exit']
+                ];
+            }
+
             $out[] = [
-                'id' => (int)$r['id'],
+                'id' => $perimeterId,
                 'name' => (string)$r['name'],
                 'polygon' => json_decode($r['polygon'], true),
                 'alert_on_enter' => (bool)$r['alert_on_enter'],
                 'alert_on_exit' => (bool)$r['alert_on_exit'],
-                'notification_email' => $r['notification_email'],
+                'notification_email' => $r['notification_email'], // Keep for backwards compatibility
+                'emails' => $emails,
                 'is_active' => (bool)$r['is_active'],
                 'color' => $r['color'] ?? '#ff6b6b',
                 'created_at' => $r['created_at'],
@@ -813,6 +851,7 @@ if ($action === 'save_perimeter' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         $alertOnEnter = isset($j['alert_on_enter']) ? (int)(bool)$j['alert_on_enter'] : 1;
         $alertOnExit = isset($j['alert_on_exit']) ? (int)(bool)$j['alert_on_exit'] : 1;
         $notificationEmail = trim((string)($j['notification_email'] ?? ''));
+        $emails = $j['emails'] ?? []; // New: array of {email, alert_on_enter, alert_on_exit}
         $isActive = isset($j['is_active']) ? (int)(bool)$j['is_active'] : 1;
         $color = trim((string)($j['color'] ?? '#ff6b6b'));
 
@@ -822,12 +861,19 @@ if ($action === 'save_perimeter' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         if (!is_array($polygon) || count($polygon) < 3) {
             respond(['ok' => false, 'error' => 'Perimeter musí mať aspoň 3 body'], 400);
         }
-        if ($notificationEmail !== '' && !filter_var($notificationEmail, FILTER_VALIDATE_EMAIL)) {
-            respond(['ok' => false, 'error' => 'Neplatná e-mailová adresa'], 400);
+
+        // Validate emails array
+        foreach ($emails as $idx => $emailEntry) {
+            $em = trim($emailEntry['email'] ?? '');
+            if ($em !== '' && !filter_var($em, FILTER_VALIDATE_EMAIL)) {
+                respond(['ok' => false, 'error' => 'Neplatná e-mailová adresa: ' . $em], 400);
+            }
         }
 
         $polygonJson = json_encode($polygon);
         $now = (new DateTimeImmutable())->format('Y-m-d H:i:s');
+
+        $pdo->beginTransaction();
 
         if ($id) {
             // Update existing
@@ -854,7 +900,7 @@ if ($action === 'save_perimeter' && $_SERVER['REQUEST_METHOD'] === 'POST') {
                 ':color' => $color,
                 ':updated' => $now
             ]);
-            respond(['ok' => true, 'message' => 'Perimeter aktualizovaný', 'id' => $id]);
+            $perimeterId = $id;
         } else {
             // Insert new
             $stmt = $pdo->prepare("
@@ -872,10 +918,33 @@ if ($action === 'save_perimeter' && $_SERVER['REQUEST_METHOD'] === 'POST') {
                 ':created' => $now,
                 ':updated' => $now
             ]);
-            $newId = (int)$pdo->lastInsertId();
-            respond(['ok' => true, 'message' => 'Perimeter vytvorený', 'id' => $newId]);
+            $perimeterId = (int)$pdo->lastInsertId();
         }
+
+        // Update emails: delete old, insert new
+        $pdo->prepare("DELETE FROM perimeter_emails WHERE perimeter_id = :pid")->execute([':pid' => $perimeterId]);
+
+        $emailInsert = $pdo->prepare("
+            INSERT INTO perimeter_emails (perimeter_id, email, alert_on_enter, alert_on_exit)
+            VALUES (:pid, :email, :enter, :exit)
+        ");
+        foreach ($emails as $emailEntry) {
+            $em = trim($emailEntry['email'] ?? '');
+            if ($em !== '') {
+                $emailInsert->execute([
+                    ':pid' => $perimeterId,
+                    ':email' => $em,
+                    ':enter' => isset($emailEntry['alert_on_enter']) ? (int)(bool)$emailEntry['alert_on_enter'] : 1,
+                    ':exit' => isset($emailEntry['alert_on_exit']) ? (int)(bool)$emailEntry['alert_on_exit'] : 1
+                ]);
+            }
+        }
+
+        $pdo->commit();
+
+        respond(['ok' => true, 'message' => $id ? 'Perimeter aktualizovaný' : 'Perimeter vytvorený', 'id' => $perimeterId]);
     } catch (Throwable $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
         respond(['ok' => false, 'error' => $e->getMessage()], 500);
     }
 }

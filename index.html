@@ -461,25 +461,19 @@
               </label>
             </div>
 
+            <!-- Multiple Emails Section -->
             <div class="form-row">
-              <label for="perimeterEmail">E-mail pre notifikácie
-                <input type="email" id="perimeterEmail" placeholder="email@example.com" autocomplete="off">
-              </label>
-            </div>
-
-            <div class="form-row form-row-inline">
-              <div class="checkbox-group">
-                <label class="checkbox-label">
-                  <input type="checkbox" id="alertOnEnter" checked>
-                  <span>Upozorniť pri vstupe</span>
-                </label>
+              <label>E-maily pre notifikácie</label>
+              <div id="perimeterEmailsList" class="perimeter-emails-list">
+                <!-- Email entries will be added here dynamically -->
               </div>
-              <div class="checkbox-group">
-                <label class="checkbox-label">
-                  <input type="checkbox" id="alertOnExit" checked>
-                  <span>Upozorniť pri opustení</span>
-                </label>
-              </div>
+              <button type="button" id="addPerimeterEmail" class="btn-small btn-secondary">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                  <line x1="12" y1="5" x2="12" y2="19"/>
+                  <line x1="5" y1="12" x2="19" y2="12"/>
+                </svg>
+                Pridať e-mail
+              </button>
             </div>
 
             <div class="form-row">

@@ -463,13 +463,41 @@ function load_active_perimeters(PDO $pdo): array {
             WHERE is_active = 1
         ");
         while ($r = $stmt->fetch()) {
+            $pid = (int)$r['id'];
+
+            // Load emails for this perimeter
+            $emailStmt = $pdo->prepare("
+                SELECT email, alert_on_enter, alert_on_exit
+                FROM perimeter_emails
+                WHERE perimeter_id = :pid
+            ");
+            $emailStmt->execute([':pid' => $pid]);
+            $emails = [];
+            while ($e = $emailStmt->fetch()) {
+                $emails[] = [
+                    'email' => $e['email'],
+                    'alert_on_enter' => (bool)$e['alert_on_enter'],
+                    'alert_on_exit' => (bool)$e['alert_on_exit']
+                ];
+            }
+
+            // Backwards compatibility: if no emails in new table, use legacy field
+            if (empty($emails) && !empty($r['notification_email'])) {
+                $emails[] = [
+                    'email' => $r['notification_email'],
+                    'alert_on_enter' => (bool)$r['alert_on_enter'],
+                    'alert_on_exit' => (bool)$r['alert_on_exit']
+                ];
+            }
+
             $perimeters[] = [
-                'id' => (int)$r['id'],
+                'id' => $pid,
                 'name' => $r['name'],
                 'polygon' => json_decode($r['polygon'], true),
                 'alert_on_enter' => (bool)$r['alert_on_enter'],
                 'alert_on_exit' => (bool)$r['alert_on_exit'],
-                'notification_email' => $r['notification_email']
+                'notification_email' => $r['notification_email'],
+                'emails' => $emails
             ];
         }
         debug_log("PERIMETERS: loaded ".count($perimeters)." active zones");
@@ -509,8 +537,22 @@ function check_perimeter_breaches(
             continue;
         }
 
+        // Check if any email wants to receive enter alerts
+        $anyWantsEnter = false;
+        $anyWantsExit = false;
+        $emails = $p['emails'] ?? [];
+        foreach ($emails as $e) {
+            if ($e['alert_on_enter']) $anyWantsEnter = true;
+            if ($e['alert_on_exit']) $anyWantsExit = true;
+        }
+        // Fallback to legacy perimeter settings if no emails defined
+        if (empty($emails)) {
+            $anyWantsEnter = $p['alert_on_enter'];
+            $anyWantsExit = $p['alert_on_exit'];
+        }
+
         // Detect breach
-        if (!$wasInside && $isInside && $p['alert_on_enter']) {
+        if (!$wasInside && $isInside && $anyWantsEnter) {
             // ENTERED the zone
             $breaches[] = [
                 'perimeter' => $p,
@@ -520,7 +562,7 @@ function check_perimeter_breaches(
                 'timestamp' => $timestamp
             ];
             debug_log("    PERIMETER BREACH: ENTERED '{$p['name']}'");
-        } elseif ($wasInside && !$isInside && $p['alert_on_exit']) {
+        } elseif ($wasInside && !$isInside && $anyWantsExit) {
             // EXITED the zone
             $breaches[] = [
                 'perimeter' => $p,
@@ -536,13 +578,14 @@ function check_perimeter_breaches(
     return $breaches;
 }
 
-function send_perimeter_alert_email(array $breach): bool {
+function send_perimeter_alert_emails(array $breach): int {
     $p = $breach['perimeter'];
-    $email = $p['notification_email'];
+    $emails = $p['emails'] ?? [];
+    $breachType = $breach['type']; // 'enter' or 'exit'
 
-    if (!$email) {
-        debug_log("    EMAIL SKIP: no notification email configured for '{$p['name']}'");
-        return false;
+    if (empty($emails)) {
+        debug_log("    EMAIL SKIP: no emails configured for '{$p['name']}'");
+        return 0;
     }
 
     $emailServiceUrl = getenv('EMAIL_SERVICE_URL') ?: 'http://email-service:3004/send';
@@ -552,11 +595,10 @@ function send_perimeter_alert_email(array $breach): bool {
 
     if (!$apiKey) {
         debug_log("    EMAIL SKIP: EMAIL_API_KEY not configured");
-        return false;
+        return 0;
     }
 
-    $alertType = $breach['type'] === 'enter' ? 'VSTUP DO ZÓNY' : 'OPUSTENIE ZÓNY';
-    $alertTypeEn = $breach['type'] === 'enter' ? 'Zone Entry' : 'Zone Exit';
+    $alertType = $breachType === 'enter' ? 'VSTUP DO ZÓNY' : 'OPUSTENIE ZÓNY';
     $subject = "Tracker Alert: $alertType - {$p['name']}";
 
     // Format timestamp for display
@@ -578,7 +620,7 @@ function send_perimeter_alert_email(array $breach): bool {
         <style>
             body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
             .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-            .header { background: " . ($breach['type'] === 'enter' ? '#10b981' : '#ef4444') . "; color: white; padding: 20px; border-radius: 8px 8px 0 0; }
+            .header { background: " . ($breachType === 'enter' ? '#10b981' : '#ef4444') . "; color: white; padding: 20px; border-radius: 8px 8px 0 0; }
             .content { background: #f8fafc; padding: 20px; border: 1px solid #e5e5e5; border-top: none; border-radius: 0 0 8px 8px; }
             .info-row { margin: 10px 0; }
             .label { font-weight: bold; color: #555; }
@@ -611,44 +653,67 @@ function send_perimeter_alert_email(array $breach): bool {
     </body>
     </html>";
 
-    $payload = json_encode([
-        'to_email' => $email,
-        'subject' => $subject,
-        'html_body' => $htmlBody,
-        'from_email' => $fromEmail,
-        'from_name' => $fromName,
-        'api_key' => $apiKey
-    ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    $sentCount = 0;
 
-    debug_log("    EMAIL SENDING: to=$email subject=$subject");
+    // Send to each email that has the appropriate alert type enabled
+    foreach ($emails as $emailEntry) {
+        $toEmail = $emailEntry['email'] ?? '';
+        if (!$toEmail) continue;
 
-    $ch = curl_init($emailServiceUrl);
-    curl_setopt_array($ch, [
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_POST => true,
-        CURLOPT_POSTFIELDS => $payload,
-        CURLOPT_HTTPHEADER => ['Content-Type: application/json'],
-        CURLOPT_TIMEOUT => 15,
-        CURLOPT_CONNECTTIMEOUT => 10
-    ]);
+        // Check if this email should receive this alert type
+        $shouldReceive = ($breachType === 'enter' && $emailEntry['alert_on_enter']) ||
+                         ($breachType === 'exit' && $emailEntry['alert_on_exit']);
 
-    $response = curl_exec($ch);
-    $httpCode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    $curlError = curl_error($ch);
-    curl_close($ch);
+        if (!$shouldReceive) {
+            debug_log("    EMAIL SKIP: $toEmail - alert type '$breachType' not enabled for this recipient");
+            continue;
+        }
 
-    if ($curlError) {
-        debug_log("    EMAIL ERROR: curl error - $curlError");
-        return false;
+        $payload = json_encode([
+            'to_email' => $toEmail,
+            'subject' => $subject,
+            'html_body' => $htmlBody,
+            'from_email' => $fromEmail,
+            'from_name' => $fromName,
+            'api_key' => $apiKey
+        ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+
+        debug_log("    EMAIL SENDING: to=$toEmail subject=$subject");
+
+        $ch = curl_init($emailServiceUrl);
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_POST => true,
+            CURLOPT_POSTFIELDS => $payload,
+            CURLOPT_HTTPHEADER => ['Content-Type: application/json'],
+            CURLOPT_TIMEOUT => 15,
+            CURLOPT_CONNECTTIMEOUT => 10
+        ]);
+
+        $response = curl_exec($ch);
+        $httpCode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $curlError = curl_error($ch);
+        curl_close($ch);
+
+        if ($curlError) {
+            debug_log("    EMAIL ERROR: to=$toEmail curl error - $curlError");
+            continue;
+        }
+
+        if ($httpCode >= 200 && $httpCode < 300) {
+            debug_log("    EMAIL SUCCESS: to=$toEmail http=$httpCode");
+            $sentCount++;
+        } else {
+            debug_log("    EMAIL ERROR: to=$toEmail http=$httpCode response=".substr($response, 0, 200));
+        }
     }
 
-    if ($httpCode >= 200 && $httpCode < 300) {
-        debug_log("    EMAIL SUCCESS: http=$httpCode");
-        return true;
-    } else {
-        debug_log("    EMAIL ERROR: http=$httpCode response=".substr($response, 0, 200));
-        return false;
-    }
+    return $sentCount;
+}
+
+// Backwards compatibility wrapper
+function send_perimeter_alert_email(array $breach): bool {
+    return send_perimeter_alert_emails($breach) > 0;
 }
 
 function record_perimeter_alert(PDO $pdo, array $breach, bool $emailSent): void {
