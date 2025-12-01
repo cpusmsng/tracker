@@ -1893,23 +1893,35 @@ window.sendTestEmail = async function() {
   resultEl.className = 'test-email-result loading';
 
   try {
-    const response = await apiPost('test_email', { email });
+    // Use fetch directly to handle error responses with JSON body
+    const r = await fetch(`${API}?action=test_email`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email })
+    });
+
+    let response;
+    try {
+      response = await r.json();
+    } catch (e) {
+      // If JSON parsing fails, create error response
+      response = { ok: false, error: `Server vrátil HTTP ${r.status} (nie JSON odpoveď)` };
+    }
+
+    console.log('Test email response:', response);
 
     if (response.ok) {
       resultEl.textContent = response.message || 'Testovací e-mail bol odoslaný!';
       resultEl.className = 'test-email-result success';
 
-      // Show debug info in console
       if (response.debug) {
         console.log('Test email debug:', response.debug);
       }
     } else {
-      let errorMsg = response.error || 'Neznáma chyba pri odosielaní';
+      let errorMsg = response.error || `Chyba servera (HTTP ${r.status})`;
 
-      // Show debug info for errors
       if (response.debug) {
         console.error('Test email error debug:', response.debug);
-        errorMsg += ` (URL: ${response.debug.url || 'neznáma'})`;
       }
 
       resultEl.textContent = errorMsg;

@@ -1053,7 +1053,11 @@ if ($action === 'test_email' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         $fromName = getenv('EMAIL_FROM_NAME') ?: 'Tracker Alert';
 
         if (empty($apiKey)) {
-            respond(['ok' => false, 'error' => 'EMAIL_API_KEY nie je nakonfigurovaný v .env súbore'], 400);
+            respond(['ok' => false, 'error' => 'EMAIL_API_KEY nie je nakonfigurovaný v .env súbore', 'debug' => ['env_vars' => ['EMAIL_SERVICE_URL' => $emailServiceUrl, 'EMAIL_API_KEY' => '(empty)', 'EMAIL_FROM' => $fromEmail]]], 400);
+        }
+
+        if (!function_exists('curl_init')) {
+            respond(['ok' => false, 'error' => 'PHP curl extension nie je nainštalovaná'], 500);
         }
 
         $htmlBody = '
