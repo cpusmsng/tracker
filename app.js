@@ -1924,6 +1924,9 @@ async function sendTestEmail() {
   }
 }
 
+// Expose to global scope for onclick handler
+window.sendTestEmail = sendTestEmail;
+
 // --------- boot ---------
 window.addEventListener('DOMContentLoaded', () => {
   // Inicializuj PIN security najprv
