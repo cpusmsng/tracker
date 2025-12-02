@@ -2,6 +2,43 @@
 
 const API = 'api.php';
 
+// --------- Theme Management ---------
+function initTheme() {
+  const savedTheme = localStorage.getItem('tracker_theme') || 'auto';
+  applyTheme(savedTheme);
+
+  // Set up theme toggle handlers
+  document.querySelectorAll('input[name="theme"]').forEach(radio => {
+    if (radio.value === savedTheme) {
+      radio.checked = true;
+    }
+    radio.addEventListener('change', (e) => {
+      const theme = e.target.value;
+      applyTheme(theme);
+      localStorage.setItem('tracker_theme', theme);
+    });
+  });
+}
+
+function applyTheme(theme) {
+  const root = document.documentElement;
+
+  if (theme === 'dark') {
+    root.setAttribute('data-theme', 'dark');
+  } else if (theme === 'light') {
+    root.setAttribute('data-theme', 'light');
+  } else {
+    // Auto - remove attribute to let CSS media query handle it
+    root.removeAttribute('data-theme');
+  }
+}
+
+// Initialize theme immediately (before PIN)
+(function() {
+  const savedTheme = localStorage.getItem('tracker_theme') || 'auto';
+  applyTheme(savedTheme);
+})();
+
 // --------- PIN Security ---------
 let pinCode = '';
 const PIN_LENGTH = 4;
@@ -743,6 +780,9 @@ async function loadCurrentSettings() {
       $('#currentUniqueBucketMinutes').textContent = `(${data.unique_bucket_minutes || 30} min)`;
       $('#currentMacCacheMaxAgeDays').textContent = `(${data.mac_cache_max_age_days || 3600} dní)`;
       $('#currentGoogleForce').textContent = (data.google_force === '1' || data.google_force === 1) ? '(Zapnuté)' : '(Vypnuté)';
+
+      // Initialize theme toggle in settings
+      initTheme();
 
       console.log('Settings loaded successfully');
     } else {

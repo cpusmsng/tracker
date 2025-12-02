@@ -10,6 +10,41 @@
   --footer-bg:#e5e7eb;
   --battery-good:#10b981;
   --battery-low:#ef4444;
+  --body-bg:#f8fafc;
+}
+
+/* Dark mode */
+[data-theme="dark"]{
+  --card-bg:#1e1e1e;
+  --muted-bg:#2d2d2d;
+  --border:#404040;
+  --text:#e5e5e5;
+  --muted-text:#a0a0a0;
+  --primary:#38bdf8;
+  --primary-hover:#0ea5e9;
+  --highlight:#34d399;
+  --footer-bg:#262626;
+  --battery-good:#34d399;
+  --battery-low:#f87171;
+  --body-bg:#121212;
+}
+
+/* Auto dark mode based on system preference */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --card-bg:#1e1e1e;
+    --muted-bg:#2d2d2d;
+    --border:#404040;
+    --text:#e5e5e5;
+    --muted-text:#a0a0a0;
+    --primary:#38bdf8;
+    --primary-hover:#0ea5e9;
+    --highlight:#34d399;
+    --footer-bg:#262626;
+    --battery-good:#34d399;
+    --battery-low:#f87171;
+    --body-bg:#121212;
+  }
 }
 
 /* ========== PIN ENTRY OVERLAY (SECURITY) ========== */
@@ -174,7 +209,7 @@
 html,body{
   margin:0;min-height:100%;
   font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
-  color:var(--text);background:#f8fafc;
+  color:var(--text);background:var(--body-bg);
 }
 body{padding:16px 16px 0;display:flex;flex-direction:column}
 
@@ -189,9 +224,9 @@ body{padding:16px 16px 0;display:flex;flex-direction:column}
 #topbar{
   padding:10px 12px;display:flex;align-items:center;justify-content:space-between;
   background:var(--card-bg);border:1px solid var(--border);border-radius:10px;
-  position:fixed;top:8px;left:16px;right:16px;z-index:1100;gap:8px;
+  position:fixed;top:8px;left:50%;transform:translateX(-50%);z-index:1100;gap:8px;
   box-shadow:0 2px 8px rgba(0,0,0,0.08);
-  max-width:1168px;margin:0 auto;
+  width:calc(100% - 32px);max-width:1168px;
 }
 
 /* Topbar left - app name */
@@ -200,14 +235,11 @@ body{padding:16px 16px 0;display:flex;flex-direction:column}
 }
 .topbar-left h1{
   margin:0;font-size:18px;font-weight:700;
-  background:linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  -webkit-background-clip:text;
-  -webkit-text-fill-color:transparent;
-  background-clip:text;
+  color:var(--text);
   display:flex;align-items:center;gap:6px;
 }
 .topbar-left h1 svg{
-  width:20px;height:20px;stroke:#667eea;
+  width:20px;height:20px;stroke:var(--primary);
 }
 
 /* Topbar center - date controls */
@@ -288,21 +320,45 @@ body{padding:16px 16px 0;display:flex;flex-direction:column}
   display:flex;align-items:center;gap:6px;
   padding:6px 10px;background:var(--muted-bg);border-radius:8px;
   border:1px solid var(--border);
+  transition:border-color 0.3s, background-color 0.3s;
 }
 
-.battery-icon{
-  width:24px;height:24px;
-  color:var(--battery-good);
-  transition:color 0.3s;
+.battery-indicator[data-level="good"]{
+  border-color:var(--battery-good);
+  background:rgba(16, 185, 129, 0.1);
+}
+
+.battery-indicator[data-level="low"]{
+  border-color:var(--battery-low);
+  background:rgba(239, 68, 68, 0.1);
+}
+
+.battery-icon-good,
+.battery-icon-low{
+  width:22px;height:22px;
   flex-shrink:0;
 }
 
-.battery-indicator[data-level="low"] .battery-icon{
+.battery-icon-good{
+  color:var(--battery-good);
+}
+
+.battery-icon-low{
   color:var(--battery-low);
 }
 
-.battery-indicator[data-level="good"] .battery-icon{
-  color:var(--battery-good);
+/* Show/hide icons based on state */
+.battery-indicator .battery-icon-good,
+.battery-indicator .battery-icon-low{
+  display:none;
+}
+
+.battery-indicator[data-level="good"] .battery-icon-good{
+  display:block;
+}
+
+.battery-indicator[data-level="low"] .battery-icon-low{
+  display:block;
 }
 
 .battery-text{
@@ -808,6 +864,42 @@ body{padding:16px 16px 0;display:flex;flex-direction:column}
   font-size:12px;color:#999;font-style:italic;
 }
 
+/* Theme Toggle Group */
+.theme-toggle-group{
+  display:flex;gap:8px;flex-wrap:wrap;
+}
+
+.theme-option{
+  cursor:pointer;
+}
+
+.theme-option input[type="radio"]{
+  display:none;
+}
+
+.theme-label{
+  display:flex;align-items:center;gap:6px;
+  padding:10px 16px;border-radius:8px;
+  border:2px solid var(--border);
+  background:var(--card-bg);
+  font-size:14px;font-weight:500;
+  color:var(--text);
+  transition:border-color 0.2s, background-color 0.2s;
+}
+
+.theme-label svg{
+  width:18px;height:18px;
+}
+
+.theme-option input[type="radio"]:checked + .theme-label{
+  border-color:var(--primary);
+  background:rgba(14,165,233,0.1);
+}
+
+.theme-option:hover .theme-label{
+  border-color:var(--muted-text);
+}
+
 /* Toggle Switch */
 .toggle-switch{
   display:inline-block;position:relative;
@@ -1203,7 +1295,8 @@ body{padding:16px 16px 0;display:flex;flex-direction:column}
     min-width:auto;
   }
 
-  .battery-icon{
+  .battery-icon-good,
+  .battery-icon-low{
     width:20px;height:20px;
   }
 
