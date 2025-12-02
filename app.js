@@ -2,6 +2,43 @@
 
 const API = 'api.php';
 
+// --------- Theme Management ---------
+function initTheme() {
+  const savedTheme = localStorage.getItem('tracker_theme') || 'auto';
+  applyTheme(savedTheme);
+
+  // Set up theme toggle handlers
+  document.querySelectorAll('input[name="theme"]').forEach(radio => {
+    if (radio.value === savedTheme) {
+      radio.checked = true;
+    }
+    radio.addEventListener('change', (e) => {
+      const theme = e.target.value;
+      applyTheme(theme);
+      localStorage.setItem('tracker_theme', theme);
+    });
+  });
+}
+
+function applyTheme(theme) {
+  const root = document.documentElement;
+
+  if (theme === 'dark') {
+    root.setAttribute('data-theme', 'dark');
+  } else if (theme === 'light') {
+    root.setAttribute('data-theme', 'light');
+  } else {
+    // Auto - remove attribute to let CSS media query handle it
+    root.removeAttribute('data-theme');
+  }
+}
+
+// Initialize theme immediately (before PIN)
+(function() {
+  const savedTheme = localStorage.getItem('tracker_theme') || 'auto';
+  applyTheme(savedTheme);
+})();
+
 // --------- PIN Security ---------
 let pinCode = '';
 const PIN_LENGTH = 4;
@@ -462,6 +499,19 @@ function initHamburgerMenu() {
     });
   }
 
+  // iBeacon submenu toggle
+  const menuIBeacons = $('#menuIBeacons');
+  if (menuIBeacons) {
+    menuIBeacons.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const submenuItems = menuIBeacons.parentElement.querySelector('.submenu-items');
+      if (submenuItems) {
+        submenuItems.classList.toggle('hidden');
+        menuIBeacons.classList.toggle('expanded');
+      }
+    });
+  }
+
   if (menuManageIBeacons) {
     menuManageIBeacons.addEventListener('click', () => {
       console.log('Manage iBeacons clicked');
@@ -492,6 +542,17 @@ function initHamburgerMenu() {
     });
   } else {
     console.error('Settings menu item not found! Check if index.html has been updated.');
+  }
+
+  // Perimeter zones menu item
+  const menuPerimeters = $('#menuPerimeters');
+  if (menuPerimeters) {
+    menuPerimeters.addEventListener('click', () => {
+      console.log('Perimeters menu clicked');
+      menu.classList.add('hidden');
+      btn.classList.remove('active');
+      openPerimeterOverlay();
+    });
   }
 }
 
@@ -732,6 +793,9 @@ async function loadCurrentSettings() {
       $('#currentUniqueBucketMinutes').textContent = `(${data.unique_bucket_minutes || 30} min)`;
       $('#currentMacCacheMaxAgeDays').textContent = `(${data.mac_cache_max_age_days || 3600} dní)`;
       $('#currentGoogleForce').textContent = (data.google_force === '1' || data.google_force === 1) ? '(Zapnuté)' : '(Vypnuté)';
+
+      // Initialize theme toggle in settings
+      initTheme();
 
       console.log('Settings loaded successfully');
     } else {
@@ -1377,6 +1441,7 @@ async function refresh() {
   setDateLabel();
   await loadHistory(fmt(currentDate));
   await loadIBeacons();
+  await loadPerimetersOnMainMap();
   await updateBatteryStatus();
   // updateLastOnline() removed - updateBatteryStatus() now handles this from device status API
 }
@@ -1442,7 +1507,592 @@ function addUIHandlers() {
       closeSettingsOverlay();
     }
   });
+
+  // Perimeter overlay handlers
+  const perimeterOverlayClose = $('#perimeterOverlayClose');
+  if (perimeterOverlayClose) {
+    perimeterOverlayClose.addEventListener('click', closePerimeterOverlay);
+  }
+
+  const addNewPerimeter = $('#addNewPerimeter');
+  if (addNewPerimeter) {
+    addNewPerimeter.addEventListener('click', () => showPerimeterEditView(null));
+  }
+
+  const savePerimeterBtn = $('#savePerimeter');
+  if (savePerimeterBtn) {
+    savePerimeterBtn.addEventListener('click', savePerimeter);
+  }
+
+  const cancelPerimeterEdit = $('#cancelPerimeterEdit');
+  if (cancelPerimeterEdit) {
+    cancelPerimeterEdit.addEventListener('click', showPerimeterListView);
+  }
+
+  const clearPolygonBtn = $('#clearPolygon');
+  if (clearPolygonBtn) {
+    clearPolygonBtn.addEventListener('click', clearPolygon);
+  }
+
+  const addPerimeterEmailBtn = $('#addPerimeterEmail');
+  if (addPerimeterEmailBtn) {
+    addPerimeterEmailBtn.addEventListener('click', addEmailEntry);
+  }
+
+  const perimeterColorInput = $('#perimeterColor');
+  if (perimeterColorInput) {
+    perimeterColorInput.addEventListener('change', drawPolygonOnMap);
+  }
+
+  const sendTestEmailBtn = $('#sendTestEmail');
+  if (sendTestEmailBtn) {
+    sendTestEmailBtn.addEventListener('click', sendTestEmail);
+  }
+
+  const perimeterOverlay = $('#perimeterOverlay');
+  if (perimeterOverlay) {
+    perimeterOverlay.addEventListener('click', (e) => {
+      if (e.target === perimeterOverlay) {
+        closePerimeterOverlay();
+      }
+    });
+  }
 }
+
+// --------- Perimeter Management ---------
+let perimeterDrawMap = null;
+let perimeterPolygonLayer = null;
+let perimeterPolygonPoints = [];
+let perimeterMainMapLayer = null;
+let editingPerimeterId = null;
+let perimetersData = [];
+
+function openPerimeterOverlay() {
+  const overlay = $('#perimeterOverlay');
+  overlay.classList.remove('hidden');
+  showPerimeterListView();
+  loadPerimeterList();
+}
+
+function closePerimeterOverlay() {
+  $('#perimeterOverlay').classList.add('hidden');
+  editingPerimeterId = null;
+}
+
+function showPerimeterListView() {
+  $('#perimeterListView').classList.remove('hidden');
+  $('#perimeterEditView').classList.add('hidden');
+  $('#perimeterOverlayTitle').textContent = 'Perimeter zóny';
+}
+
+function showPerimeterEditView(perimeter = null) {
+  $('#perimeterListView').classList.add('hidden');
+  $('#perimeterEditView').classList.remove('hidden');
+
+  if (perimeter) {
+    editingPerimeterId = perimeter.id;
+    $('#perimeterOverlayTitle').textContent = 'Upraviť perimeter';
+    $('#perimeterId').value = perimeter.id;
+    $('#perimeterName').value = perimeter.name;
+    $('#perimeterColor').value = perimeter.color || '#ff6b6b';
+    perimeterPolygonPoints = perimeter.polygon || [];
+
+    // Populate emails list
+    renderEmailsList(perimeter.emails || []);
+  } else {
+    editingPerimeterId = null;
+    $('#perimeterOverlayTitle').textContent = 'Nový perimeter';
+    $('#perimeterId').value = '';
+    $('#perimeterName').value = '';
+    $('#perimeterColor').value = '#ff6b6b';
+    perimeterPolygonPoints = [];
+
+    // Start with one empty email entry
+    renderEmailsList([{ email: '', alert_on_enter: true, alert_on_exit: true }]);
+  }
+
+  updatePolygonPointCount();
+
+  // Initialize map after view is shown
+  setTimeout(() => {
+    initPerimeterDrawMap();
+    drawPolygonOnMap();
+  }, 100);
+}
+
+// Multiple emails management
+function renderEmailsList(emails) {
+  const container = $('#perimeterEmailsList');
+  if (!container) return;
+
+  container.innerHTML = '';
+
+  if (emails.length === 0) {
+    container.innerHTML = '<p class="perimeter-emails-empty">Žiadne e-maily. Pridajte aspoň jeden pre prijímanie notifikácií.</p>';
+    return;
+  }
+
+  emails.forEach((emailData, index) => {
+    container.appendChild(createEmailEntry(emailData, index));
+  });
+}
+
+function createEmailEntry(emailData = {}, index = 0) {
+  const div = document.createElement('div');
+  div.className = 'perimeter-email-entry';
+  div.dataset.index = index;
+
+  const email = emailData.email || '';
+  const alertOnEnter = emailData.alert_on_enter !== false;
+  const alertOnExit = emailData.alert_on_exit !== false;
+
+  div.innerHTML = `
+    <input type="email" class="email-input" value="${email}" placeholder="email@example.com" autocomplete="off">
+    <div class="perimeter-email-options">
+      <label class="checkbox-label">
+        <input type="checkbox" class="alert-enter" ${alertOnEnter ? 'checked' : ''}>
+        <span>Vstup</span>
+      </label>
+      <label class="checkbox-label">
+        <input type="checkbox" class="alert-exit" ${alertOnExit ? 'checked' : ''}>
+        <span>Výstup</span>
+      </label>
+      <button type="button" class="btn-remove-email" onclick="removeEmailEntry(this)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12">
+          <line x1="18" y1="6" x2="6" y2="18"/>
+          <line x1="6" y1="6" x2="18" y2="18"/>
+        </svg>
+        Odstrániť
+      </button>
+    </div>
+  `;
+
+  return div;
+}
+
+function addEmailEntry() {
+  const container = $('#perimeterEmailsList');
+  if (!container) return;
+
+  // Remove empty message if present
+  const emptyMsg = container.querySelector('.perimeter-emails-empty');
+  if (emptyMsg) emptyMsg.remove();
+
+  const index = container.querySelectorAll('.perimeter-email-entry').length;
+  container.appendChild(createEmailEntry({ email: '', alert_on_enter: true, alert_on_exit: true }, index));
+}
+
+function removeEmailEntry(btn) {
+  const entry = btn.closest('.perimeter-email-entry');
+  if (entry) {
+    entry.remove();
+
+    // Show empty message if no entries left
+    const container = $('#perimeterEmailsList');
+    if (container && container.querySelectorAll('.perimeter-email-entry').length === 0) {
+      container.innerHTML = '<p class="perimeter-emails-empty">Žiadne e-maily. Pridajte aspoň jeden pre prijímanie notifikácií.</p>';
+    }
+  }
+}
+
+function getEmailsFromList() {
+  const container = $('#perimeterEmailsList');
+  if (!container) return [];
+
+  const emails = [];
+  container.querySelectorAll('.perimeter-email-entry').forEach(entry => {
+    const email = entry.querySelector('.email-input')?.value?.trim() || '';
+    const alertOnEnter = entry.querySelector('.alert-enter')?.checked ?? true;
+    const alertOnExit = entry.querySelector('.alert-exit')?.checked ?? true;
+
+    if (email) {
+      emails.push({
+        email: email,
+        alert_on_enter: alertOnEnter,
+        alert_on_exit: alertOnExit
+      });
+    }
+  });
+
+  return emails;
+}
+
+// Expose to global scope for onclick
+window.removeEmailEntry = removeEmailEntry;
+
+function initPerimeterDrawMap() {
+  if (perimeterDrawMap) {
+    perimeterDrawMap.remove();
+  }
+
+  perimeterDrawMap = L.map('perimeterDrawMap').setView([48.1486, 17.1077], 13);
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19, attribution: '&copy; OpenStreetMap'
+  }).addTo(perimeterDrawMap);
+
+  perimeterPolygonLayer = L.layerGroup().addTo(perimeterDrawMap);
+
+  // Click to add points
+  perimeterDrawMap.on('click', (e) => {
+    perimeterPolygonPoints.push({
+      lat: e.latlng.lat,
+      lng: e.latlng.lng
+    });
+    drawPolygonOnMap();
+    updatePolygonPointCount();
+  });
+
+  // If editing and has points, fit bounds
+  if (perimeterPolygonPoints.length >= 3) {
+    const bounds = L.latLngBounds(perimeterPolygonPoints.map(p => [p.lat, p.lng]));
+    perimeterDrawMap.fitBounds(bounds, { padding: [50, 50] });
+  }
+}
+
+function drawPolygonOnMap() {
+  if (!perimeterPolygonLayer) return;
+
+  perimeterPolygonLayer.clearLayers();
+
+  const color = $('#perimeterColor').value || '#ff6b6b';
+
+  // Draw markers for each point
+  perimeterPolygonPoints.forEach((p, idx) => {
+    const marker = L.circleMarker([p.lat, p.lng], {
+      radius: 8,
+      fillColor: color,
+      color: '#fff',
+      weight: 2,
+      fillOpacity: 1
+    }).bindTooltip(`Bod ${idx + 1}`, { permanent: false });
+
+    // Right click to remove point
+    marker.on('contextmenu', (e) => {
+      e.originalEvent.preventDefault();
+      perimeterPolygonPoints.splice(idx, 1);
+      drawPolygonOnMap();
+      updatePolygonPointCount();
+    });
+
+    perimeterPolygonLayer.addLayer(marker);
+  });
+
+  // Draw polygon if we have at least 3 points
+  if (perimeterPolygonPoints.length >= 3) {
+    const latlngs = perimeterPolygonPoints.map(p => [p.lat, p.lng]);
+    const polygon = L.polygon(latlngs, {
+      color: color,
+      fillColor: color,
+      fillOpacity: 0.2,
+      weight: 2
+    });
+    perimeterPolygonLayer.addLayer(polygon);
+  } else if (perimeterPolygonPoints.length === 2) {
+    // Draw line if we have 2 points
+    const latlngs = perimeterPolygonPoints.map(p => [p.lat, p.lng]);
+    const line = L.polyline(latlngs, { color: color, weight: 2 });
+    perimeterPolygonLayer.addLayer(line);
+  }
+}
+
+function updatePolygonPointCount() {
+  const count = perimeterPolygonPoints.length;
+  const el = $('#polygonPointCount');
+  if (el) {
+    el.textContent = `Body: ${count}${count < 3 ? ' (min. 3)' : ''}`;
+    el.style.color = count < 3 ? '#ef4444' : 'inherit';
+  }
+}
+
+function clearPolygon() {
+  perimeterPolygonPoints = [];
+  drawPolygonOnMap();
+  updatePolygonPointCount();
+}
+
+async function loadPerimeterList() {
+  const container = $('#perimeterList');
+  container.innerHTML = '<p class="perimeter-loading">Načítavam...</p>';
+
+  try {
+    const response = await apiGet(`${API}?action=get_perimeters`);
+
+    if (!response.ok) {
+      container.innerHTML = `<p class="perimeter-loading" style="color:#ef4444">${response.error || 'Chyba pri načítaní'}</p>`;
+      return;
+    }
+
+    perimetersData = response.data || [];
+
+    if (perimetersData.length === 0) {
+      container.innerHTML = `
+        <div class="perimeter-empty">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polygon points="12 2 22 8.5 22 15.5 12 22 2 15.5 2 8.5"/>
+          </svg>
+          <p>Zatiaľ nemáte žiadne perimeter zóny.<br>Pridajte prvú kliknutím na tlačidlo vyššie.</p>
+        </div>
+      `;
+      return;
+    }
+
+    let html = perimetersData.map(p => {
+      const badges = [];
+      if (p.alert_on_enter) badges.push('<span class="perimeter-badge enter">Vstup</span>');
+      if (p.alert_on_exit) badges.push('<span class="perimeter-badge exit">Opustenie</span>');
+      if (!p.is_active) badges.push('<span class="perimeter-badge inactive">Neaktívny</span>');
+
+      return `
+        <div class="perimeter-item ${p.is_active ? '' : 'inactive'}" data-id="${p.id}">
+          <div class="perimeter-color" style="background-color:${p.color || '#ff6b6b'}"></div>
+          <div class="perimeter-info">
+            <h4>${escapeHtml(p.name)}</h4>
+            <small>${p.notification_email || 'Bez e-mailu'} | ${p.polygon?.length || 0} bodov</small>
+            <div class="perimeter-badges">${badges.join('')}</div>
+          </div>
+          <div class="perimeter-actions">
+            <button class="btn-toggle" data-toggle="${p.id}" title="${p.is_active ? 'Deaktivovať' : 'Aktivovať'}">
+              ${p.is_active ? 'Vyp' : 'Zap'}
+            </button>
+            <button class="btn-edit" data-edit="${p.id}">Upraviť</button>
+            <button class="btn-delete" data-delete="${p.id}">Zmazať</button>
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    container.innerHTML = html;
+
+    // Add event handlers
+    container.querySelectorAll('.btn-toggle').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const id = parseInt(btn.dataset.toggle);
+        const perimeter = perimetersData.find(p => p.id === id);
+        if (perimeter) {
+          await togglePerimeter(id, !perimeter.is_active);
+        }
+      });
+    });
+
+    container.querySelectorAll('.btn-edit').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const id = parseInt(btn.dataset.edit);
+        const perimeter = perimetersData.find(p => p.id === id);
+        if (perimeter) {
+          showPerimeterEditView(perimeter);
+        }
+      });
+    });
+
+    container.querySelectorAll('.btn-delete').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const id = parseInt(btn.dataset.delete);
+        await deletePerimeter(id);
+      });
+    });
+
+    // Refresh perimeters on main map
+    loadPerimetersOnMainMap();
+
+  } catch (err) {
+    container.innerHTML = `<p class="perimeter-loading" style="color:#ef4444">Chyba: ${err.message}</p>`;
+  }
+}
+
+async function savePerimeter() {
+  const name = $('#perimeterName').value.trim();
+  const color = $('#perimeterColor').value;
+  const emails = getEmailsFromList();
+
+  if (!name) {
+    alert('Zadajte názov perimetra');
+    return;
+  }
+
+  if (perimeterPolygonPoints.length < 3) {
+    alert('Polygón musí mať aspoň 3 body');
+    return;
+  }
+
+  // Validate emails
+  for (const e of emails) {
+    if (!isValidEmail(e.email)) {
+      alert(`Neplatný e-mail: ${e.email}`);
+      return;
+    }
+  }
+
+  try {
+    const payload = {
+      name: name,
+      polygon: perimeterPolygonPoints,
+      emails: emails,
+      color: color,
+      is_active: true
+    };
+
+    if (editingPerimeterId) {
+      payload.id = editingPerimeterId;
+    }
+
+    const result = await apiPost('save_perimeter', payload);
+
+    if (result.ok) {
+      alert(editingPerimeterId ? 'Perimeter aktualizovaný!' : 'Perimeter vytvorený!');
+      showPerimeterListView();
+      await loadPerimeterList();
+      await loadPerimetersOnMainMap();
+    } else {
+      alert(`Chyba: ${result.error || 'Neznáma chyba'}`);
+    }
+  } catch (err) {
+    alert(`Chyba pri ukladaní: ${err.message}`);
+  }
+}
+
+async function togglePerimeter(id, isActive) {
+  try {
+    const result = await apiPost('toggle_perimeter', { id: id, is_active: isActive });
+    if (result.ok) {
+      await loadPerimeterList();
+    } else {
+      alert(`Chyba: ${result.error}`);
+    }
+  } catch (err) {
+    alert(`Chyba: ${err.message}`);
+  }
+}
+
+async function deletePerimeter(id) {
+  if (!confirm('Naozaj chcete zmazať tento perimeter?')) {
+    return;
+  }
+
+  try {
+    const result = await apiDelete('delete_perimeter', { id: id });
+    if (result.ok) {
+      await loadPerimeterList();
+    } else {
+      alert(`Chyba: ${result.error}`);
+    }
+  } catch (err) {
+    alert(`Chyba: ${err.message}`);
+  }
+}
+
+function isValidEmail(email) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+// Load perimeters on main map
+async function loadPerimetersOnMainMap() {
+  if (!perimeterMainMapLayer) {
+    perimeterMainMapLayer = L.layerGroup().addTo(map);
+  }
+
+  perimeterMainMapLayer.clearLayers();
+
+  try {
+    const response = await apiGet(`${API}?action=get_perimeters`);
+
+    if (!response.ok || !response.data) return;
+
+    response.data.forEach(p => {
+      if (!p.is_active || !p.polygon || p.polygon.length < 3) return;
+
+      const latlngs = p.polygon.map(pt => [pt.lat, pt.lng]);
+      const polygon = L.polygon(latlngs, {
+        color: p.color || '#ff6b6b',
+        fillColor: p.color || '#ff6b6b',
+        fillOpacity: 0.15,
+        weight: 2,
+        dashArray: '5, 5'
+      });
+
+      polygon.bindTooltip(p.name, { permanent: false, direction: 'center' });
+      perimeterMainMapLayer.addLayer(polygon);
+    });
+  } catch (err) {
+    console.error('Error loading perimeters on map:', err);
+  }
+}
+
+// Test email function - defined on window for onclick access
+window.sendTestEmail = async function() {
+  const emailInput = $('#testEmailAddress');
+  const resultEl = $('#testEmailResult');
+  const btn = $('#sendTestEmail');
+
+  const email = emailInput?.value?.trim();
+
+  if (!email) {
+    resultEl.textContent = 'Zadajte e-mailovú adresu';
+    resultEl.className = 'test-email-result error';
+    return;
+  }
+
+  // Basic email validation
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(email)) {
+    resultEl.textContent = 'Neplatná e-mailová adresa';
+    resultEl.className = 'test-email-result error';
+    return;
+  }
+
+  // Show loading state
+  btn.disabled = true;
+  resultEl.textContent = 'Odosielam testovací e-mail...';
+  resultEl.className = 'test-email-result loading';
+
+  try {
+    // Use fetch directly to handle error responses with JSON body
+    const r = await fetch(`${API}?action=test_email`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email })
+    });
+
+    let response;
+    try {
+      response = await r.json();
+    } catch (e) {
+      // If JSON parsing fails, create error response
+      response = { ok: false, error: `Server vrátil HTTP ${r.status} (nie JSON odpoveď)` };
+    }
+
+    console.log('Test email response:', response);
+
+    if (response.ok) {
+      resultEl.textContent = response.message || 'Testovací e-mail bol odoslaný!';
+      resultEl.className = 'test-email-result success';
+
+      if (response.debug) {
+        console.log('Test email debug:', response.debug);
+      }
+    } else {
+      let errorMsg = response.error || `Chyba servera (HTTP ${r.status})`;
+
+      if (response.debug) {
+        console.error('Test email error debug:', response.debug);
+      }
+
+      resultEl.textContent = errorMsg;
+      resultEl.className = 'test-email-result error';
+    }
+  } catch (err) {
+    console.error('Test email error:', err);
+    resultEl.textContent = 'Chyba pri komunikácii so serverom: ' + err.message;
+    resultEl.className = 'test-email-result error';
+  } finally {
+    btn.disabled = false;
+  }
+};
 
 // --------- boot ---------
 window.addEventListener('DOMContentLoaded', () => {

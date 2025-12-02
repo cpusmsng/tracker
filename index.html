@@ -2,9 +2,12 @@
 <html lang="sk">
 <head>
   <meta charset="UTF-8">
-  <title>Tracker - denné úseky</title>
+  <title>Tracker | GPS Tracker</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="GPS tracking system with real-time location monitoring and perimeter alerts">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📍</text></svg>">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -12,6 +15,13 @@
   <div id="pinOverlay" class="pin-overlay">
     <div class="pin-container">
       <div class="pin-header">
+        <div class="app-logo">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="32" height="32">
+            <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/>
+            <circle cx="12" cy="10" r="3"/>
+          </svg>
+          <span class="app-name">Tracker</span>
+        </div>
         <svg class="lock-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
           <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
@@ -55,8 +65,16 @@
   <div class="container">
     <!-- Topbar s centrovými date controls -->
     <div id="topbar" role="toolbar" aria-label="Ovládanie dátumu">
-      <!-- Ľavá strana: prázdna (pre vycentrovanie) -->
-      <div class="topbar-left"></div>
+      <!-- Ľavá strana: logo a názov -->
+      <div class="topbar-left">
+        <h1>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/>
+            <circle cx="12" cy="10" r="3"/>
+          </svg>
+          Tracker
+        </h1>
+      </div>
       
       <!-- Stred: Date controls -->
       <div class="topbar-center">
@@ -92,9 +110,18 @@
         
         <!-- Battery indicator -->
         <div id="batteryIndicator" class="battery-indicator" title="Stav batérie">
-          <svg class="battery-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <!-- Good battery icon (full) -->
+          <svg class="battery-icon-good" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <rect x="2" y="7" width="18" height="10" rx="1"></rect>
-            <path d="M20 10v4"></path>
+            <path d="M22 11v2"></path>
+            <rect x="4" y="9" width="14" height="6" rx="0.5" fill="currentColor" stroke="none"></rect>
+          </svg>
+          <!-- Low battery icon (empty with warning) -->
+          <svg class="battery-icon-low" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="2" y="7" width="18" height="10" rx="1"></rect>
+            <path d="M22 11v2"></path>
+            <rect x="4" y="9" width="4" height="6" rx="0.5" fill="currentColor" stroke="none"></rect>
+            <path d="M12 9v4M12 15v.01" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path>
           </svg>
           <span id="batteryText" class="battery-text">-</span>
         </div>
@@ -118,24 +145,52 @@
         </svg>
         Refetch deň
       </button>
-      <button class="menu-item" id="menuManageIBeacons">
+      <div class="menu-submenu">
+        <button class="menu-item menu-parent" id="menuIBeacons">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="3"/>
+            <path d="M8 12a4 4 0 0 1 8 0"/>
+            <path d="M5 12a7 7 0 0 1 14 0"/>
+            <path d="M2 12a10 10 0 0 1 20 0"/>
+          </svg>
+          Správa iBeaconov
+          <svg class="submenu-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="6 9 12 15 18 9"/>
+          </svg>
+        </button>
+        <div class="submenu-items hidden">
+          <button class="menu-item submenu-item" id="menuManageIBeacons">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="12" y1="5" x2="12" y2="19"/>
+              <line x1="5" y1="12" x2="19" y2="12"/>
+            </svg>
+            Pridať iBeacon
+          </button>
+          <button class="menu-item submenu-item" id="menuViewIBeacons">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="8" y1="6" x2="21" y2="6"/>
+              <line x1="8" y1="12" x2="21" y2="12"/>
+              <line x1="8" y1="18" x2="21" y2="18"/>
+              <line x1="3" y1="6" x2="3.01" y2="6"/>
+              <line x1="3" y1="12" x2="3.01" y2="12"/>
+              <line x1="3" y1="18" x2="3.01" y2="18"/>
+            </svg>
+            Zoznam iBeaconov
+          </button>
+        </div>
+      </div>
+      <button class="menu-item" id="menuPerimeters">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/>
-          <circle cx="12" cy="10" r="3"/>
+          <polygon points="12 2 22 8.5 22 15.5 12 22 2 15.5 2 8.5"/>
+          <line x1="12" y1="22" x2="12" y2="15.5"/>
+          <polyline points="22 8.5 12 15.5 2 8.5"/>
         </svg>
-        Pridať iBeacon
-      </button>
-      <button class="menu-item" id="menuViewIBeacons">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
-          <polyline points="9 22 9 12 15 12 15 22"/>
-        </svg>
-        Zoznam iBeaconov
+        Perimeter zóny
       </button>
       <button class="menu-item" id="menuSettings">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <circle cx="12" cy="12" r="3"/>
-          <path d="M12 1v6m0 6v6M5.64 5.64l4.24 4.24m4.24 4.24l4.24 4.24M1 12h6m6 0h6M5.64 18.36l4.24-4.24m4.24-4.24l4.24-4.24"/>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
         </svg>
         Nastavenia
       </button>
@@ -238,6 +293,56 @@
 
       <div class="overlay-body">
         <form id="settingsForm" novalidate>
+
+          <!-- Režim zobrazenia -->
+          <div class="setting-group">
+            <div class="setting-header">
+              <label>
+                <strong>Režim zobrazenia</strong>
+              </label>
+            </div>
+            <div class="setting-description">
+              Vzhľad aplikácie - automaticky podľa nastavenia zariadenia, svetlý alebo tmavý režim.
+            </div>
+            <div class="theme-toggle-group">
+              <label class="theme-option">
+                <input type="radio" name="theme" value="auto" checked>
+                <span class="theme-label">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="5"/>
+                    <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
+                  </svg>
+                  Auto
+                </span>
+              </label>
+              <label class="theme-option">
+                <input type="radio" name="theme" value="light">
+                <span class="theme-label">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="5"/>
+                    <line x1="12" y1="1" x2="12" y2="3"/>
+                    <line x1="12" y1="21" x2="12" y2="23"/>
+                    <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/>
+                    <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+                    <line x1="1" y1="12" x2="3" y2="12"/>
+                    <line x1="21" y1="12" x2="23" y2="12"/>
+                    <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
+                    <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+                  </svg>
+                  Svetlý
+                </span>
+              </label>
+              <label class="theme-option">
+                <input type="radio" name="theme" value="dark">
+                <span class="theme-label">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+                  </svg>
+                  Tmavý
+                </span>
+              </label>
+            </div>
+          </div>
 
           <!-- Hysteréza vzdialenosti -->
           <div class="setting-group">
@@ -400,7 +505,114 @@
     </div>
   </div>
 
+  <!-- Perimeter Management Overlay -->
+  <div id="perimeterOverlay" class="overlay hidden">
+    <div class="overlay-content perimeter-content">
+      <div class="overlay-header">
+        <h2 id="perimeterOverlayTitle">Perimeter zóny</h2>
+        <button id="perimeterOverlayClose" class="overlay-close" aria-label="Zavrieť">&times;</button>
+      </div>
+
+      <div class="overlay-body">
+        <!-- Perimeter List View -->
+        <div id="perimeterListView">
+          <div class="perimeter-actions-top">
+            <button type="button" id="addNewPerimeter" class="btn-primary">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="12" y1="5" x2="12" y2="19"/>
+                <line x1="5" y1="12" x2="19" y2="12"/>
+              </svg>
+              Pridať nový perimeter
+            </button>
+          </div>
+          <div id="perimeterList" class="perimeter-list">
+            <p class="perimeter-loading">Načítavam...</p>
+          </div>
+
+          <!-- Test Email Section -->
+          <div class="test-email-section">
+            <h4>Test e-mailovej služby</h4>
+            <div class="test-email-form">
+              <input type="email" id="testEmailAddress" placeholder="Zadajte e-mail pre test" autocomplete="email">
+              <button type="button" id="sendTestEmail" class="btn-secondary" onclick="sendTestEmail()">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                  <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/>
+                  <polyline points="22,6 12,13 2,6"/>
+                </svg>
+                Odoslať test
+              </button>
+            </div>
+            <p id="testEmailResult" class="test-email-result"></p>
+          </div>
+        </div>
+
+        <!-- Perimeter Edit/Create View -->
+        <div id="perimeterEditView" class="hidden">
+          <form id="perimeterForm" novalidate>
+            <input type="hidden" id="perimeterId" value="">
+
+            <div class="form-row">
+              <label for="perimeterName">Názov perimetra
+                <input type="text" id="perimeterName" placeholder="Napr. Domov, Práca, Škola" autocomplete="off" required>
+              </label>
+            </div>
+
+            <!-- Multiple Emails Section -->
+            <div class="form-row">
+              <label>E-maily pre notifikácie</label>
+              <div id="perimeterEmailsList" class="perimeter-emails-list">
+                <!-- Email entries will be added here dynamically -->
+              </div>
+              <button type="button" id="addPerimeterEmail" class="btn-small btn-secondary">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                  <line x1="12" y1="5" x2="12" y2="19"/>
+                  <line x1="5" y1="12" x2="19" y2="12"/>
+                </svg>
+                Pridať e-mail
+              </button>
+            </div>
+
+            <div class="form-row">
+              <label for="perimeterColor">Farba zóny
+                <input type="color" id="perimeterColor" value="#ff6b6b">
+              </label>
+            </div>
+
+            <div class="perimeter-map-section">
+              <p class="map-help">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                  <circle cx="12" cy="12" r="10"/>
+                  <line x1="12" y1="16" x2="12" y2="12"/>
+                  <line x1="12" y1="8" x2="12.01" y2="8"/>
+                </svg>
+                Kliknutím na mapu pridaj body polygónu. Minimálne 3 body.
+              </p>
+              <div id="perimeterDrawMap"></div>
+              <div class="polygon-info">
+                <span id="polygonPointCount">Body: 0</span>
+                <button type="button" id="clearPolygon" class="btn-small btn-secondary">Vymazať polygón</button>
+              </div>
+            </div>
+
+            <div class="form-actions">
+              <button type="button" id="savePerimeter" class="btn-primary">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
+                  <polyline points="17 21 17 13 7 13 7 21"/>
+                  <polyline points="7 3 7 8 15 8"/>
+                </svg>
+                Uložiť perimeter
+              </button>
+              <button type="button" id="cancelPerimeterEdit" class="btn-secondary">Zrušiť</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
   <script src="app.js" defer></script>
 </body>
 </html>
