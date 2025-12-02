@@ -145,25 +145,40 @@
         </svg>
         Refetch deň
       </button>
-      <button class="menu-item" id="menuManageIBeacons">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <circle cx="12" cy="12" r="3"/>
-          <path d="M8 12a4 4 0 0 1 8 0"/>
-          <path d="M5 12a7 7 0 0 1 14 0"/>
-          <path d="M2 12a10 10 0 0 1 20 0"/>
-        </svg>
-        Pridať iBeacon
-      </button>
-      <button class="menu-item" id="menuViewIBeacons">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <circle cx="12" cy="12" r="3"/>
-          <path d="M8 12a4 4 0 0 1 8 0"/>
-          <path d="M5 12a7 7 0 0 1 14 0"/>
-          <path d="M2 12a10 10 0 0 1 20 0"/>
-          <line x1="12" y1="15" x2="12" y2="22"/>
-        </svg>
-        Zoznam iBeaconov
-      </button>
+      <div class="menu-submenu">
+        <button class="menu-item menu-parent" id="menuIBeacons">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="3"/>
+            <path d="M8 12a4 4 0 0 1 8 0"/>
+            <path d="M5 12a7 7 0 0 1 14 0"/>
+            <path d="M2 12a10 10 0 0 1 20 0"/>
+          </svg>
+          Správa iBeaconov
+          <svg class="submenu-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="6 9 12 15 18 9"/>
+          </svg>
+        </button>
+        <div class="submenu-items hidden">
+          <button class="menu-item submenu-item" id="menuManageIBeacons">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="12" y1="5" x2="12" y2="19"/>
+              <line x1="5" y1="12" x2="19" y2="12"/>
+            </svg>
+            Pridať iBeacon
+          </button>
+          <button class="menu-item submenu-item" id="menuViewIBeacons">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="8" y1="6" x2="21" y2="6"/>
+              <line x1="8" y1="12" x2="21" y2="12"/>
+              <line x1="8" y1="18" x2="21" y2="18"/>
+              <line x1="3" y1="6" x2="3.01" y2="6"/>
+              <line x1="3" y1="12" x2="3.01" y2="12"/>
+              <line x1="3" y1="18" x2="3.01" y2="18"/>
+            </svg>
+            Zoznam iBeaconov
+          </button>
+        </div>
+      </div>
       <button class="menu-item" id="menuPerimeters">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <polygon points="12 2 22 8.5 22 15.5 12 22 2 15.5 2 8.5"/>

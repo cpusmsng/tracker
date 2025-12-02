@@ -499,6 +499,19 @@ function initHamburgerMenu() {
     });
   }
 
+  // iBeacon submenu toggle
+  const menuIBeacons = $('#menuIBeacons');
+  if (menuIBeacons) {
+    menuIBeacons.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const submenuItems = menuIBeacons.parentElement.querySelector('.submenu-items');
+      if (submenuItems) {
+        submenuItems.classList.toggle('hidden');
+        menuIBeacons.classList.toggle('expanded');
+      }
+    });
+  }
+
   if (menuManageIBeacons) {
     menuManageIBeacons.addEventListener('click', () => {
       console.log('Manage iBeacons clicked');
