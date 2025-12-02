@@ -175,7 +175,7 @@
 
 .pin-key{
   width:100%;aspect-ratio:1;
-  border:1px solid var(--border);background:#fff;
+  border:1px solid var(--border);background:var(--btn-bg);
   border-radius:12px;cursor:pointer;
   font-size:24px;font-weight:600;color:var(--text);
   transition:all 0.2s;
@@ -196,12 +196,12 @@
 }
 
 .pin-key.delete{
-  background:#fef2f2;border-color:#fecaca;
-  color:#ef4444;font-size:18px;
+  background:var(--table-last-known);border-color:var(--battery-low);
+  color:var(--battery-low);font-size:18px;
 }
 
 .pin-key.delete:hover{
-  background:#fee2e2;
+  background:var(--table-last-known-hover);
 }
 
 .pin-key svg{
@@ -312,13 +312,13 @@ body{padding:16px 16px 0;display:flex;flex-direction:column}
 }
 
 .last-online-info[data-status="online"]{
-  border-color:#10b981;
-  background:#f0fdf4;
+  border-color:var(--battery-good);
+  background:rgba(16, 185, 129, 0.1);
 }
 
 .last-online-info[data-status="offline"]{
-  border-color:#ef4444;
-  background:#fef2f2;
+  border-color:var(--battery-low);
+  background:rgba(239, 68, 68, 0.1);
 }
 
 .last-online-info[data-source="cache"]{
@@ -333,11 +333,11 @@ body{padding:16px 16px 0;display:flex;flex-direction:column}
 }
 
 .last-online-info[data-status="online"] .clock-icon{
-  color:#10b981;
+  color:var(--battery-good);
 }
 
 .last-online-info[data-status="offline"] .clock-icon{
-  color:#ef4444;
+  color:var(--battery-low);
 }
 
 #lastOnlineText{
