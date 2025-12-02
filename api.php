@@ -1429,6 +1429,88 @@ if ($action === 'n8n_alerts') {
     }
 }
 
+// GET /api.php?action=n8n_events&type=entered|exited|all&limit=20&since=YYYY-MM-DDTHH:MM:SS
+// Returns: perimeter entry/exit events for webhooks and automation
+if ($action === 'n8n_events') {
+    if (!verify_n8n_api_key()) {
+        respond(['ok' => false, 'error' => 'Invalid or missing API key'], 401);
+    }
+
+    try {
+        $type = qparam('type') ?: 'all'; // entered, exited, all
+        $limit = min((int)(qparam('limit') ?: 20), 100);
+        $since = qparam('since'); // ISO datetime string
+
+        $sql = "
+            SELECT pa.id, pa.perimeter_id, p.name as perimeter_name, pa.alert_type,
+                   pa.latitude, pa.longitude, pa.sent_at, pa.email_sent
+            FROM perimeter_alerts pa
+            LEFT JOIN perimeters p ON pa.perimeter_id = p.id
+            WHERE 1=1
+        ";
+        $params = [];
+
+        // Filter by event type
+        if ($type === 'entered') {
+            $sql .= " AND pa.alert_type = 'entered'";
+        } elseif ($type === 'exited') {
+            $sql .= " AND pa.alert_type = 'exited'";
+        }
+
+        // Filter by time (for polling-based triggers)
+        if ($since) {
+            $sql .= " AND pa.sent_at > :since";
+            $params[':since'] = $since;
+        }
+
+        $sql .= " ORDER BY pa.sent_at DESC LIMIT :limit";
+
+        $stmt = $pdo->prepare($sql);
+        foreach ($params as $k => $v) {
+            $stmt->bindValue($k, $v);
+        }
+        $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
+        $stmt->execute();
+
+        $events = [];
+        while ($r = $stmt->fetch()) {
+            $events[] = [
+                'event_id' => (int)$r['id'],
+                'event_type' => $r['alert_type'], // 'entered' or 'exited'
+                'perimeter_id' => (int)$r['perimeter_id'],
+                'perimeter_name' => $r['perimeter_name'],
+                'location' => [
+                    'latitude' => (float)$r['latitude'],
+                    'longitude' => (float)$r['longitude'],
+                    'maps_url' => "https://www.google.com/maps?q={$r['latitude']},{$r['longitude']}"
+                ],
+                'timestamp' => $r['sent_at'],
+                'email_sent' => (bool)$r['email_sent']
+            ];
+        }
+
+        // Get the newest event timestamp for "since" parameter in next poll
+        $latestTimestamp = !empty($events) ? $events[0]['timestamp'] : null;
+
+        respond([
+            'ok' => true,
+            'data' => [
+                'events' => $events,
+                'count' => count($events),
+                'latest_timestamp' => $latestTimestamp,
+                'filter' => [
+                    'type' => $type,
+                    'since' => $since,
+                    'limit' => $limit
+                ],
+                'generated_at' => (new DateTimeImmutable())->format('Y-m-d\TH:i:sP')
+            ]
+        ]);
+    } catch (Throwable $e) {
+        respond(['ok' => false, 'error' => $e->getMessage()], 500);
+    }
+}
+
 // Helper function for simple point-in-polygon check (for n8n endpoints)
 function point_in_polygon_simple(float $lat, float $lng, array $polygon): bool {
     $n = count($polygon);

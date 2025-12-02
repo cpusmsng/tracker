@@ -182,19 +182,32 @@ body{padding:16px 16px 0;display:flex;flex-direction:column}
 .container{
   display:grid;grid-template-columns:1fr;gap:16px;
   max-width:1200px;margin:0 auto;width:100%;flex:1;
+  padding-top:60px; /* Space for fixed topbar */
 }
 
 /* ========== TOPBAR - Flex Layout ========== */
 #topbar{
   padding:10px 12px;display:flex;align-items:center;justify-content:space-between;
   background:var(--card-bg);border:1px solid var(--border);border-radius:10px;
-  position:sticky;top:8px;z-index:100;gap:8px;
+  position:fixed;top:8px;left:16px;right:16px;z-index:1100;gap:8px;
   box-shadow:0 2px 8px rgba(0,0,0,0.08);
+  max-width:1168px;margin:0 auto;
 }
 
-/* Topbar left - prÃ¡zdne pre spacing */
+/* Topbar left - app name */
 .topbar-left{
   flex:1;min-width:100px;
+}
+.topbar-left h1{
+  margin:0;font-size:18px;font-weight:700;
+  background:linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  -webkit-background-clip:text;
+  -webkit-text-fill-color:transparent;
+  background-clip:text;
+  display:flex;align-items:center;gap:6px;
+}
+.topbar-left h1 svg{
+  width:20px;height:20px;stroke:#667eea;
 }
 
 /* Topbar center - date controls */
@@ -339,7 +352,7 @@ body{padding:16px 16px 0;display:flex;flex-direction:column}
   background:var(--card-bg);border:1px solid var(--border);
   border-radius:10px;padding:8px;
   box-shadow:0 4px 12px rgba(0,0,0,0.15);
-  z-index:1000;min-width:220px;
+  z-index:1200;min-width:220px;
 }
 
 .hamburger-menu.hidden{
@@ -371,7 +384,7 @@ body{padding:16px 16px 0;display:flex;flex-direction:column}
   background:var(--card-bg);border:1px solid var(--border);
   border-radius:10px;padding:12px;
   box-shadow:0 4px 12px rgba(0,0,0,0.1);
-  z-index:1000;min-width:280px;
+  z-index:1200;min-width:280px;
 }
 .calendar-dropdown.hidden{display:none}
 

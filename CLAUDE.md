@@ -28,8 +28,10 @@ SenseCAP Device (GNSS/Wi-Fi/BT)
 
 **Frontend (`app.js` + `index.html`):**
 - PIN security layer (4-digit code, SHA-256 hashed, 24h session)
-- Hamburger menu with: Refetch, iBeacon management, Settings
-- Map visualization with Leaflet.js
+- Fixed topbar with app branding, date controls, and hamburger menu
+- Hamburger menu with: Refetch, Perimeter zones, iBeacon management, Settings
+- Map visualization with Leaflet.js + Leaflet.draw for polygon zones
+- Perimeter zone management with drawing tools and email alerts
 - Position history table with sorting
 - Settings panel for env variable configuration
 - Mobile-responsive design (breakpoints: 768px, 480px)
@@ -37,6 +39,8 @@ SenseCAP Device (GNSS/Wi-Fi/BT)
 **Backend (`api.php`):**
 - Single-file REST API with action-based routing (`?action=X`)
 - Actions: `get_history`, `get_settings`, `save_settings`, `verify_pin`, `get_ibeacons`, etc.
+- Perimeter management: `get_perimeters`, `save_perimeter`, `delete_perimeter`
+- N8N integration endpoints: `n8n_status`, `n8n_positions`, `n8n_perimeters`, `n8n_alerts`, `n8n_events`
 - Uses `respond()` helper for consistent JSON responses
 - All database queries use PDO with prepared statements
 
@@ -45,6 +49,8 @@ SenseCAP Device (GNSS/Wi-Fi/BT)
 - Fetches from SenseCAP API: GNSS (4197/4198), Wi-Fi (5001), BT iBeacon (5002), Battery (5003)
 - Supports refetch mode: `--refetch-date=YYYY-MM-DD`
 - Uses file locking (`fetch_data.lock`) to prevent concurrent runs
+- Perimeter breach detection with email alerts
+- Summary emails for batch refetch operations (single email with all events)
 - Logs to `fetch.log`
 
 **Smart Refetch (`smart_refetch_v2.php`):**
@@ -85,6 +91,13 @@ ACCESS_PIN_HASH=  # SHA-256 hash of PIN (default 1234)
 
 # Database
 SQLITE_PATH=./tracker_database.sqlite
+
+# Email Service (for perimeter alerts)
+EMAIL_SERVICE_URL=http://email-service:3000/send
+EMAIL_FROM=tracker@example.com
+
+# N8N Integration (optional)
+N8N_API_KEY=  # If set, required for n8n_* endpoints
 ```
 
 **Security (`.htaccess`):**
@@ -99,6 +112,12 @@ SQLITE_PATH=./tracker_database.sqlite
 - `ibeacon_locations` - Static iBeacon markers (id, name, mac_address, latitude, longitude)
 - `wifi_mac_cache` - Cached Wi-Fi geolocation lookups
 - `device_status` - Device battery/online status
+
+**Perimeter tables:**
+- `perimeters` - Zone definitions (id, name, coordinates JSON, alert_on_enter, alert_on_exit)
+- `perimeter_emails` - Email recipients per perimeter (id, perimeter_id, email, alert_on_enter, alert_on_exit)
+- `perimeter_alerts` - Alert history (id, perimeter_id, alert_type, latitude, longitude, sent_at, email_sent)
+- `perimeter_state` - Tracks current inside/outside state for breach detection
 
 **Important:** Timestamps stored in UTC, converted to Europe/Bratislava timezone in frontend
 
@@ -137,6 +156,67 @@ curl -X POST "http://localhost/tracker/api.php?action=verify_pin" \
 
 # Get history for date
 curl "http://localhost/tracker/api.php?action=get_history&date=2025-01-15"
+```
+
+### N8N Integration API
+
+External API endpoints for n8n workflows and automation. All endpoints support optional API key authentication via `N8N_API_KEY` environment variable.
+
+**Authentication:**
+- Header: `X-API-Key: your-api-key`
+- Query parameter: `?api_key=your-api-key`
+- If `N8N_API_KEY` is not set, endpoints are publicly accessible
+
+**Endpoints:**
+
+```bash
+# Device status and last position
+curl "http://localhost/tracker/api.php?action=n8n_status" \
+  -H "X-API-Key: your-key"
+
+# Position history (with optional date filter)
+curl "http://localhost/tracker/api.php?action=n8n_positions&date=2025-01-15&limit=100"
+
+# All perimeters with current inside/outside status
+curl "http://localhost/tracker/api.php?action=n8n_perimeters"
+
+# Recent perimeter alerts
+curl "http://localhost/tracker/api.php?action=n8n_alerts&limit=50&days=7"
+
+# Perimeter entry/exit events (for webhooks)
+curl "http://localhost/tracker/api.php?action=n8n_events&type=entered&limit=20"
+curl "http://localhost/tracker/api.php?action=n8n_events&type=exited&since=2025-01-15T10:00:00"
+```
+
+**n8n_events parameters:**
+- `type`: `entered`, `exited`, or `all` (default: `all`)
+- `limit`: Max events to return (default: 20, max: 100)
+- `since`: ISO datetime - only events after this time (for polling)
+
+**Response format:**
+```json
+{
+  "ok": true,
+  "data": {
+    "events": [
+      {
+        "event_id": 123,
+        "event_type": "entered",
+        "perimeter_id": 1,
+        "perimeter_name": "Home",
+        "location": {
+          "latitude": 48.1234,
+          "longitude": 17.1234,
+          "maps_url": "https://www.google.com/maps?q=48.1234,17.1234"
+        },
+        "timestamp": "2025-01-15 10:30:00",
+        "email_sent": true
+      }
+    ],
+    "count": 1,
+    "latest_timestamp": "2025-01-15 10:30:00"
+  }
+}
 ```
 
 ### Debugging Frontend
