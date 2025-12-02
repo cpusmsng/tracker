@@ -14,6 +14,7 @@ const FETCH_LOCK_FILE = __DIR__ . '/fetch_data.lock';
 $DEBUG_MODE = false;
 $REFETCH_MODE = false;
 $REFETCH_DATE = null;
+$REFETCH_BREACHES = []; // Collect breaches for summary email in refetch mode
 
 function logl(string $msg, bool $forceLog = false): void {
     global $DEBUG_MODE;
@@ -716,6 +717,182 @@ function send_perimeter_alert_email(array $breach): bool {
     return send_perimeter_alert_emails($breach) > 0;
 }
 
+/**
+ * Send summary email with all breaches from refetch operation
+ * Returns number of emails sent
+ */
+function send_refetch_summary_email(array $breaches, string $refetchDate): int {
+    if (empty($breaches)) {
+        debug_log("SUMMARY EMAIL: No breaches to report");
+        return 0;
+    }
+
+    $emailServiceUrl = getenv('EMAIL_SERVICE_URL') ?: 'http://email-service:3004/send';
+    $apiKey = getenv('EMAIL_API_KEY') ?: '';
+    $fromEmail = getenv('EMAIL_FROM') ?: 'tracker@bagron.eu';
+    $fromName = getenv('EMAIL_FROM_NAME') ?: 'Tracker Alert';
+
+    if (!$apiKey) {
+        debug_log("SUMMARY EMAIL SKIP: EMAIL_API_KEY not configured");
+        return 0;
+    }
+
+    // Collect all unique emails that should receive this summary
+    $recipientEmails = [];
+    foreach ($breaches as $breach) {
+        $p = $breach['perimeter'];
+        $emails = $p['emails'] ?? [];
+        $breachType = $breach['type'];
+
+        foreach ($emails as $emailEntry) {
+            $toEmail = $emailEntry['email'] ?? '';
+            if (!$toEmail) continue;
+
+            $shouldReceive = ($breachType === 'enter' && $emailEntry['alert_on_enter']) ||
+                             ($breachType === 'exit' && $emailEntry['alert_on_exit']);
+
+            if ($shouldReceive) {
+                if (!isset($recipientEmails[$toEmail])) {
+                    $recipientEmails[$toEmail] = [];
+                }
+                $recipientEmails[$toEmail][] = $breach;
+            }
+        }
+    }
+
+    if (empty($recipientEmails)) {
+        debug_log("SUMMARY EMAIL: No recipients configured for any breach");
+        return 0;
+    }
+
+    $subject = "Tracker Alert: Súhrn udalostí z $refetchDate (" . count($breaches) . " udalostí)";
+
+    // Build HTML table with all breaches
+    $tableRows = '';
+    foreach ($breaches as $breach) {
+        $p = $breach['perimeter'];
+        $alertType = $breach['type'] === 'enter' ? 'VSTUP' : 'VÝSTUP';
+        $alertColor = $breach['type'] === 'enter' ? '#10b981' : '#ef4444';
+
+        try {
+            $dt = new DateTimeImmutable($breach['timestamp'], new DateTimeZone('UTC'));
+            $dt = $dt->setTimezone(new DateTimeZone('Europe/Bratislava'));
+            $formattedTime = $dt->format('H:i:s');
+        } catch (Throwable $e) {
+            $formattedTime = $breach['timestamp'];
+        }
+
+        $mapsUrl = "https://www.google.com/maps?q={$breach['lat']},{$breach['lng']}";
+
+        $tableRows .= "
+        <tr>
+            <td style='padding:10px;border-bottom:1px solid #e5e5e5;'>$formattedTime</td>
+            <td style='padding:10px;border-bottom:1px solid #e5e5e5;'>{$p['name']}</td>
+            <td style='padding:10px;border-bottom:1px solid #e5e5e5;'>
+                <span style='display:inline-block;padding:4px 10px;background:$alertColor;color:white;border-radius:4px;font-size:12px;font-weight:bold;'>$alertType</span>
+            </td>
+            <td style='padding:10px;border-bottom:1px solid #e5e5e5;'>
+                <a href='$mapsUrl' style='color:#0ea5e9;text-decoration:none;'>Mapa</a>
+            </td>
+        </tr>";
+    }
+
+    $htmlBody = "
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset='utf-8'>
+        <style>
+            body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; }
+            .container { max-width: 650px; margin: 0 auto; padding: 20px; }
+            .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 25px; border-radius: 8px 8px 0 0; }
+            .content { background: #fff; padding: 20px; border: 1px solid #e5e5e5; border-top: none; border-radius: 0 0 8px 8px; }
+            table { width: 100%; border-collapse: collapse; margin-top: 15px; }
+            th { background: #f8fafc; padding: 12px 10px; text-align: left; border-bottom: 2px solid #e5e5e5; font-size: 13px; color: #555; }
+            .footer { margin-top: 25px; padding-top: 20px; border-top: 1px solid #e5e5e5; font-size: 12px; color: #888; }
+            .info-box { background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 6px; padding: 12px 15px; margin-bottom: 15px; font-size: 14px; color: #1e40af; }
+        </style>
+    </head>
+    <body>
+        <div class='container'>
+            <div class='header'>
+                <h2 style='margin:0;'>Súhrn udalostí</h2>
+                <p style='margin:8px 0 0;opacity:0.9;font-size:15px;'>Refetch operácia - $refetchDate</p>
+            </div>
+            <div class='content'>
+                <div class='info-box'>
+                    Pri spätnom spracovaní dát bolo detekovaných <strong>" . count($breaches) . " udalostí</strong> prekročenia perimetra.
+                </div>
+
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Čas</th>
+                            <th>Zóna</th>
+                            <th>Typ</th>
+                            <th>Poloha</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        $tableRows
+                    </tbody>
+                </table>
+
+                <div class='footer'>
+                    Táto správa bola automaticky vygenerovaná systémom Tracker Alert.<br>
+                    Udalosti boli detekované počas refetch operácie, nie v reálnom čase.
+                </div>
+            </div>
+        </div>
+    </body>
+    </html>";
+
+    $sentCount = 0;
+
+    // Send to each recipient with their relevant breaches
+    foreach ($recipientEmails as $toEmail => $recipientBreaches) {
+        $payload = json_encode([
+            'to_email' => $toEmail,
+            'subject' => $subject,
+            'html_body' => $htmlBody,
+            'from_email' => $fromEmail,
+            'from_name' => $fromName,
+            'api_key' => $apiKey
+        ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+
+        debug_log("SUMMARY EMAIL SENDING: to=$toEmail breaches=" . count($recipientBreaches));
+
+        $ch = curl_init($emailServiceUrl);
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_POST => true,
+            CURLOPT_POSTFIELDS => $payload,
+            CURLOPT_HTTPHEADER => ['Content-Type: application/json'],
+            CURLOPT_TIMEOUT => 15,
+            CURLOPT_CONNECTTIMEOUT => 10
+        ]);
+
+        $response = curl_exec($ch);
+        $httpCode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $curlError = curl_error($ch);
+        curl_close($ch);
+
+        if ($curlError) {
+            debug_log("SUMMARY EMAIL ERROR: to=$toEmail curl error - $curlError");
+            continue;
+        }
+
+        if ($httpCode >= 200 && $httpCode < 300) {
+            debug_log("SUMMARY EMAIL SUCCESS: to=$toEmail http=$httpCode");
+            $sentCount++;
+        } else {
+            debug_log("SUMMARY EMAIL ERROR: to=$toEmail http=$httpCode response=".substr($response, 0, 200));
+        }
+    }
+
+    return $sentCount;
+}
+
 function record_perimeter_alert(PDO $pdo, array $breach, bool $emailSent): void {
     try {
         $stmt = $pdo->prepare("
@@ -1052,16 +1229,26 @@ try {
 
     // Helper function to check perimeters after successful insert
     $checkPerimetersAfterInsert = function(float $lat, float $lng, string $iso) use ($pdo, $activePerimeters, &$previousPerimeterStates, &$perimeterAlerts, &$emailsSent) {
+        global $REFETCH_MODE, $REFETCH_BREACHES;
         if (empty($activePerimeters)) return;
 
         $currentStates = get_position_perimeter_states($lat, $lng, $activePerimeters);
         $breaches = check_perimeter_breaches($pdo, $lat, $lng, $iso, $activePerimeters, $currentStates, $previousPerimeterStates);
 
         foreach ($breaches as $breach) {
-            $emailSent = send_perimeter_alert_email($breach);
-            record_perimeter_alert($pdo, $breach, $emailSent);
-            $perimeterAlerts++;
-            if ($emailSent) $emailsSent++;
+            if ($REFETCH_MODE) {
+                // In refetch mode, collect breaches for summary email
+                $REFETCH_BREACHES[] = $breach;
+                record_perimeter_alert($pdo, $breach, false); // Mark as not yet sent
+                $perimeterAlerts++;
+                debug_log("    BREACH COLLECTED for summary: {$breach['type']} '{$breach['perimeter']['name']}'");
+            } else {
+                // Normal mode: send individual email
+                $emailSent = send_perimeter_alert_email($breach);
+                record_perimeter_alert($pdo, $breach, $emailSent);
+                $perimeterAlerts++;
+                if ($emailSent) $emailsSent++;
+            }
         }
 
         // Update previous states for next iteration
@@ -1351,6 +1538,13 @@ try {
         $perimeterAlerts,
         $emailsSent
     ));
+
+    // Send summary email if in refetch mode and there are breaches
+    if ($REFETCH_MODE && !empty($REFETCH_BREACHES)) {
+        info_log("REFETCH SUMMARY: Sending summary email for " . count($REFETCH_BREACHES) . " breach(es)");
+        $summaryEmailsSent = send_refetch_summary_email($REFETCH_BREACHES, $REFETCH_DATE);
+        info_log("REFETCH SUMMARY: Sent $summaryEmailsSent summary email(s)");
+    }
 
     info_log('=== FETCH END ===');
 

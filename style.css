@@ -48,6 +48,25 @@
   margin:0;font-size:14px;color:var(--muted-text);
 }
 
+/* App Logo/Branding */
+.app-logo{
+  display:flex;align-items:center;justify-content:center;gap:8px;
+  margin-bottom:20px;
+}
+
+.app-logo svg{
+  color:var(--primary);
+}
+
+.app-logo .app-name{
+  font-size:22px;font-weight:700;
+  background:linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  -webkit-background-clip:text;
+  -webkit-text-fill-color:transparent;
+  background-clip:text;
+  letter-spacing:-0.5px;
+}
+
 .pin-display{
   display:flex;justify-content:center;gap:16px;
   margin-bottom:24px;
@@ -169,7 +188,8 @@ body{padding:16px 16px 0;display:flex;flex-direction:column}
 #topbar{
   padding:10px 12px;display:flex;align-items:center;justify-content:space-between;
   background:var(--card-bg);border:1px solid var(--border);border-radius:10px;
-  position:relative;gap:8px;
+  position:sticky;top:8px;z-index:100;gap:8px;
+  box-shadow:0 2px 8px rgba(0,0,0,0.08);
 }
 
 /* Topbar left - prÃ¡zdne pre spacing */

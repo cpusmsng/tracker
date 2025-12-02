@@ -1196,4 +1196,260 @@ if ($action === 'test_email' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
+// ========== N8N / EXTERNAL API ENDPOINTS ==========
+// These endpoints can be used by n8n workflows to read data from the tracker
+// Optional API key authentication via N8N_API_KEY env variable
+
+function verify_n8n_api_key(): bool {
+    $apiKey = getenv('N8N_API_KEY') ?: '';
+    if (empty($apiKey)) {
+        // No API key configured = public access (be careful!)
+        return true;
+    }
+
+    // Check header first, then query param
+    $providedKey = $_SERVER['HTTP_X_API_KEY'] ?? $_GET['api_key'] ?? '';
+    return hash_equals($apiKey, $providedKey);
+}
+
+// GET /api.php?action=n8n_status
+// Returns: current device status, last position, battery info
+if ($action === 'n8n_status') {
+    if (!verify_n8n_api_key()) {
+        respond(['ok' => false, 'error' => 'Invalid or missing API key'], 401);
+    }
+
+    try {
+        // Get device status
+        $deviceStatus = null;
+        $stmt = $pdo->query("SELECT * FROM device_status ORDER BY last_update DESC LIMIT 1");
+        if ($r = $stmt->fetch()) {
+            $deviceStatus = [
+                'device_eui' => $r['device_eui'],
+                'battery_status' => $r['battery_status'] === 1 ? 'good' : ($r['battery_status'] === 0 ? 'low' : 'unknown'),
+                'online_status' => $r['online_status'] === 1 ? 'online' : 'offline',
+                'latest_message_time' => $r['latest_message_time'],
+                'last_update' => $r['last_update']
+            ];
+        }
+
+        // Get last position
+        $lastPosition = null;
+        $stmt = $pdo->query("SELECT * FROM tracker_data ORDER BY timestamp DESC LIMIT 1");
+        if ($r = $stmt->fetch()) {
+            $lastPosition = [
+                'latitude' => (float)$r['latitude'],
+                'longitude' => (float)$r['longitude'],
+                'timestamp' => $r['timestamp'],
+                'source' => $r['source'],
+                'maps_url' => "https://www.google.com/maps?q={$r['latitude']},{$r['longitude']}"
+            ];
+        }
+
+        respond([
+            'ok' => true,
+            'data' => [
+                'device' => $deviceStatus,
+                'last_position' => $lastPosition,
+                'generated_at' => (new DateTimeImmutable())->format('Y-m-d\TH:i:sP')
+            ]
+        ]);
+    } catch (Throwable $e) {
+        respond(['ok' => false, 'error' => $e->getMessage()], 500);
+    }
+}
+
+// GET /api.php?action=n8n_positions&date=YYYY-MM-DD&limit=100
+// Returns: positions for a specific date or recent positions
+if ($action === 'n8n_positions') {
+    if (!verify_n8n_api_key()) {
+        respond(['ok' => false, 'error' => 'Invalid or missing API key'], 401);
+    }
+
+    try {
+        $date = qparam('date');
+        $limit = min((int)(qparam('limit') ?: 100), 1000);
+
+        if ($date && preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) {
+            // Get positions for specific date
+            $stmt = $pdo->prepare("
+                SELECT id, timestamp, latitude, longitude, source
+                FROM tracker_data
+                WHERE DATE(timestamp) = :date
+                ORDER BY timestamp ASC
+                LIMIT :limit
+            ");
+            $stmt->bindValue(':date', $date, PDO::PARAM_STR);
+            $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
+            $stmt->execute();
+        } else {
+            // Get recent positions
+            $stmt = $pdo->prepare("
+                SELECT id, timestamp, latitude, longitude, source
+                FROM tracker_data
+                ORDER BY timestamp DESC
+                LIMIT :limit
+            ");
+            $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
+            $stmt->execute();
+        }
+
+        $positions = [];
+        while ($r = $stmt->fetch()) {
+            $positions[] = [
+                'id' => (int)$r['id'],
+                'timestamp' => $r['timestamp'],
+                'latitude' => (float)$r['latitude'],
+                'longitude' => (float)$r['longitude'],
+                'source' => $r['source'],
+                'maps_url' => "https://www.google.com/maps?q={$r['latitude']},{$r['longitude']}"
+            ];
+        }
+
+        respond([
+            'ok' => true,
+            'data' => [
+                'positions' => $positions,
+                'count' => count($positions),
+                'date_filter' => $date ?: null,
+                'generated_at' => (new DateTimeImmutable())->format('Y-m-d\TH:i:sP')
+            ]
+        ]);
+    } catch (Throwable $e) {
+        respond(['ok' => false, 'error' => $e->getMessage()], 500);
+    }
+}
+
+// GET /api.php?action=n8n_perimeters
+// Returns: all perimeters with current position status (inside/outside)
+if ($action === 'n8n_perimeters') {
+    if (!verify_n8n_api_key()) {
+        respond(['ok' => false, 'error' => 'Invalid or missing API key'], 401);
+    }
+
+    try {
+        // Get last position
+        $lastPos = null;
+        $stmt = $pdo->query("SELECT latitude, longitude, timestamp FROM tracker_data ORDER BY timestamp DESC LIMIT 1");
+        if ($r = $stmt->fetch()) {
+            $lastPos = ['lat' => (float)$r['latitude'], 'lng' => (float)$r['longitude'], 'timestamp' => $r['timestamp']];
+        }
+
+        // Get perimeters
+        $stmt = $pdo->query("SELECT id, name, polygon, is_active, color FROM perimeters ORDER BY id ASC");
+        $perimeters = [];
+        while ($r = $stmt->fetch()) {
+            $polygon = json_decode($r['polygon'], true);
+            $isInside = false;
+
+            // Check if current position is inside polygon
+            if ($lastPos && $r['is_active'] && is_array($polygon) && count($polygon) >= 3) {
+                $isInside = point_in_polygon_simple($lastPos['lat'], $lastPos['lng'], $polygon);
+            }
+
+            // Get email count
+            $emailStmt = $pdo->prepare("SELECT COUNT(*) as cnt FROM perimeter_emails WHERE perimeter_id = :pid");
+            $emailStmt->execute([':pid' => $r['id']]);
+            $emailCount = (int)$emailStmt->fetchColumn();
+
+            $perimeters[] = [
+                'id' => (int)$r['id'],
+                'name' => $r['name'],
+                'is_active' => (bool)$r['is_active'],
+                'color' => $r['color'],
+                'point_count' => is_array($polygon) ? count($polygon) : 0,
+                'email_count' => $emailCount,
+                'current_status' => $lastPos ? ($isInside ? 'inside' : 'outside') : 'unknown'
+            ];
+        }
+
+        respond([
+            'ok' => true,
+            'data' => [
+                'perimeters' => $perimeters,
+                'last_position' => $lastPos,
+                'generated_at' => (new DateTimeImmutable())->format('Y-m-d\TH:i:sP')
+            ]
+        ]);
+    } catch (Throwable $e) {
+        respond(['ok' => false, 'error' => $e->getMessage()], 500);
+    }
+}
+
+// GET /api.php?action=n8n_alerts&limit=50&days=7
+// Returns: recent perimeter alerts
+if ($action === 'n8n_alerts') {
+    if (!verify_n8n_api_key()) {
+        respond(['ok' => false, 'error' => 'Invalid or missing API key'], 401);
+    }
+
+    try {
+        $limit = min((int)(qparam('limit') ?: 50), 500);
+        $days = min((int)(qparam('days') ?: 7), 90);
+
+        $stmt = $pdo->prepare("
+            SELECT pa.id, pa.perimeter_id, p.name as perimeter_name, pa.alert_type,
+                   pa.latitude, pa.longitude, pa.sent_at, pa.email_sent
+            FROM perimeter_alerts pa
+            LEFT JOIN perimeters p ON pa.perimeter_id = p.id
+            WHERE pa.sent_at >= datetime('now', '-' || :days || ' days')
+            ORDER BY pa.sent_at DESC
+            LIMIT :limit
+        ");
+        $stmt->bindValue(':days', $days, PDO::PARAM_INT);
+        $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
+        $stmt->execute();
+
+        $alerts = [];
+        while ($r = $stmt->fetch()) {
+            $alerts[] = [
+                'id' => (int)$r['id'],
+                'perimeter_id' => (int)$r['perimeter_id'],
+                'perimeter_name' => $r['perimeter_name'],
+                'alert_type' => $r['alert_type'],
+                'latitude' => (float)$r['latitude'],
+                'longitude' => (float)$r['longitude'],
+                'timestamp' => $r['sent_at'],
+                'email_sent' => (bool)$r['email_sent'],
+                'maps_url' => "https://www.google.com/maps?q={$r['latitude']},{$r['longitude']}"
+            ];
+        }
+
+        respond([
+            'ok' => true,
+            'data' => [
+                'alerts' => $alerts,
+                'count' => count($alerts),
+                'days_filter' => $days,
+                'generated_at' => (new DateTimeImmutable())->format('Y-m-d\TH:i:sP')
+            ]
+        ]);
+    } catch (Throwable $e) {
+        respond(['ok' => false, 'error' => $e->getMessage()], 500);
+    }
+}
+
+// Helper function for simple point-in-polygon check (for n8n endpoints)
+function point_in_polygon_simple(float $lat, float $lng, array $polygon): bool {
+    $n = count($polygon);
+    if ($n < 3) return false;
+
+    $inside = false;
+    $j = $n - 1;
+
+    for ($i = 0; $i < $n; $j = $i++) {
+        $yi = $polygon[$i]['lat'];
+        $xi = $polygon[$i]['lng'];
+        $yj = $polygon[$j]['lat'];
+        $xj = $polygon[$j]['lng'];
+
+        if ((($yi > $lat) !== ($yj > $lat)) &&
+            ($lng < ($xj - $xi) * ($lat - $yi) / ($yj - $yi) + $xi)) {
+            $inside = !$inside;
+        }
+    }
+
+    return $inside;
+}
+
 respond(['ok'=>false,'error'=>'unknown action'], 400);
