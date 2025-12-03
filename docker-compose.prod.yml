@@ -3,7 +3,7 @@
 # Usage: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 #
 # This file adds production-specific configuration:
-# - Resource limits
+# - Resource limits (memory only - CPU limits not supported on all systems)
 # - Traefik labels for reverse proxy (optional)
 # - Stricter restart policy
 
@@ -12,14 +12,8 @@ version: '3.8'
 services:
   tracker:
     restart: always
-    deploy:
-      resources:
-        limits:
-          cpus: '1.0'
-          memory: 512M
-        reservations:
-          cpus: '0.25'
-          memory: 128M
+    mem_limit: 512m
+    memswap_limit: 512m
 
     # Traefik labels (uncomment if using Traefik)
     # labels:
