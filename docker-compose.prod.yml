@@ -1,0 +1,36 @@
+# GPS/Location Tracker - Production Overrides
+#
+# Usage: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# This file adds production-specific configuration:
+# - Resource limits
+# - Traefik labels for reverse proxy (optional)
+# - Stricter restart policy
+
+version: '3.8'
+
+services:
+  tracker:
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+
+    # Traefik labels (uncomment if using Traefik)
+    # labels:
+    #   - "traefik.enable=true"
+    #   - "traefik.http.routers.tracker.rule=Host(`tracker.yourdomain.com`)"
+    #   - "traefik.http.routers.tracker.entrypoints=websecure"
+    #   - "traefik.http.routers.tracker.tls.certresolver=letsencrypt"
+    #   - "traefik.http.services.tracker.loadbalancer.server.port=80"
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"

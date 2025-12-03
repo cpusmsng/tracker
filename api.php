@@ -96,6 +96,26 @@ if ($action === 'root') {
     ]);
 }
 
+// Health check endpoint for Docker
+if ($action === 'health') {
+    try {
+        // Test database connection
+        $pdo->query("SELECT 1");
+        respond([
+            'ok' => true,
+            'status' => 'healthy',
+            'timestamp' => date('c'),
+            'database' => 'connected'
+        ]);
+    } catch (Throwable $e) {
+        respond([
+            'ok' => false,
+            'status' => 'unhealthy',
+            'error' => 'Database connection failed'
+        ], 503);
+    }
+}
+
 if ($action === 'get_last_position') {
     $row = $pdo->query("
         SELECT id, timestamp, latitude, longitude, source

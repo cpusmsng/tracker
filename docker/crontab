@@ -1,0 +1,16 @@
+# GPS Tracker Cron Jobs
+# Run as www-data user
+
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# Fetch latest data every 5 minutes
+*/5 * * * * www-data cd /var/www/html && /usr/local/bin/php fetch_data.php >> /var/log/tracker/fetch.log 2>&1
+
+# Smart refetch daily at 2 AM (detect missed data)
+0 2 * * * www-data cd /var/www/html && /usr/local/bin/php smart_refetch_v2.php >> /var/log/tracker/smart_refetch.log 2>&1
+
+# Weekly comprehensive refetch on Sunday at 3 AM
+0 3 * * 0 www-data cd /var/www/html && /usr/local/bin/php smart_refetch_v2.php --days=14 >> /var/log/tracker/smart_refetch.log 2>&1
+
+# Empty line required at end
