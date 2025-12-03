@@ -60,6 +60,15 @@ services:
       # N8N Integration (optional)
       - N8N_API_KEY=${N8N_API_KEY:-}
 
+      # Logging
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - LOG_FILE=/var/log/tracker/fetch.log
+
+      # SSO Authentication
+      - AUTH_API_URL=${AUTH_API_URL:-http://family-office:3001}
+      - LOGIN_URL=${LOGIN_URL:-https://bagron.eu/login}
+      - SSO_ENABLED=${SSO_ENABLED:-false}
+
     volumes:
       # Persistent data storage
       - tracker-data:/var/www/html/data
@@ -75,6 +84,7 @@ services:
 
     networks:
       - tracker-network
+      - bagron-network
 
     logging:
       driver: "json-file"
@@ -92,3 +102,6 @@ networks:
   tracker-network:
     name: gps-tracker-network
     driver: bridge
+  bagron-network:
+    external: true
+    name: bagron-network

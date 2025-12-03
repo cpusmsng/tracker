@@ -7,8 +7,15 @@ declare(strict_types=1);
  */
 if (PHP_SAPI !== 'cli') { http_response_code(404); echo "Not found\n"; exit; }
 date_default_timezone_set('Europe/Bratislava');
-const LOG_FILE = __DIR__ . '/fetch.log';
+
+// Log file path - can be overridden by environment
+$LOG_FILE = getenv('LOG_FILE') ?: __DIR__ . '/fetch.log';
 const FETCH_LOCK_FILE = __DIR__ . '/fetch_data.lock';
+
+// LOG LEVEL: "error", "info", "debug" (from env or default to "info")
+$LOG_LEVEL = strtolower(getenv('LOG_LEVEL') ?: 'info');
+$LOG_LEVELS = ['error' => 0, 'info' => 1, 'debug' => 2];
+$CURRENT_LOG_LEVEL = $LOG_LEVELS[$LOG_LEVEL] ?? 1;
 
 // DEBUG MODE + REFETCH MODE
 $DEBUG_MODE = false;
@@ -16,19 +23,28 @@ $REFETCH_MODE = false;
 $REFETCH_DATE = null;
 $REFETCH_BREACHES = []; // Collect breaches for summary email in refetch mode
 
-function logl(string $msg, bool $forceLog = false): void {
-    global $DEBUG_MODE;
-    if (!$forceLog && !$DEBUG_MODE) return;
+function logl(string $msg, string $level = 'debug'): void {
+    global $LOG_FILE, $CURRENT_LOG_LEVEL, $LOG_LEVELS, $DEBUG_MODE;
+    $msgLevel = $LOG_LEVELS[$level] ?? 2;
+
+    // Always log if DEBUG_MODE is on, otherwise check level
+    if (!$DEBUG_MODE && $msgLevel > $CURRENT_LOG_LEVEL) return;
+
     $ts = (new DateTimeImmutable())->format('Y-m-d\TH:i:sP');
-    file_put_contents(LOG_FILE, "[$ts] $msg\n", FILE_APPEND);
+    $levelTag = strtoupper($level);
+    file_put_contents($LOG_FILE, "[$ts] [$levelTag] $msg\n", FILE_APPEND);
+}
+
+function error_log_custom(string $msg): void {
+    logl($msg, 'error');
 }
 
 function info_log(string $msg): void {
-    logl($msg, true);
+    logl($msg, 'info');
 }
 
 function debug_log(string $msg): void {
-    logl($msg, false);
+    logl($msg, 'debug');
 }
 
 function load_env(string $path): void {

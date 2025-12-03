@@ -24,6 +24,11 @@ export UNIQUE_BUCKET_MINUTES="${UNIQUE_BUCKET_MINUTES:-30}"
 export MAC_CACHE_MAX_AGE_DAYS="${MAC_CACHE_MAX_AGE_DAYS:-3600}"
 export GOOGLE_FORCE="${GOOGLE_FORCE:-0}"
 export EMAIL_FROM="${EMAIL_FROM:-tracker@example.com}"
+export LOG_LEVEL="${LOG_LEVEL:-info}"
+export LOG_FILE="${LOG_FILE:-/var/log/tracker/fetch.log}"
+export AUTH_API_URL="${AUTH_API_URL:-http://family-office:3001}"
+export LOGIN_URL="${LOGIN_URL:-https://bagron.eu/login}"
+export SSO_ENABLED="${SSO_ENABLED:-false}"
 
 # Generate .env file from environment variables
 cat > /var/www/html/.env << EOF
@@ -63,6 +68,15 @@ EMAIL_FROM=${EMAIL_FROM}
 
 # N8N Integration (optional)
 N8N_API_KEY=${N8N_API_KEY:-}
+
+# Logging
+LOG_LEVEL=${LOG_LEVEL}
+LOG_FILE=${LOG_FILE}
+
+# SSO Authentication
+AUTH_API_URL=${AUTH_API_URL}
+LOGIN_URL=${LOGIN_URL}
+SSO_ENABLED=${SSO_ENABLED}
 EOF
 
 # Set proper permissions
