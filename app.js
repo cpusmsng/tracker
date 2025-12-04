@@ -240,7 +240,7 @@ function initAppAfterAuth() {
   // For SSO, we need to trigger it here
   if (ssoEnabled) {
     initTheme();
-    initApp();
+    initializeApp();
     initHamburgerMenu();
     initCalendar();
     initPerimeterManagement();
