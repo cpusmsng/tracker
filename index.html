@@ -14,15 +14,44 @@
   <div class="container">
     <!-- Topbar s centrovými date controls -->
     <div id="topbar" role="toolbar" aria-label="Ovládanie dátumu">
-      <!-- Ľavá strana: logo a názov -->
+      <!-- Ľavá strana: logo a názov s prepínačom subdomén -->
       <div class="topbar-left">
-        <h1>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-            <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/>
-            <circle cx="12" cy="10" r="3"/>
-          </svg>
-          Tracker
-        </h1>
+        <div class="subdomain-switcher">
+          <button class="subdomain-toggle" id="subdomainToggle" aria-label="Prepnúť aplikáciu">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/>
+              <circle cx="12" cy="10" r="3"/>
+            </svg>
+            <span class="subdomain-name">Tracker</span>
+            <svg class="subdomain-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="6 9 12 15 18 9"/>
+            </svg>
+          </button>
+
+          <div id="subdomainMenu" class="subdomain-menu hidden">
+            <a href="https://bagron.eu" class="subdomain-item">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+                <polyline points="9 22 9 12 15 12 15 22"/>
+              </svg>
+              <div class="subdomain-info">
+                <span class="subdomain-title">Family Office</span>
+                <span class="subdomain-url">bagron.eu</span>
+              </div>
+            </a>
+            <a href="https://portfolio.bagron.eu" class="subdomain-item">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <line x1="18" y1="20" x2="18" y2="10"/>
+                <line x1="12" y1="20" x2="12" y2="4"/>
+                <line x1="6" y1="20" x2="6" y2="14"/>
+              </svg>
+              <div class="subdomain-info">
+                <span class="subdomain-title">Portfolio Tracker</span>
+                <span class="subdomain-url">portfolio.bagron.eu</span>
+              </div>
+            </a>
+          </div>
+        </div>
       </div>
       
       <!-- Stred: Date controls -->
@@ -562,6 +591,6 @@
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
-  <script src="app.js?v=20251204e" defer></script>
+  <script src="app.js?v=20251204f" defer></script>
 </body>
 </html>
