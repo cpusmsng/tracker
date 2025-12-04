@@ -67,13 +67,19 @@ async function initPinSecurity() {
 
 async function handleSSOAuth(loginUrl) {
   try {
+    console.log('[SSO] Checking authentication...');
+    console.log('[SSO] Document cookies:', document.cookie || '(none visible to JS)');
+
     const authRes = await fetch(`${API}?action=auth_me`, {
       credentials: 'include'
     });
     const auth = await authRes.json();
 
+    console.log('[SSO] auth_me response:', JSON.stringify(auth));
+
     if (auth.ok && auth.authenticated && auth.user) {
       // User is authenticated via SSO
+      console.log('[SSO] SUCCESS - Authenticated as:', auth.user.name);
       currentUser = auth.user;
       hidePinOverlay();
       showUserInfo(auth.user);
@@ -84,13 +90,14 @@ async function handleSSOAuth(loginUrl) {
       window.addEventListener('focus', checkSSOSession);
     } else {
       // Not authenticated - redirect to login with return URL
+      console.log('[SSO] NOT authenticated, debug:', auth.debug);
       const returnUrl = encodeURIComponent(window.location.href);
       const baseLoginUrl = loginUrl || 'https://bagron.eu/login';
       const separator = baseLoginUrl.includes('?') ? '&' : '?';
       window.location.href = `${baseLoginUrl}${separator}redirect=${returnUrl}`;
     }
   } catch (e) {
-    console.error('SSO auth check failed', e);
+    console.error('[SSO] Auth check FAILED with error:', e);
     // Redirect to login with return URL
     const returnUrl = encodeURIComponent(window.location.href);
     const baseLoginUrl = loginUrl || 'https://bagron.eu/login';
