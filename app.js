@@ -39,13 +39,183 @@ function applyTheme(theme) {
   applyTheme(savedTheme);
 })();
 
-// --------- PIN Security ---------
+// --------- Authentication (SSO + PIN) ---------
 let pinCode = '';
 const PIN_LENGTH = 4;
 const SESSION_DURATION = 24 * 60 * 60 * 1000; // 24 hodín
+let currentUser = null;
+let ssoEnabled = false;
+const DEBUG_MODE = new URLSearchParams(window.location.search).has('debug');
 
-function initPinSecurity() {
-  // Skontroluj či je užívateľ autentifikovaný
+async function initPinSecurity() {
+  try {
+    // Check auth config to determine SSO or PIN mode
+    const configRes = await fetch(`${API}?action=auth_config`);
+    const config = await configRes.json();
+
+    if (config.ok && config.ssoEnabled) {
+      ssoEnabled = true;
+      await handleSSOAuth(config.loginUrl);
+      return;
+    }
+  } catch (e) {
+    console.warn('Auth config check failed, falling back to PIN mode', e);
+  }
+
+  // PIN mode fallback
+  handlePINAuth();
+}
+
+async function handleSSOAuth(loginUrl) {
+  // If SSO fails, fall back to PIN instead of redirecting
+  const fallbackToPIN = () => {
+    console.log('[SSO] Falling back to PIN mode');
+    ssoEnabled = false;
+    handlePINAuth();
+  };
+
+  try {
+    console.log('[SSO] v2 - Checking authentication...');
+
+    const authRes = await fetch(`${API}?action=auth_me`, {
+      credentials: 'include'
+    });
+
+    const authText = await authRes.text();
+    console.log('[SSO] Raw response:', authText.substring(0, 300));
+
+    // Check if response is HTML (not JSON)
+    if (authText.trim().startsWith('<')) {
+      console.error('[SSO] Received HTML instead of JSON - falling back to PIN');
+      fallbackToPIN();
+      return;
+    }
+
+    let auth;
+    try {
+      auth = JSON.parse(authText);
+    } catch (parseErr) {
+      console.error('[SSO] JSON parse failed - falling back to PIN');
+      fallbackToPIN();
+      return;
+    }
+
+    console.log('[SSO] Parsed:', auth.ok, auth.authenticated, auth.user?.name);
+
+    if (auth.ok && auth.authenticated && auth.user) {
+      // User is authenticated via SSO
+      console.log('[SSO] SUCCESS - Authenticated as:', auth.user.name);
+      currentUser = auth.user;
+      hidePinOverlay();
+      showUserInfo(auth.user);
+      initAppAfterAuth();
+
+      // Set up periodic session check (but don't redirect on failure)
+      setInterval(checkSSOSession, 5 * 60 * 1000);
+      window.addEventListener('focus', checkSSOSession);
+    } else {
+      // Not authenticated via SSO
+      console.log('[SSO] Not authenticated, debug:', auth.debug);
+
+      // If debug mode, don't redirect
+      if (DEBUG_MODE) {
+        console.log('[SSO] Debug mode - not redirecting');
+        fallbackToPIN();
+        return;
+      }
+
+      // Redirect to SSO login
+      const returnUrl = encodeURIComponent(window.location.href);
+      const baseLoginUrl = loginUrl || 'https://bagron.eu/login';
+      const separator = baseLoginUrl.includes('?') ? '&' : '?';
+      window.location.href = `${baseLoginUrl}${separator}redirect=${returnUrl}`;
+    }
+  } catch (e) {
+    console.error('[SSO] Auth check failed:', e.message);
+    // On any error, fall back to PIN mode instead of redirecting
+    fallbackToPIN();
+  }
+}
+
+async function checkSSOSession() {
+  if (!ssoEnabled) return;
+
+  try {
+    const authRes = await fetch(`${API}?action=auth_me`, {
+      credentials: 'include'
+    });
+    const auth = await authRes.json();
+
+    if (!auth.ok || !auth.authenticated) {
+      // Session expired - redirect to login with return URL
+      const returnUrl = encodeURIComponent(window.location.href);
+      const baseLoginUrl = auth.loginUrl || 'https://bagron.eu/login';
+      const separator = baseLoginUrl.includes('?') ? '&' : '?';
+      window.location.href = `${baseLoginUrl}${separator}redirect=${returnUrl}`;
+    }
+  } catch (e) {
+    console.warn('Session check failed', e);
+  }
+}
+
+function showUserInfo(user) {
+  // Update UI to show logged in user
+  const topbarLeft = document.querySelector('.topbar-left h1');
+  if (topbarLeft && user.name) {
+    const userSpan = document.createElement('span');
+    userSpan.className = 'user-info';
+    userSpan.innerHTML = ` <small style="font-size:12px;color:var(--muted-text);font-weight:normal;">| ${user.name}</small>`;
+    topbarLeft.appendChild(userSpan);
+  }
+
+  // Add logout button to hamburger menu
+  addLogoutMenuItem();
+}
+
+function addLogoutMenuItem() {
+  const hamburgerMenu = document.getElementById('hamburgerMenu');
+  if (!hamburgerMenu) return;
+
+  // Check if logout already exists
+  if (document.getElementById('menuLogout')) return;
+
+  const logoutBtn = document.createElement('button');
+  logoutBtn.className = 'menu-item';
+  logoutBtn.id = 'menuLogout';
+  logoutBtn.innerHTML = `
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+      <polyline points="16 17 21 12 16 7"/>
+      <line x1="21" y1="12" x2="9" y2="12"/>
+    </svg>
+    Odhlásiť sa
+  `;
+  logoutBtn.addEventListener('click', handleLogout);
+  hamburgerMenu.appendChild(logoutBtn);
+}
+
+async function handleLogout() {
+  try {
+    const res = await fetch(`${API}?action=auth_logout`, {
+      credentials: 'include'
+    });
+    const data = await res.json();
+
+    if (data.redirectUrl) {
+      window.location.href = data.redirectUrl;
+    } else {
+      // Clear local session and reload
+      sessionStorage.clear();
+      window.location.reload();
+    }
+  } catch (e) {
+    console.error('Logout failed', e);
+    window.location.href = 'https://bagron.eu/login';
+  }
+}
+
+function handlePINAuth() {
+  // Original PIN auth logic
   const authToken = sessionStorage.getItem('tracker_auth');
   const authTime = sessionStorage.getItem('tracker_auth_time');
 
@@ -54,6 +224,7 @@ function initPinSecurity() {
     if (elapsed < SESSION_DURATION) {
       // Autentifikácia je platná
       hidePinOverlay();
+      initAppAfterAuth();
       return;
     }
   }
@@ -61,6 +232,16 @@ function initPinSecurity() {
   // Zobraz PIN overlay
   showPinOverlay();
   setupPinHandlers();
+}
+
+function initAppAfterAuth() {
+  // This will be called after successful auth (SSO or PIN)
+  // initializeApp() already calls initMap, initCalendar, initHamburgerMenu, addUIHandlers
+  if (ssoEnabled) {
+    initTheme();
+    initializeApp();
+    initPerimeterManagement();
+  }
 }
 
 function showPinOverlay() {

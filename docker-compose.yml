@@ -1,0 +1,107 @@
+# GPS/Location Tracker - Docker Compose Configuration
+#
+# Usage:
+#   Development: docker compose up -d
+#   Production:  docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# Required environment variables (set in .env or pass directly):
+#   - SENSECAP_ACCESS_ID
+#   - SENSECAP_ACCESS_KEY
+#   - SENSECAP_DEVICE_EUI
+#   - GOOGLE_API_KEY (optional, for Wi-Fi geolocation)
+#   - ACCESS_PIN_HASH (default: 1234 hash)
+
+version: '3.8'
+
+services:
+  tracker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: gps-tracker
+    restart: unless-stopped
+    ports:
+      - "${TRACKER_PORT:-8080}:80"
+    environment:
+      # SenseCAP API (required)
+      - SENSECAP_ACCESS_ID=${SENSECAP_ACCESS_ID}
+      - SENSECAP_ACCESS_KEY=${SENSECAP_ACCESS_KEY}
+      - SENSECAP_DEVICE_EUI=${SENSECAP_DEVICE_EUI}
+      - SENSECAP_CHANNEL_INDEX=${SENSECAP_CHANNEL_INDEX:-1}
+      - SENSECAP_LIMIT=${SENSECAP_LIMIT:-50}
+
+      # Measurement IDs
+      - MEAS_WIFI_MAC=${MEAS_WIFI_MAC:-5001}
+      - MEAS_BT_IBEACON_MAC=${MEAS_BT_IBEACON_MAC:-5002}
+      - MEAS_GNSS_LON=${MEAS_GNSS_LON:-4197}
+      - MEAS_GNSS_LAT=${MEAS_GNSS_LAT:-4198}
+
+      # Hysteresis settings
+      - HYSTERESIS_METERS=${HYSTERESIS_METERS:-50}
+      - HYSTERESIS_MINUTES=${HYSTERESIS_MINUTES:-30}
+      - UNIQUE_PRECISION=${UNIQUE_PRECISION:-6}
+      - UNIQUE_BUCKET_MINUTES=${UNIQUE_BUCKET_MINUTES:-30}
+      - MAC_CACHE_MAX_AGE_DAYS=${MAC_CACHE_MAX_AGE_DAYS:-3600}
+
+      # Google Geolocation (optional)
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
+      - GOOGLE_FORCE=${GOOGLE_FORCE:-0}
+
+      # Security
+      - ACCESS_PIN_HASH=${ACCESS_PIN_HASH:-03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4}
+
+      # Database (internal path)
+      - SQLITE_PATH=/var/www/html/data/tracker_database.sqlite
+
+      # Email Service
+      - EMAIL_SERVICE_URL=${EMAIL_SERVICE_URL:-}
+      - EMAIL_FROM=${EMAIL_FROM:-tracker@example.com}
+
+      # N8N Integration (optional)
+      - N8N_API_KEY=${N8N_API_KEY:-}
+
+      # Logging
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - LOG_FILE=/var/log/tracker/fetch.log
+
+      # SSO Authentication
+      - AUTH_API_URL=${AUTH_API_URL:-http://family-office:3001}
+      - LOGIN_URL=${LOGIN_URL:-https://bagron.eu/login}
+      - SSO_ENABLED=${SSO_ENABLED:-false}
+
+    volumes:
+      # Persistent data storage
+      - tracker-data:/var/www/html/data
+      # Logs (optional - for debugging)
+      - tracker-logs:/var/log/tracker
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/api.php?action=health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+    networks:
+      - tracker-network
+      - bagron-network
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  tracker-data:
+    name: gps-tracker-data
+  tracker-logs:
+    name: gps-tracker-logs
+
+networks:
+  tracker-network:
+    name: gps-tracker-network
+    driver: bridge
+  bagron-network:
+    external: true
+    name: bagron-network

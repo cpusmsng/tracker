@@ -8,9 +8,101 @@ GPS/Location Tracker application with Wi-Fi geolocation, GNSS positioning, and i
 
 **Tech Stack:**
 - Frontend: Vanilla JavaScript + Leaflet.js maps
-- Backend: PHP 7.4+ with SQLite
+- Backend: PHP 8.2+ with SQLite
+- Docker with Apache, PHP-FPM, and cron
 - No build process or transpilation required
 - Direct file serving (no bundling)
+
+## Docker Deployment
+
+### Quick Start
+```bash
+# 1. Clone and configure
+cp .env.example .env
+nano .env  # Add your SenseCAP credentials
+
+# 2. Deploy
+chmod +x deploy.sh
+./deploy.sh
+
+# Application available at http://localhost:8080
+```
+
+### Deploy Commands
+```bash
+./deploy.sh              # Production deployment
+./deploy.sh dev          # Development mode
+./deploy.sh stop         # Stop containers
+./deploy.sh restart      # Restart
+./deploy.sh logs         # View logs
+./deploy.sh status       # Check health
+./deploy.sh backup       # Backup database
+./deploy.sh restore FILE # Restore from backup
+./deploy.sh clean        # Remove everything
+```
+
+### Docker Architecture
+```
+┌─────────────────────────────────────────┐
+│         Docker Container                │
+│  ┌─────────────────────────────────┐   │
+│  │         Supervisor              │   │
+│  │  ┌──────────┐  ┌─────────────┐ │   │
+│  │  │  Apache  │  │    Cron     │ │   │
+│  │  │   PHP    │  │ (fetch_data)│ │   │
+│  │  └────┬─────┘  └──────┬──────┘ │   │
+│  └───────┼───────────────┼────────┘   │
+│          │               │            │
+│    ┌─────▼───────────────▼─────┐      │
+│    │     SQLite Database       │      │
+│    │   (persistent volume)     │      │
+│    └───────────────────────────┘      │
+└─────────────────────────────────────────┘
+```
+
+### Docker Files
+- `Dockerfile` - PHP 8.2 Apache image with cron
+- `docker-compose.yml` - Service definition
+- `docker-compose.prod.yml` - Production overrides
+- `deploy.sh` - Deployment script
+- `.dockerignore` - Build exclusions
+- `docker/` - Configuration files:
+  - `php.ini` - PHP settings
+  - `apache-vhost.conf` - Apache config
+  - `crontab` - Cron jobs schedule
+  - `supervisord.conf` - Process manager
+  - `entrypoint.sh` - Container startup
+
+### Environment Variables (Docker)
+Set in `.env` file or pass to docker-compose:
+
+```env
+# Required
+SENSECAP_ACCESS_ID=your_id
+SENSECAP_ACCESS_KEY=your_key
+SENSECAP_DEVICE_EUI=your_eui
+
+# Optional
+TRACKER_PORT=8080           # Host port
+GOOGLE_API_KEY=             # For Wi-Fi geolocation
+ACCESS_PIN_HASH=...         # Default: 1234
+EMAIL_SERVICE_URL=          # For perimeter alerts
+N8N_API_KEY=                # For N8N integration
+```
+
+### Volumes
+- `gps-tracker-data` - SQLite database (persistent)
+- `gps-tracker-logs` - Application logs
+
+### Health Check
+```bash
+curl http://localhost:8080/api.php?action=health
+```
+
+### Cron Jobs (Automatic)
+- Every 5 min: `fetch_data.php` - Fetch latest positions
+- Daily 2 AM: `smart_refetch_v2.php` - Check for missed data
+- Weekly Sunday 3 AM: Full 14-day refetch
 
 ## Architecture
 

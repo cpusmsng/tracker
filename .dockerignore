@@ -1,0 +1,54 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Docker files (don't need to be in the image itself)
+Dockerfile
+docker-compose*.yml
+.dockerignore
+
+# Documentation (not needed in production)
+*.md
+!CLAUDE.md
+LICENSE
+
+# Development files
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# Environment and secrets (will be injected at runtime)
+.env
+.env.*
+!.env.example
+
+# Database files (will be mounted as volume)
+*.sqlite
+*.sqlite3
+*.db
+
+# Log files
+*.log
+logs/
+
+# Lock files
+*.lock
+
+# Temporary files
+tmp/
+temp/
+cache/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Backup files
+*.bak
+*.backup
+
+# Deploy script (stays on host)
+deploy.sh

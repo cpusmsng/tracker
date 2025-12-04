@@ -11,57 +11,6 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <!-- PIN Entry Overlay (Security) -->
-  <div id="pinOverlay" class="pin-overlay">
-    <div class="pin-container">
-      <div class="pin-header">
-        <div class="app-logo">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="32" height="32">
-            <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/>
-            <circle cx="12" cy="10" r="3"/>
-          </svg>
-          <span class="app-name">Tracker</span>
-        </div>
-        <svg class="lock-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
-          <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
-        </svg>
-        <h2>Zabezpečený prístup</h2>
-        <p>Zadajte 4-ciferný kód</p>
-      </div>
-
-      <div class="pin-display">
-        <div class="pin-dot" id="pinDot1"></div>
-        <div class="pin-dot" id="pinDot2"></div>
-        <div class="pin-dot" id="pinDot3"></div>
-        <div class="pin-dot" id="pinDot4"></div>
-      </div>
-
-      <div class="pin-error hidden" id="pinError">Nesprávny kód</div>
-
-      <div class="pin-keypad">
-        <button class="pin-key" data-key="1">1</button>
-        <button class="pin-key" data-key="2">2</button>
-        <button class="pin-key" data-key="3">3</button>
-        <button class="pin-key" data-key="4">4</button>
-        <button class="pin-key" data-key="5">5</button>
-        <button class="pin-key" data-key="6">6</button>
-        <button class="pin-key" data-key="7">7</button>
-        <button class="pin-key" data-key="8">8</button>
-        <button class="pin-key" data-key="9">9</button>
-        <button class="pin-key empty"></button>
-        <button class="pin-key" data-key="0">0</button>
-        <button class="pin-key delete" id="pinDelete">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M21 4H8l-7 8 7 8h13a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2z"></path>
-            <line x1="18" y1="9" x2="12" y2="15"></line>
-            <line x1="12" y1="9" x2="18" y2="15"></line>
-          </svg>
-        </button>
-      </div>
-    </div>
-  </div>
-
   <div class="container">
     <!-- Topbar s centrovými date controls -->
     <div id="topbar" role="toolbar" aria-label="Ovládanie dátumu">
@@ -613,6 +562,6 @@
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
-  <script src="app.js" defer></script>
+  <script src="app.js?v=20251204e" defer></script>
 </body>
 </html>

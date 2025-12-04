@@ -8,7 +8,23 @@ ini_set('log_errors', '1');
 ini_set('error_log', __DIR__ . '/php-error.log');
 
 header('Content-Type: application/json; charset=utf-8');
-header('Access-Control-Allow-Origin: *');
+
+// CORS headers - support credentials for SSO cookies
+$allowedOrigins = [
+    'https://tracker.bagron.eu',
+    'https://bagron.eu',
+    'http://localhost:8080',
+    'http://localhost:8090',
+];
+$origin = $_SERVER['HTTP_ORIGIN'] ?? '';
+if (in_array($origin, $allowedOrigins, true)) {
+    header('Access-Control-Allow-Origin: ' . $origin);
+    header('Access-Control-Allow-Credentials: true');
+} else {
+    // Fallback for same-origin requests (no Origin header)
+    header('Access-Control-Allow-Origin: https://tracker.bagron.eu');
+    header('Access-Control-Allow-Credentials: true');
+}
 header('Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS');
 header('Access-Control-Allow-Headers: Content-Type, Accept');
 
@@ -77,6 +93,92 @@ function utc_to_local(string $utcTimestamp): string {
     return $dt->format(DateTime::ATOM);
 }
 
+// ========== SSO AUTHENTICATION ==========
+
+function isSSOEnabled(): bool {
+    $enabled = getenv('SSO_ENABLED') ?: 'false';
+    return strtolower($enabled) === 'true' || $enabled === '1';
+}
+
+function getAuthApiUrl(): string {
+    return getenv('AUTH_API_URL') ?: 'http://family-office:3001';
+}
+
+function getLoginUrl(): string {
+    return getenv('LOGIN_URL') ?: 'https://bagron.eu/login';
+}
+
+function validateSSOSession(): ?array {
+    $sessionId = $_COOKIE['session'] ?? null;
+    if (!$sessionId) {
+        return null;
+    }
+
+    $authUrl = getAuthApiUrl() . '/api/auth/me';
+
+    $ch = curl_init($authUrl);
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_TIMEOUT => 5,
+        CURLOPT_HTTPHEADER => [
+            'Cookie: session=' . $sessionId,
+            'Accept: application/json'
+        ],
+        CURLOPT_FOLLOWLOCATION => true,
+    ]);
+
+    $response = curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $error = curl_error($ch);
+    curl_close($ch);
+
+    if ($error || $httpCode !== 200) {
+        return null;
+    }
+
+    $data = json_decode($response, true);
+    if (!$data || !isset($data['user'])) {
+        return null;
+    }
+
+    return [
+        'id' => $data['user']['id'] ?? null,
+        'email' => $data['user']['email'] ?? null,
+        'name' => $data['user']['name'] ?? null,
+        'isAdmin' => $data['isAdmin'] ?? false,
+    ];
+}
+
+function ssoLogout(): void {
+    $sessionId = $_COOKIE['session'] ?? null;
+    if ($sessionId) {
+        $authUrl = getAuthApiUrl() . '/api/auth/logout';
+
+        $ch = curl_init($authUrl);
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_POST => true,
+            CURLOPT_TIMEOUT => 5,
+            CURLOPT_HTTPHEADER => [
+                'Cookie: session=' . $sessionId,
+                'Accept: application/json'
+            ],
+        ]);
+        curl_exec($ch);
+        curl_close($ch);
+    }
+
+    // Clear the session cookie
+    setcookie('session', '', [
+        'expires' => time() - 3600,
+        'path' => '/',
+        'domain' => '.bagron.eu',
+        'secure' => true,
+        'httponly' => true,
+        'samesite' => 'Lax'
+    ]);
+}
+
 try { $pdo = db(); } catch (Throwable $e) { respond(['ok'=>false, 'error'=>'DB: '.$e->getMessage()], 500); }
 
 $action = qparam('action', 'root');
@@ -94,6 +196,26 @@ if ($action === 'root') {
         'precision'=>(int)$precision,
         'bucketMin'=>(int)$bucketMin
     ]);
+}
+
+// Health check endpoint for Docker
+if ($action === 'health') {
+    try {
+        // Test database connection
+        $pdo->query("SELECT 1");
+        respond([
+            'ok' => true,
+            'status' => 'healthy',
+            'timestamp' => date('c'),
+            'database' => 'connected'
+        ]);
+    } catch (Throwable $e) {
+        respond([
+            'ok' => false,
+            'status' => 'unhealthy',
+            'error' => 'Database connection failed'
+        ], 503);
+    }
 }
 
 if ($action === 'get_last_position') {
@@ -500,6 +622,70 @@ if ($action === 'get_device_status') {
     } catch (Throwable $e) {
         respond(['ok' => false, 'error' => 'Error: ' . $e->getMessage()], 500);
     }
+}
+
+// ========== AUTHENTICATION ==========
+
+// SSO: Get current user
+if ($action === 'auth_me') {
+    if (isSSOEnabled()) {
+        $sessionCookie = $_COOKIE['session'] ?? null;
+        $user = validateSSOSession();
+        if ($user) {
+            respond([
+                'ok' => true,
+                'authenticated' => true,
+                'method' => 'sso',
+                'user' => $user
+            ]);
+        } else {
+            respond([
+                'ok' => true,
+                'authenticated' => false,
+                'method' => 'sso',
+                'loginUrl' => getLoginUrl(),
+                'debug' => [
+                    'hasCookie' => $sessionCookie !== null,
+                    'cookieLength' => $sessionCookie ? strlen($sessionCookie) : 0,
+                    'allCookies' => array_keys($_COOKIE),
+                    'authApiUrl' => getAuthApiUrl()
+                ]
+            ]);
+        }
+    } else {
+        // PIN mode - return auth config info
+        respond([
+            'ok' => true,
+            'authenticated' => false,
+            'method' => 'pin'
+        ]);
+    }
+}
+
+// SSO: Logout
+if ($action === 'auth_logout') {
+    if (isSSOEnabled()) {
+        ssoLogout();
+        respond([
+            'ok' => true,
+            'message' => 'Logged out',
+            'redirectUrl' => getLoginUrl()
+        ]);
+    } else {
+        respond([
+            'ok' => true,
+            'message' => 'PIN mode - client should clear session'
+        ]);
+    }
+}
+
+// Get auth configuration
+if ($action === 'auth_config') {
+    respond([
+        'ok' => true,
+        'ssoEnabled' => isSSOEnabled(),
+        'loginUrl' => isSSOEnabled() ? getLoginUrl() : null
+    ]);
 }
 
 // ========== PIN SECURITY ==========
