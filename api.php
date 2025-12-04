@@ -629,6 +629,7 @@ if ($action === 'get_device_status') {
 // SSO: Get current user
 if ($action === 'auth_me') {
     if (isSSOEnabled()) {
+        $sessionCookie = $_COOKIE['session'] ?? null;
         $user = validateSSOSession();
         if ($user) {
             respond([
@@ -642,7 +643,13 @@ if ($action === 'auth_me') {
                 'ok' => true,
                 'authenticated' => false,
                 'method' => 'sso',
-                'loginUrl' => getLoginUrl()
+                'loginUrl' => getLoginUrl(),
+                'debug' => [
+                    'hasCookie' => $sessionCookie !== null,
+                    'cookieLength' => $sessionCookie ? strlen($sessionCookie) : 0,
+                    'allCookies' => array_keys($_COOKIE),
+                    'authApiUrl' => getAuthApiUrl()
+                ]
             ]);
         }
     } else {
