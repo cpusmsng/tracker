@@ -67,35 +67,40 @@ async function initPinSecurity() {
 }
 
 async function handleSSOAuth(loginUrl) {
+  // If SSO fails, fall back to PIN instead of redirecting
+  const fallbackToPIN = () => {
+    console.log('[SSO] Falling back to PIN mode');
+    ssoEnabled = false;
+    handlePINAuth();
+  };
+
   try {
-    console.log('[SSO] Checking authentication...');
-    console.log('[SSO] Current URL:', window.location.href);
-    console.log('[SSO] API URL:', `${API}?action=auth_me`);
+    console.log('[SSO] v2 - Checking authentication...');
 
     const authRes = await fetch(`${API}?action=auth_me`, {
       credentials: 'include'
     });
 
-    console.log('[SSO] Response status:', authRes.status);
-    console.log('[SSO] Response headers:', [...authRes.headers.entries()]);
-
     const authText = await authRes.text();
-    console.log('[SSO] Raw response (first 500 chars):', authText.substring(0, 500));
+    console.log('[SSO] Raw response:', authText.substring(0, 300));
+
+    // Check if response is HTML (not JSON)
+    if (authText.trim().startsWith('<')) {
+      console.error('[SSO] Received HTML instead of JSON - falling back to PIN');
+      fallbackToPIN();
+      return;
+    }
 
     let auth;
     try {
       auth = JSON.parse(authText);
     } catch (parseErr) {
-      console.error('[SSO] JSON parse failed:', parseErr);
-      console.error('[SSO] Response was not valid JSON');
-      if (DEBUG_MODE) {
-        alert('SSO Debug: JSON parse failed. Check console. Response: ' + authText.substring(0, 200));
-        return;
-      }
-      throw parseErr;
+      console.error('[SSO] JSON parse failed - falling back to PIN');
+      fallbackToPIN();
+      return;
     }
 
-    console.log('[SSO] Parsed response:', auth);
+    console.log('[SSO] Parsed:', auth.ok, auth.authenticated, auth.user?.name);
 
     if (auth.ok && auth.authenticated && auth.user) {
       // User is authenticated via SSO
@@ -105,32 +110,30 @@ async function handleSSOAuth(loginUrl) {
       showUserInfo(auth.user);
       initAppAfterAuth();
 
-      // Set up periodic session check
-      setInterval(checkSSOSession, 5 * 60 * 1000); // Every 5 minutes
+      // Set up periodic session check (but don't redirect on failure)
+      setInterval(checkSSOSession, 5 * 60 * 1000);
       window.addEventListener('focus', checkSSOSession);
     } else {
-      // Not authenticated - redirect to login with return URL
-      console.log('[SSO] NOT authenticated, debug:', auth.debug);
+      // Not authenticated via SSO
+      console.log('[SSO] Not authenticated, debug:', auth.debug);
+
+      // If debug mode, don't redirect
       if (DEBUG_MODE) {
-        alert('SSO Debug: Not authenticated. Check console.');
+        console.log('[SSO] Debug mode - not redirecting');
+        fallbackToPIN();
         return;
       }
+
+      // Redirect to SSO login
       const returnUrl = encodeURIComponent(window.location.href);
       const baseLoginUrl = loginUrl || 'https://bagron.eu/login';
       const separator = baseLoginUrl.includes('?') ? '&' : '?';
       window.location.href = `${baseLoginUrl}${separator}redirect=${returnUrl}`;
     }
   } catch (e) {
-    console.error('[SSO] Auth check FAILED with error:', e);
-    if (DEBUG_MODE) {
-      alert('SSO Debug: Exception caught. Check console. Error: ' + e.message);
-      return;
-    }
-    // Redirect to login with return URL
-    const returnUrl = encodeURIComponent(window.location.href);
-    const baseLoginUrl = loginUrl || 'https://bagron.eu/login';
-    const separator = baseLoginUrl.includes('?') ? '&' : '?';
-    window.location.href = `${baseLoginUrl}${separator}redirect=${returnUrl}`;
+    console.error('[SSO] Auth check failed:', e.message);
+    // On any error, fall back to PIN mode instead of redirecting
+    fallbackToPIN();
   }
 }
 
