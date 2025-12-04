@@ -380,6 +380,7 @@ async function initializeApp() {
   initMap();
   initCalendar();
   initHamburgerMenu();
+  initSubdomainSwitcher();
   addUIHandlers();
   await loadAvailableDates();
   await refresh();
@@ -735,6 +736,39 @@ function initHamburgerMenu() {
       openPerimeterOverlay();
     });
   }
+}
+
+// --------- Subdomain Switcher ---------
+function initSubdomainSwitcher() {
+  const toggleBtn = $('#subdomainToggle');
+  const menu = $('#subdomainMenu');
+
+  if (!toggleBtn || !menu) return;
+
+  toggleBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const isOpen = !menu.classList.contains('hidden');
+
+    if (isOpen) {
+      menu.classList.add('hidden');
+      toggleBtn.classList.remove('active');
+    } else {
+      menu.classList.remove('hidden');
+      toggleBtn.classList.add('active');
+
+      // Close menu when clicking outside
+      setTimeout(() => {
+        const closeHandler = (ev) => {
+          if (!menu.contains(ev.target) && !toggleBtn.contains(ev.target)) {
+            menu.classList.add('hidden');
+            toggleBtn.classList.remove('active');
+            document.removeEventListener('click', closeHandler);
+          }
+        };
+        document.addEventListener('click', closeHandler);
+      }, 0);
+    }
+  });
 }
 
 // --------- iBeacon Management Overlay ---------
