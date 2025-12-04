@@ -236,13 +236,10 @@ function handlePINAuth() {
 
 function initAppAfterAuth() {
   // This will be called after successful auth (SSO or PIN)
-  // The rest of the app initialization happens in verifyPin success handler
-  // For SSO, we need to trigger it here
+  // initializeApp() already calls initMap, initCalendar, initHamburgerMenu, addUIHandlers
   if (ssoEnabled) {
     initTheme();
     initializeApp();
-    initHamburgerMenu();
-    initCalendar();
     initPerimeterManagement();
   }
 }
