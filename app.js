@@ -45,6 +45,7 @@ const PIN_LENGTH = 4;
 const SESSION_DURATION = 24 * 60 * 60 * 1000; // 24 hodín
 let currentUser = null;
 let ssoEnabled = false;
+const DEBUG_MODE = new URLSearchParams(window.location.search).has('debug');
 
 async function initPinSecurity() {
   try {
@@ -68,14 +69,33 @@ async function initPinSecurity() {
 async function handleSSOAuth(loginUrl) {
   try {
     console.log('[SSO] Checking authentication...');
-    console.log('[SSO] Document cookies:', document.cookie || '(none visible to JS)');
+    console.log('[SSO] Current URL:', window.location.href);
+    console.log('[SSO] API URL:', `${API}?action=auth_me`);
 
     const authRes = await fetch(`${API}?action=auth_me`, {
       credentials: 'include'
     });
-    const auth = await authRes.json();
 
-    console.log('[SSO] auth_me response:', JSON.stringify(auth));
+    console.log('[SSO] Response status:', authRes.status);
+    console.log('[SSO] Response headers:', [...authRes.headers.entries()]);
+
+    const authText = await authRes.text();
+    console.log('[SSO] Raw response (first 500 chars):', authText.substring(0, 500));
+
+    let auth;
+    try {
+      auth = JSON.parse(authText);
+    } catch (parseErr) {
+      console.error('[SSO] JSON parse failed:', parseErr);
+      console.error('[SSO] Response was not valid JSON');
+      if (DEBUG_MODE) {
+        alert('SSO Debug: JSON parse failed. Check console. Response: ' + authText.substring(0, 200));
+        return;
+      }
+      throw parseErr;
+    }
+
+    console.log('[SSO] Parsed response:', auth);
 
     if (auth.ok && auth.authenticated && auth.user) {
       // User is authenticated via SSO
@@ -91,6 +111,10 @@ async function handleSSOAuth(loginUrl) {
     } else {
       // Not authenticated - redirect to login with return URL
       console.log('[SSO] NOT authenticated, debug:', auth.debug);
+      if (DEBUG_MODE) {
+        alert('SSO Debug: Not authenticated. Check console.');
+        return;
+      }
       const returnUrl = encodeURIComponent(window.location.href);
       const baseLoginUrl = loginUrl || 'https://bagron.eu/login';
       const separator = baseLoginUrl.includes('?') ? '&' : '?';
@@ -98,6 +122,10 @@ async function handleSSOAuth(loginUrl) {
     }
   } catch (e) {
     console.error('[SSO] Auth check FAILED with error:', e);
+    if (DEBUG_MODE) {
+      alert('SSO Debug: Exception caught. Check console. Error: ' + e.message);
+      return;
+    }
     // Redirect to login with return URL
     const returnUrl = encodeURIComponent(window.location.href);
     const baseLoginUrl = loginUrl || 'https://bagron.eu/login';
