@@ -8,7 +8,23 @@ ini_set('log_errors', '1');
 ini_set('error_log', __DIR__ . '/php-error.log');
 
 header('Content-Type: application/json; charset=utf-8');
-header('Access-Control-Allow-Origin: *');
+
+// CORS headers - support credentials for SSO cookies
+$allowedOrigins = [
+    'https://tracker.bagron.eu',
+    'https://bagron.eu',
+    'http://localhost:8080',
+    'http://localhost:8090',
+];
+$origin = $_SERVER['HTTP_ORIGIN'] ?? '';
+if (in_array($origin, $allowedOrigins, true)) {
+    header('Access-Control-Allow-Origin: ' . $origin);
+    header('Access-Control-Allow-Credentials: true');
+} else {
+    // Fallback for same-origin requests (no Origin header)
+    header('Access-Control-Allow-Origin: https://tracker.bagron.eu');
+    header('Access-Control-Allow-Credentials: true');
+}
 header('Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS');
 header('Access-Control-Allow-Headers: Content-Type, Accept');
 

@@ -83,12 +83,19 @@ async function handleSSOAuth(loginUrl) {
       setInterval(checkSSOSession, 5 * 60 * 1000); // Every 5 minutes
       window.addEventListener('focus', checkSSOSession);
     } else {
-      // Not authenticated - redirect to login
-      window.location.href = loginUrl || 'https://bagron.eu/login';
+      // Not authenticated - redirect to login with return URL
+      const returnUrl = encodeURIComponent(window.location.href);
+      const baseLoginUrl = loginUrl || 'https://bagron.eu/login';
+      const separator = baseLoginUrl.includes('?') ? '&' : '?';
+      window.location.href = `${baseLoginUrl}${separator}redirect=${returnUrl}`;
     }
   } catch (e) {
     console.error('SSO auth check failed', e);
-    window.location.href = loginUrl || 'https://bagron.eu/login';
+    // Redirect to login with return URL
+    const returnUrl = encodeURIComponent(window.location.href);
+    const baseLoginUrl = loginUrl || 'https://bagron.eu/login';
+    const separator = baseLoginUrl.includes('?') ? '&' : '?';
+    window.location.href = `${baseLoginUrl}${separator}redirect=${returnUrl}`;
   }
 }
 
@@ -102,8 +109,11 @@ async function checkSSOSession() {
     const auth = await authRes.json();
 
     if (!auth.ok || !auth.authenticated) {
-      // Session expired - redirect to login
-      window.location.href = auth.loginUrl || 'https://bagron.eu/login';
+      // Session expired - redirect to login with return URL
+      const returnUrl = encodeURIComponent(window.location.href);
+      const baseLoginUrl = auth.loginUrl || 'https://bagron.eu/login';
+      const separator = baseLoginUrl.includes('?') ? '&' : '?';
+      window.location.href = `${baseLoginUrl}${separator}redirect=${returnUrl}`;
     }
   } catch (e) {
     console.warn('Session check failed', e);
