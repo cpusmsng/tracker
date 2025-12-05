@@ -1107,6 +1107,137 @@ body{padding:16px 16px 0;display:flex;flex-direction:column}
   max-width:700px;
 }
 
+.perimeter-content-wide{
+  max-width:1000px;
+  width:95%;
+}
+
+.perimeter-section{
+  background:var(--muted-bg);
+  border:1px solid var(--border);
+  border-radius:10px;
+  padding:20px;
+  margin-bottom:16px;
+}
+
+.perimeter-section:last-child{
+  margin-bottom:0;
+}
+
+.perimeter-section h3{
+  margin:0 0 12px;
+  font-size:16px;
+  font-weight:600;
+  color:var(--text);
+}
+
+.perimeter-section-header{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  margin-bottom:16px;
+}
+
+.perimeter-section-header h3{
+  margin:0;
+}
+
+.section-description{
+  margin:0 0 16px;
+  font-size:13px;
+  color:var(--muted-text);
+  line-height:1.5;
+}
+
+/* Perimeter Edit Layout - Two columns */
+.perimeter-edit-layout{
+  display:grid;
+  grid-template-columns:1fr 1.5fr;
+  gap:20px;
+}
+
+.perimeter-edit-form{
+  display:flex;
+  flex-direction:column;
+  gap:16px;
+}
+
+.perimeter-edit-map .perimeter-section{
+  height:100%;
+  display:flex;
+  flex-direction:column;
+}
+
+.perimeter-edit-map #perimeterDrawMap{
+  flex:1;
+  min-height:400px;
+}
+
+.perimeter-map-header{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  flex-wrap:wrap;
+  gap:12px;
+  margin-bottom:12px;
+}
+
+.perimeter-map-header h3{
+  margin:0;
+}
+
+.trail-date-selector{
+  display:flex;
+  align-items:center;
+  gap:8px;
+}
+
+.trail-date-selector label{
+  font-size:13px;
+  color:var(--muted-text);
+  white-space:nowrap;
+}
+
+.trail-date-selector input[type="date"]{
+  padding:6px 10px;
+  border:1px solid var(--border);
+  border-radius:6px;
+  font-size:13px;
+  background:var(--btn-bg);
+  color:var(--text);
+}
+
+.perimeter-form-actions{
+  margin-top:20px;
+  padding-top:16px;
+  border-top:1px solid var(--border);
+  justify-content:flex-end;
+}
+
+/* Responsive - stack columns on mobile */
+@media (max-width:768px){
+  .perimeter-edit-layout{
+    grid-template-columns:1fr;
+  }
+
+  .perimeter-content-wide{
+    max-width:95%;
+  }
+
+  .perimeter-map-header{
+    flex-direction:column;
+    align-items:flex-start;
+  }
+
+  .trail-date-selector{
+    width:100%;
+  }
+
+  .trail-date-selector input[type="date"]{
+    flex:1;
+  }
+}
+
 .perimeter-actions-top{
   margin-bottom:16px;
 }

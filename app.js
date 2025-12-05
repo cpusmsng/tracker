@@ -1772,11 +1772,33 @@ function addUIHandlers() {
       }
     });
   }
+
+  // Trail date loading
+  const loadTrailBtn = $('#loadTrailBtn');
+  if (loadTrailBtn) {
+    loadTrailBtn.addEventListener('click', async () => {
+      const trailDateInput = $('#trailDate');
+      if (trailDateInput && trailDateInput.value) {
+        await loadPerimeterTrail(trailDateInput.value);
+      }
+    });
+  }
+
+  // Also load trail on date change (Enter key or change)
+  const trailDateInput = $('#trailDate');
+  if (trailDateInput) {
+    trailDateInput.addEventListener('change', async () => {
+      if (trailDateInput.value) {
+        await loadPerimeterTrail(trailDateInput.value);
+      }
+    });
+  }
 }
 
 // --------- Perimeter Management ---------
 let perimeterDrawMap = null;
 let perimeterPolygonLayer = null;
+let perimeterTrailLayer = null;
 let perimeterPolygonPoints = [];
 let perimeterMainMapLayer = null;
 let editingPerimeterId = null;
@@ -1791,13 +1813,36 @@ function openPerimeterOverlay() {
 
 function closePerimeterOverlay() {
   $('#perimeterOverlay').classList.add('hidden');
+
+  // Clean up edit state
   editingPerimeterId = null;
+  perimeterPolygonPoints = [];
+
+  // Clean up map if it exists
+  if (perimeterDrawMap) {
+    perimeterDrawMap.remove();
+    perimeterDrawMap = null;
+  }
+  perimeterPolygonLayer = null;
+  perimeterTrailLayer = null;
 }
 
 function showPerimeterListView() {
   $('#perimeterListView').classList.remove('hidden');
   $('#perimeterEditView').classList.add('hidden');
   $('#perimeterOverlayTitle').textContent = 'Perimeter zóny';
+
+  // Clean up edit state
+  editingPerimeterId = null;
+  perimeterPolygonPoints = [];
+
+  // Clean up map if it exists
+  if (perimeterDrawMap) {
+    perimeterDrawMap.remove();
+    perimeterDrawMap = null;
+  }
+  perimeterPolygonLayer = null;
+  perimeterTrailLayer = null;
 }
 
 function showPerimeterEditView(perimeter = null) {
@@ -1828,10 +1873,20 @@ function showPerimeterEditView(perimeter = null) {
 
   updatePolygonPointCount();
 
+  // Set default date to today
+  const trailDateInput = $('#trailDate');
+  if (trailDateInput) {
+    trailDateInput.value = fmt(new Date());
+  }
+
   // Initialize map after view is shown
-  setTimeout(() => {
+  setTimeout(async () => {
     initPerimeterDrawMap();
     drawPolygonOnMap();
+
+    // Load today's trail by default
+    const dateStr = trailDateInput ? trailDateInput.value : fmt(new Date());
+    await loadPerimeterTrail(dateStr);
   }, 100);
 }
 
@@ -1935,9 +1990,16 @@ function getEmailsFromList() {
 // Expose to global scope for onclick
 window.removeEmailEntry = removeEmailEntry;
 
+// Initialize perimeter management (called after auth)
+function initPerimeterManagement() {
+  // Add any perimeter-specific initialization here
+  console.log('Perimeter management initialized');
+}
+
 function initPerimeterDrawMap() {
   if (perimeterDrawMap) {
     perimeterDrawMap.remove();
+    perimeterDrawMap = null;
   }
 
   perimeterDrawMap = L.map('perimeterDrawMap').setView([48.1486, 17.1077], 13);
@@ -1945,6 +2007,9 @@ function initPerimeterDrawMap() {
     maxZoom: 19, attribution: '&copy; OpenStreetMap'
   }).addTo(perimeterDrawMap);
 
+  // Trail layer (underneath polygon)
+  perimeterTrailLayer = L.layerGroup().addTo(perimeterDrawMap);
+  // Polygon layer (on top)
   perimeterPolygonLayer = L.layerGroup().addTo(perimeterDrawMap);
 
   // Click to add points
@@ -1961,6 +2026,55 @@ function initPerimeterDrawMap() {
   if (perimeterPolygonPoints.length >= 3) {
     const bounds = L.latLngBounds(perimeterPolygonPoints.map(p => [p.lat, p.lng]));
     perimeterDrawMap.fitBounds(bounds, { padding: [50, 50] });
+  }
+}
+
+// Load tracker trail on perimeter map
+async function loadPerimeterTrail(dateStr) {
+  if (!perimeterTrailLayer || !perimeterDrawMap) return;
+
+  perimeterTrailLayer.clearLayers();
+
+  try {
+    const data = await apiGet(`${API}?action=get_history&date=${encodeURIComponent(dateStr)}`);
+
+    if (!Array.isArray(data) || data.length === 0) {
+      console.log('No trail data for', dateStr);
+      return;
+    }
+
+    // Draw polyline for the trail
+    const latlngs = data.map(p => [p.latitude, p.longitude]);
+    const line = L.polyline(latlngs, {
+      color: '#3388ff',
+      weight: 3,
+      opacity: 0.7,
+      dashArray: '5, 5'
+    }).addTo(perimeterTrailLayer);
+
+    // Add small markers for each point
+    data.forEach((p, idx) => {
+      const marker = L.circleMarker([p.latitude, p.longitude], {
+        radius: 3,
+        fillColor: '#3388ff',
+        color: '#fff',
+        weight: 1,
+        fillOpacity: 0.8
+      }).bindTooltip(new Date(p.timestamp).toLocaleTimeString('sk-SK', { hour: '2-digit', minute: '2-digit' }), {
+        permanent: false,
+        opacity: 0.9
+      });
+      perimeterTrailLayer.addLayer(marker);
+    });
+
+    // Fit to trail bounds if no polygon points
+    if (perimeterPolygonPoints.length === 0) {
+      const bounds = L.latLngBounds(latlngs);
+      perimeterDrawMap.fitBounds(bounds, { padding: [50, 50] });
+    }
+
+  } catch (err) {
+    console.error('Error loading trail:', err);
   }
 }
 
@@ -2053,16 +2167,25 @@ async function loadPerimeterList() {
 
     let html = perimetersData.map(p => {
       const badges = [];
-      if (p.alert_on_enter) badges.push('<span class="perimeter-badge enter">Vstup</span>');
-      if (p.alert_on_exit) badges.push('<span class="perimeter-badge exit">Opustenie</span>');
+      // Check if any email has entry/exit alerts enabled
+      const hasEnterAlert = p.emails?.some(e => e.alert_on_enter) || p.alert_on_enter;
+      const hasExitAlert = p.emails?.some(e => e.alert_on_exit) || p.alert_on_exit;
+      if (hasEnterAlert) badges.push('<span class="perimeter-badge enter">Vstup</span>');
+      if (hasExitAlert) badges.push('<span class="perimeter-badge exit">Opustenie</span>');
       if (!p.is_active) badges.push('<span class="perimeter-badge inactive">Neaktívny</span>');
+
+      // Count emails from the emails array
+      const emailCount = p.emails?.length || 0;
+      const emailText = emailCount === 0 ? 'Bez e-mailu' :
+                        emailCount === 1 ? '1 e-mail' :
+                        `${emailCount} e-maily`;
 
       return `
         <div class="perimeter-item ${p.is_active ? '' : 'inactive'}" data-id="${p.id}">
           <div class="perimeter-color" style="background-color:${p.color || '#ff6b6b'}"></div>
           <div class="perimeter-info">
             <h4>${escapeHtml(p.name)}</h4>
-            <small>${p.notification_email || 'Bez e-mailu'} | ${p.polygon?.length || 0} bodov</small>
+            <small>${emailText} | ${p.polygon?.length || 0} bodov</small>
             <div class="perimeter-badges">${badges.join('')}</div>
           </div>
           <div class="perimeter-actions">

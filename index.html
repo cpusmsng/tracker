@@ -8,7 +8,7 @@
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%230ea5e9' stroke-width='2'%3E%3Cpath d='M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z'/%3E%3Ccircle cx='12' cy='10' r='3'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css">
-  <link rel="stylesheet" href="style.css?v=20251204g">
+  <link rel="stylesheet" href="style.css?v=20251205a">
 </head>
 <body>
   <div class="container">
@@ -485,7 +485,7 @@
 
   <!-- Perimeter Management Overlay -->
   <div id="perimeterOverlay" class="overlay hidden">
-    <div class="overlay-content perimeter-content">
+    <div class="overlay-content perimeter-content perimeter-content-wide">
       <div class="overlay-header">
         <h2 id="perimeterOverlayTitle">Perimeter zóny</h2>
         <button id="perimeterOverlayClose" class="overlay-close" aria-label="Zavrieť">&times;</button>
@@ -494,22 +494,27 @@
       <div class="overlay-body">
         <!-- Perimeter List View -->
         <div id="perimeterListView">
-          <div class="perimeter-actions-top">
-            <button type="button" id="addNewPerimeter" class="btn-primary">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <line x1="12" y1="5" x2="12" y2="19"/>
-                <line x1="5" y1="12" x2="19" y2="12"/>
-              </svg>
-              Pridať nový perimeter
-            </button>
-          </div>
-          <div id="perimeterList" class="perimeter-list">
-            <p class="perimeter-loading">Načítavam...</p>
+          <!-- Existing Perimeters Section -->
+          <div class="perimeter-section">
+            <div class="perimeter-section-header">
+              <h3>Existujúce zóny</h3>
+              <button type="button" id="addNewPerimeter" class="btn-primary btn-small">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <line x1="12" y1="5" x2="12" y2="19"/>
+                  <line x1="5" y1="12" x2="19" y2="12"/>
+                </svg>
+                Pridať zónu
+              </button>
+            </div>
+            <div id="perimeterList" class="perimeter-list">
+              <p class="perimeter-loading">Načítavam...</p>
+            </div>
           </div>
 
           <!-- Test Email Section -->
-          <div class="test-email-section">
-            <h4>Test e-mailovej služby</h4>
+          <div class="perimeter-section test-email-section">
+            <h3>Test e-mailovej služby</h3>
+            <p class="section-description">Overte, či je e-mailová služba správne nakonfigurovaná odoslaním testovacieho e-mailu.</p>
             <div class="test-email-form">
               <input type="email" id="testEmailAddress" placeholder="Zadajte e-mail pre test" autocomplete="email">
               <button type="button" id="sendTestEmail" class="btn-secondary" onclick="sendTestEmail()">
@@ -529,50 +534,82 @@
           <form id="perimeterForm" novalidate>
             <input type="hidden" id="perimeterId" value="">
 
-            <div class="form-row">
-              <label for="perimeterName">Názov perimetra
-                <input type="text" id="perimeterName" placeholder="Napr. Domov, Práca, Škola" autocomplete="off" required>
-              </label>
+            <div class="perimeter-edit-layout">
+              <!-- Left column: Form fields -->
+              <div class="perimeter-edit-form">
+                <div class="perimeter-section">
+                  <h3>Základné údaje</h3>
+
+                  <div class="form-row">
+                    <label for="perimeterName">Názov perimetra</label>
+                    <input type="text" id="perimeterName" placeholder="Napr. Domov, Práca, Škola" autocomplete="off" required>
+                  </div>
+
+                  <div class="form-row">
+                    <label for="perimeterColor">Farba zóny</label>
+                    <input type="color" id="perimeterColor" value="#ff6b6b">
+                  </div>
+                </div>
+
+                <!-- Multiple Emails Section -->
+                <div class="perimeter-section">
+                  <h3>E-mailové notifikácie</h3>
+                  <p class="section-description">Pridajte e-maily, na ktoré budú posielané upozornenia pri vstupe alebo opustení zóny.</p>
+                  <div id="perimeterEmailsList" class="perimeter-emails-list">
+                    <!-- Email entries will be added here dynamically -->
+                  </div>
+                  <button type="button" id="addPerimeterEmail" class="btn-small btn-secondary">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                      <line x1="12" y1="5" x2="12" y2="19"/>
+                      <line x1="5" y1="12" x2="19" y2="12"/>
+                    </svg>
+                    Pridať e-mail
+                  </button>
+                </div>
+              </div>
+
+              <!-- Right column: Map with trail -->
+              <div class="perimeter-edit-map">
+                <div class="perimeter-section">
+                  <div class="perimeter-map-header">
+                    <h3>Nakresliť zónu</h3>
+                    <div class="trail-date-selector">
+                      <label for="trailDate">Trasa dňa:</label>
+                      <input type="date" id="trailDate">
+                      <button type="button" id="loadTrailBtn" class="btn-small btn-secondary">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                          <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
+                          <path d="M3 3v5h5"/>
+                        </svg>
+                        Načítať
+                      </button>
+                    </div>
+                  </div>
+                  <p class="map-help">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                      <circle cx="12" cy="12" r="10"/>
+                      <line x1="12" y1="16" x2="12" y2="12"/>
+                      <line x1="12" y1="8" x2="12.01" y2="8"/>
+                    </svg>
+                    Kliknutím na mapu pridaj body polygónu. Pravý klik odstráni bod. Modrá čiara = trasa trackera.
+                  </p>
+                  <div id="perimeterDrawMap"></div>
+                  <div class="polygon-info">
+                    <span id="polygonPointCount">Body: 0</span>
+                    <button type="button" id="clearPolygon" class="btn-small btn-secondary">Vymazať polygón</button>
+                  </div>
+                </div>
+              </div>
             </div>
 
-            <!-- Multiple Emails Section -->
-            <div class="form-row">
-              <label>E-maily pre notifikácie</label>
-              <div id="perimeterEmailsList" class="perimeter-emails-list">
-                <!-- Email entries will be added here dynamically -->
-              </div>
-              <button type="button" id="addPerimeterEmail" class="btn-small btn-secondary">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
-                  <line x1="12" y1="5" x2="12" y2="19"/>
-                  <line x1="5" y1="12" x2="19" y2="12"/>
+            <div class="form-actions perimeter-form-actions">
+              <button type="button" id="cancelPerimeterEdit" class="btn-secondary">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <line x1="18" y1="6" x2="6" y2="18"/>
+                  <line x1="6" y1="6" x2="18" y2="18"/>
                 </svg>
-                Pridať e-mail
+                Zrušiť
               </button>
-            </div>
-
-            <div class="form-row">
-              <label for="perimeterColor">Farba zóny
-                <input type="color" id="perimeterColor" value="#ff6b6b">
-              </label>
-            </div>
-
-            <div class="perimeter-map-section">
-              <p class="map-help">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
-                  <circle cx="12" cy="12" r="10"/>
-                  <line x1="12" y1="16" x2="12" y2="12"/>
-                  <line x1="12" y1="8" x2="12.01" y2="8"/>
-                </svg>
-                Kliknutím na mapu pridaj body polygónu. Minimálne 3 body.
-              </p>
-              <div id="perimeterDrawMap"></div>
-              <div class="polygon-info">
-                <span id="polygonPointCount">Body: 0</span>
-                <button type="button" id="clearPolygon" class="btn-small btn-secondary">Vymazať polygón</button>
-              </div>
-            </div>
-
-            <div class="form-actions">
               <button type="button" id="savePerimeter" class="btn-primary">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
@@ -581,7 +618,6 @@
                 </svg>
                 Uložiť perimeter
               </button>
-              <button type="button" id="cancelPerimeterEdit" class="btn-secondary">Zrušiť</button>
             </div>
           </form>
         </div>
@@ -591,6 +627,6 @@
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
-  <script src="app.js?v=20251204g" defer></script>
+  <script src="app.js?v=20251205a" defer></script>
 </body>
 </html>
