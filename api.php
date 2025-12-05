@@ -1284,7 +1284,7 @@ if ($action === 'get_perimeter_email_settings') {
             'email_service_url' => getenv('EMAIL_SERVICE_URL') ?: 'http://email-service:3004/send',
             'email_api_key_set' => (getenv('EMAIL_API_KEY') !== false && getenv('EMAIL_API_KEY') !== ''),
             'default_from_email' => getenv('EMAIL_FROM') ?: 'tracker@bagron.eu',
-            'default_from_name' => getenv('EMAIL_FROM_NAME') ?: 'Tracker Alert'
+            'default_from_name' => getenv('EMAIL_FROM_NAME') ?: 'Family Tracker'
         ];
         respond(['ok' => true, 'data' => $settings]);
     } catch (Throwable $e) {
@@ -1305,7 +1305,7 @@ if ($action === 'test_email' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         $emailServiceUrl = getenv('EMAIL_SERVICE_URL') ?: 'http://email-service:3004/send';
         $apiKey = getenv('EMAIL_API_KEY') ?: '';
         $fromEmail = getenv('EMAIL_FROM') ?: 'tracker@bagron.eu';
-        $fromName = getenv('EMAIL_FROM_NAME') ?: 'Tracker Alert';
+        $fromName = getenv('EMAIL_FROM_NAME') ?: 'Family Tracker';
 
         if (!function_exists('curl_init')) {
             respond(['ok' => false, 'error' => 'PHP curl extension nie je nainštalovaná'], 500);
@@ -1327,11 +1327,11 @@ if ($action === 'test_email' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         <body>
             <div class="container">
                 <h1>✓ Test úspešný!</h1>
-                <p>Toto je testovací e-mail z GPS Tracker aplikácie.</p>
+                <p>Toto je testovací e-mail z Family Tracker aplikácie.</p>
                 <p>Ak vidíte túto správu, e-mailové notifikácie sú správne nakonfigurované.</p>
                 <p><strong>Čas odoslania:</strong> ' . date('d.m.Y H:i:s') . '</p>
                 <div class="footer">
-                    GPS Tracker - Perimeter Alert System
+                    Family Tracker - Perimeter Alert System
                 </div>
             </div>
         </body>
@@ -1339,7 +1339,7 @@ if ($action === 'test_email' && $_SERVER['REQUEST_METHOD'] === 'POST') {
 
         $payload = [
             'to_email' => $testEmail,
-            'subject' => 'Test e-mailovej služby - GPS Tracker',
+            'subject' => 'Test e-mailovej služby - Family Tracker',
             'html_body' => $htmlBody,
             'from_email' => $fromEmail,
             'from_name' => $fromName

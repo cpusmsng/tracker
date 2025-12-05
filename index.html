@@ -2,13 +2,13 @@
 <html lang="sk">
 <head>
   <meta charset="UTF-8">
-  <title>Tracker | GPS Tracker</title>
+  <title>Family Tracker</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="GPS tracking system with real-time location monitoring and perimeter alerts">
+  <meta name="description" content="Family Tracker - real-time location monitoring and perimeter alerts">
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%230ea5e9' stroke-width='2'%3E%3Cpath d='M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z'/%3E%3Ccircle cx='12' cy='10' r='3'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css">
-  <link rel="stylesheet" href="style.css?v=20251205a">
+  <link rel="stylesheet" href="style.css?v=20251205b">
 </head>
 <body>
   <div class="container">
@@ -22,7 +22,7 @@
               <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/>
               <circle cx="12" cy="10" r="3"/>
             </svg>
-            <span class="subdomain-name">Tracker</span>
+            <span class="subdomain-name">Family Tracker</span>
             <svg class="subdomain-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <polyline points="6 9 12 15 18 9"/>
             </svg>
@@ -185,7 +185,7 @@
     <div id="positionsTable" aria-live="polite">-</div>
 
     <footer class="site-footer">
-      <p>&copy; 2025 Tracker</p>
+      <p>&copy; 2025 Family Tracker</p>
     </footer>
   </div>
 
@@ -517,7 +517,7 @@
             <p class="section-description">Overte, či je e-mailová služba správne nakonfigurovaná odoslaním testovacieho e-mailu.</p>
             <div class="test-email-form">
               <input type="email" id="testEmailAddress" placeholder="Zadajte e-mail pre test" autocomplete="email">
-              <button type="button" id="sendTestEmail" class="btn-secondary" onclick="sendTestEmail()">
+              <button type="button" id="sendTestEmail" class="btn-secondary">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
                   <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/>
                   <polyline points="22,6 12,13 2,6"/>
@@ -627,6 +627,6 @@
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
-  <script src="app.js?v=20251205a" defer></script>
+  <script src="app.js?v=20251205b" defer></script>
 </body>
 </html>

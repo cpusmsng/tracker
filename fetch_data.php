@@ -608,7 +608,7 @@ function send_perimeter_alert_emails(array $breach): int {
     $emailServiceUrl = getenv('EMAIL_SERVICE_URL') ?: 'http://email-service:3004/send';
     $apiKey = getenv('EMAIL_API_KEY') ?: '';
     $fromEmail = getenv('EMAIL_FROM') ?: 'tracker@bagron.eu';
-    $fromName = getenv('EMAIL_FROM_NAME') ?: 'Tracker Alert';
+    $fromName = getenv('EMAIL_FROM_NAME') ?: 'Family Tracker';
 
     if (!$apiKey) {
         debug_log("    EMAIL SKIP: EMAIL_API_KEY not configured");
@@ -616,7 +616,7 @@ function send_perimeter_alert_emails(array $breach): int {
     }
 
     $alertType = $breachType === 'enter' ? 'VSTUP DO ZÓNY' : 'OPUSTENIE ZÓNY';
-    $subject = "Tracker Alert: $alertType - {$p['name']}";
+    $subject = "Family Tracker: $alertType - {$p['name']}";
 
     // Format timestamp for display
     try {
@@ -649,7 +649,7 @@ function send_perimeter_alert_emails(array $breach): int {
         <div class='container'>
             <div class='header'>
                 <h2 style='margin:0;'>$alertType</h2>
-                <p style='margin:5px 0 0;opacity:0.9;'>Tracker Alert System</p>
+                <p style='margin:5px 0 0;opacity:0.9;'>Family Tracker</p>
             </div>
             <div class='content'>
                 <div class='info-row'>
@@ -663,7 +663,7 @@ function send_perimeter_alert_emails(array $breach): int {
                 </div>
                 <a href='$mapsUrl' class='btn'>Zobraziť na mape</a>
                 <div class='footer'>
-                    Táto správa bola automaticky vygenerovaná systémom Tracker Alert.
+                    Táto správa bola automaticky vygenerovaná systémom Family Tracker.
                 </div>
             </div>
         </div>
@@ -746,7 +746,7 @@ function send_refetch_summary_email(array $breaches, string $refetchDate): int {
     $emailServiceUrl = getenv('EMAIL_SERVICE_URL') ?: 'http://email-service:3004/send';
     $apiKey = getenv('EMAIL_API_KEY') ?: '';
     $fromEmail = getenv('EMAIL_FROM') ?: 'tracker@bagron.eu';
-    $fromName = getenv('EMAIL_FROM_NAME') ?: 'Tracker Alert';
+    $fromName = getenv('EMAIL_FROM_NAME') ?: 'Family Tracker';
 
     if (!$apiKey) {
         debug_log("SUMMARY EMAIL SKIP: EMAIL_API_KEY not configured");
@@ -781,7 +781,7 @@ function send_refetch_summary_email(array $breaches, string $refetchDate): int {
         return 0;
     }
 
-    $subject = "Tracker Alert: Súhrn udalostí z $refetchDate (" . count($breaches) . " udalostí)";
+    $subject = "Family Tracker: Súhrn udalostí z $refetchDate (" . count($breaches) . " udalostí)";
 
     // Build HTML table with all breaches
     $tableRows = '';
@@ -855,7 +855,7 @@ function send_refetch_summary_email(array $breaches, string $refetchDate): int {
                 </table>
 
                 <div class='footer'>
-                    Táto správa bola automaticky vygenerovaná systémom Tracker Alert.<br>
+                    Táto správa bola automaticky vygenerovaná systémom Family Tracker.<br>
                     Udalosti boli detekované počas refetch operácie, nie v reálnom čase.
                 </div>
             </div>

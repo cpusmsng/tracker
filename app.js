@@ -1741,7 +1741,7 @@ function addUIHandlers() {
 
   const cancelPerimeterEdit = $('#cancelPerimeterEdit');
   if (cancelPerimeterEdit) {
-    cancelPerimeterEdit.addEventListener('click', showPerimeterListView);
+    cancelPerimeterEdit.addEventListener('click', closePerimeterOverlay);
   }
 
   const clearPolygonBtn = $('#clearPolygon');
