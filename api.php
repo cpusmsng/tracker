@@ -1307,10 +1307,6 @@ if ($action === 'test_email' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         $fromEmail = getenv('EMAIL_FROM') ?: 'tracker@bagron.eu';
         $fromName = getenv('EMAIL_FROM_NAME') ?: 'Tracker Alert';
 
-        if (empty($apiKey)) {
-            respond(['ok' => false, 'error' => 'EMAIL_API_KEY nie je nakonfigurovaný v .env súbore', 'debug' => ['env_vars' => ['EMAIL_SERVICE_URL' => $emailServiceUrl, 'EMAIL_API_KEY' => '(empty)', 'EMAIL_FROM' => $fromEmail]]], 400);
-        }
-
         if (!function_exists('curl_init')) {
             respond(['ok' => false, 'error' => 'PHP curl extension nie je nainštalovaná'], 500);
         }
@@ -1346,9 +1342,13 @@ if ($action === 'test_email' && $_SERVER['REQUEST_METHOD'] === 'POST') {
             'subject' => 'Test e-mailovej služby - GPS Tracker',
             'html_body' => $htmlBody,
             'from_email' => $fromEmail,
-            'from_name' => $fromName,
-            'api_key' => $apiKey
+            'from_name' => $fromName
         ];
+
+        // Only include api_key if configured
+        if (!empty($apiKey)) {
+            $payload['api_key'] = $apiKey;
+        }
 
         $ch = curl_init($emailServiceUrl);
         curl_setopt_array($ch, [
@@ -1372,9 +1372,9 @@ if ($action === 'test_email' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         $responseData = json_decode($response, true);
 
         if ($httpCode >= 200 && $httpCode < 300) {
-            respond(['ok' => true, 'message' => 'Testovací e-mail bol odoslaný na ' . $testEmail, 'debug' => ['http_code' => $httpCode, 'response' => $responseData]]);
+            respond(['ok' => true, 'message' => 'Testovací e-mail bol odoslaný na ' . $testEmail, 'debug' => ['http_code' => $httpCode, 'response' => $responseData, 'api_key_used' => !empty($apiKey)]]);
         } else {
-            respond(['ok' => false, 'error' => 'Email služba vrátila chybu (HTTP ' . $httpCode . ')', 'debug' => ['http_code' => $httpCode, 'response' => $responseData, 'url' => $emailServiceUrl]], 500);
+            respond(['ok' => false, 'error' => 'Email služba vrátila chybu (HTTP ' . $httpCode . ')', 'debug' => ['http_code' => $httpCode, 'response' => $responseData, 'url' => $emailServiceUrl, 'api_key_used' => !empty($apiKey)]], 500);
         }
 
     } catch (Throwable $e) {
