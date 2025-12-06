@@ -478,6 +478,24 @@ body{padding:16px 16px 0;display:flex;flex-direction:column}
   display:none;
 }
 
+/* ========== USER NAME DISPLAY ========== */
+.user-name-display{
+  font-size:13px;font-weight:500;
+  color:var(--text);
+  padding:6px 10px;
+  background:var(--muted-bg);
+  border:1px solid var(--border);
+  border-radius:8px;
+  white-space:nowrap;
+  max-width:120px;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+
+.user-name-display.hidden{
+  display:none;
+}
+
 /* ========== HAMBURGER CONTAINER ========== */
 .hamburger-container{
   position:relative;
@@ -1606,6 +1624,13 @@ body{padding:16px 16px 0;display:flex;flex-direction:column}
   .battery-icon-good,
   .battery-icon-low{
     width:20px;height:20px;
+  }
+
+  /* User name smaller on mobile */
+  .user-name-display{
+    font-size:11px;
+    padding:4px 8px;
+    max-width:80px;
   }
 
   /* Hamburger button smaller on mobile */

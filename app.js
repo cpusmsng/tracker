@@ -159,13 +159,11 @@ async function checkSSOSession() {
 }
 
 function showUserInfo(user) {
-  // Update UI to show logged in user
-  const topbarLeft = document.querySelector('.topbar-left h1');
-  if (topbarLeft && user.name) {
-    const userSpan = document.createElement('span');
-    userSpan.className = 'user-info';
-    userSpan.innerHTML = ` <small style="font-size:12px;color:var(--muted-text);font-weight:normal;">| ${user.name}</small>`;
-    topbarLeft.appendChild(userSpan);
+  // Update UI to show logged in user name near hamburger menu
+  const userNameDisplay = document.getElementById('userNameDisplay');
+  if (userNameDisplay && user.name) {
+    userNameDisplay.textContent = user.name;
+    userNameDisplay.classList.remove('hidden');
   }
 
   // Add logout button to hamburger menu
