@@ -1303,9 +1303,17 @@ if ($action === 'test_email' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         $emailServiceUrl = getenv('EMAIL_SERVICE_URL') ?: 'http://email-service:3004/send';
-        $apiKey = getenv('EMAIL_API_KEY') ?: '';
+        // Append /send if URL doesn't end with it
+        if (!str_ends_with($emailServiceUrl, '/send')) {
+            $emailServiceUrl = rtrim($emailServiceUrl, '/') . '/send';
+        }
+        $apiKeyRaw = getenv('EMAIL_API_KEY');
+        $apiKey = $apiKeyRaw !== false ? $apiKeyRaw : '';
         $fromEmail = getenv('EMAIL_FROM') ?: 'tracker@bagron.eu';
         $fromName = getenv('EMAIL_FROM_NAME') ?: 'Family Tracker';
+
+        // Debug: show if API key is being read
+        $apiKeyDebug = $apiKeyRaw === false ? 'NOT_SET' : (empty($apiKey) ? 'EMPTY' : 'SET(' . strlen($apiKey) . ' chars)');
 
         if (!function_exists('curl_init')) {
             respond(['ok' => false, 'error' => 'PHP curl extension nie je nainštalovaná'], 500);
@@ -1372,9 +1380,9 @@ if ($action === 'test_email' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         $responseData = json_decode($response, true);
 
         if ($httpCode >= 200 && $httpCode < 300) {
-            respond(['ok' => true, 'message' => 'Testovací e-mail bol odoslaný na ' . $testEmail, 'debug' => ['http_code' => $httpCode, 'response' => $responseData, 'api_key_used' => !empty($apiKey)]]);
+            respond(['ok' => true, 'message' => 'Testovací e-mail bol odoslaný na ' . $testEmail, 'debug' => ['http_code' => $httpCode, 'response' => $responseData, 'api_key_status' => $apiKeyDebug]]);
         } else {
-            respond(['ok' => false, 'error' => 'Email služba vrátila chybu (HTTP ' . $httpCode . ')', 'debug' => ['http_code' => $httpCode, 'response' => $responseData, 'url' => $emailServiceUrl, 'api_key_used' => !empty($apiKey)]], 500);
+            respond(['ok' => false, 'error' => 'Email služba vrátila chybu (HTTP ' . $httpCode . ')', 'debug' => ['http_code' => $httpCode, 'response' => $responseData, 'url' => $emailServiceUrl, 'api_key_status' => $apiKeyDebug]], 500);
         }
 
     } catch (Throwable $e) {
