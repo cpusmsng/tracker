@@ -1560,28 +1560,36 @@ body{padding:16px 16px 0;display:flex;flex-direction:column}
   }
 
   #topbar{
-    padding:8px 10px;gap:6px;
+    padding:8px 10px;
+    gap:6px;
     flex-wrap:wrap;
+    display:flex !important;
   }
 
+  /* Row 1: subdomain (left) + status indicators + hamburger (right) */
   .topbar-left{
-    flex:0 0 auto;
-    min-width:auto;
-    order:1;
+    flex:0 0 auto !important;
+    min-width:auto !important;
+    order:1 !important;
   }
 
   .topbar-right{
-    flex:0 0 auto;
-    gap:8px;min-width:auto;
-    order:2;
-    margin-left:auto;
+    flex:1 1 auto !important;
+    gap:8px;
+    min-width:auto !important;
+    order:2 !important;
+    justify-content:flex-end !important;
+    display:flex !important;
+    align-items:center !important;
   }
 
+  /* Row 2: date controls (full width) */
   .topbar-center{
-    flex:1 0 100%;
-    order:3;
-    justify-content:center;
-    min-width:auto;
+    flex:0 0 100% !important;
+    order:3 !important;
+    justify-content:center !important;
+    min-width:100% !important;
+    display:flex !important;
   }
 
   /* Hide the text on mobile, show only icon */

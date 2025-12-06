@@ -606,6 +606,10 @@ function send_perimeter_alert_emails(array $breach): int {
     }
 
     $emailServiceUrl = getenv('EMAIL_SERVICE_URL') ?: 'http://email-service:3004/send';
+    // Append /send if URL doesn't end with it
+    if (!str_ends_with($emailServiceUrl, '/send')) {
+        $emailServiceUrl = rtrim($emailServiceUrl, '/') . '/send';
+    }
     $apiKey = getenv('EMAIL_API_KEY') ?: '';
     $fromEmail = getenv('EMAIL_FROM') ?: 'tracker@bagron.eu';
     $fromName = getenv('EMAIL_FROM_NAME') ?: 'Family Tracker';
@@ -744,6 +748,10 @@ function send_refetch_summary_email(array $breaches, string $refetchDate): int {
     }
 
     $emailServiceUrl = getenv('EMAIL_SERVICE_URL') ?: 'http://email-service:3004/send';
+    // Append /send if URL doesn't end with it
+    if (!str_ends_with($emailServiceUrl, '/send')) {
+        $emailServiceUrl = rtrim($emailServiceUrl, '/') . '/send';
+    }
     $apiKey = getenv('EMAIL_API_KEY') ?: '';
     $fromEmail = getenv('EMAIL_FROM') ?: 'tracker@bagron.eu';
     $fromName = getenv('EMAIL_FROM_NAME') ?: 'Family Tracker';

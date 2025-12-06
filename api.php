@@ -1303,6 +1303,10 @@ if ($action === 'test_email' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         $emailServiceUrl = getenv('EMAIL_SERVICE_URL') ?: 'http://email-service:3004/send';
+        // Append /send if URL doesn't end with it
+        if (!str_ends_with($emailServiceUrl, '/send')) {
+            $emailServiceUrl = rtrim($emailServiceUrl, '/') . '/send';
+        }
         $apiKey = getenv('EMAIL_API_KEY') ?: '';
         $fromEmail = getenv('EMAIL_FROM') ?: 'tracker@bagron.eu';
         $fromName = getenv('EMAIL_FROM_NAME') ?: 'Family Tracker';
