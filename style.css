@@ -1556,40 +1556,49 @@ body{padding:16px 16px 0;display:flex;flex-direction:column}
 
   .container{
     gap:12px;
-    padding-top:90px; /* Space for 2-row topbar on mobile */
+    padding-top:100px; /* Space for 2-row topbar on mobile */
   }
 
   #topbar{
     padding:8px 10px;
-    gap:6px;
+    gap:6px 10px;
     flex-wrap:wrap;
     display:flex !important;
+    justify-content:space-between !important;
+    align-items:center !important;
   }
 
   /* Row 1: subdomain (left) + status indicators + hamburger (right) */
   .topbar-left{
     flex:0 0 auto !important;
+    flex-grow:0 !important;
+    flex-shrink:0 !important;
     min-width:auto !important;
+    max-width:auto !important;
+    width:auto !important;
     order:1 !important;
   }
 
   .topbar-right{
-    flex:1 1 auto !important;
-    gap:8px;
+    flex:0 1 auto !important;
+    gap:6px !important;
     min-width:auto !important;
     order:2 !important;
     justify-content:flex-end !important;
     display:flex !important;
     align-items:center !important;
+    margin-left:auto !important;
   }
 
-  /* Row 2: date controls (full width) */
+  /* Row 2: date controls (full width, force new line) */
   .topbar-center{
-    flex:0 0 100% !important;
+    flex:1 0 100% !important;
+    width:100% !important;
     order:3 !important;
     justify-content:center !important;
-    min-width:100% !important;
     display:flex !important;
+    flex-wrap:wrap !important;
+    gap:6px !important;
   }
 
   /* Hide the text on mobile, show only icon */
