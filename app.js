@@ -801,11 +801,8 @@ async function loadSiteSwitcherData() {
   const menu = $('#site-nav-menu');
 
   try {
-    // Fetch both sites.json and icons.json in parallel with SSO credentials
-    const [sitesRes, iconsRes] = await Promise.all([
-      fetch(SITE_SWITCHER_CONFIG.sitesUrl, { credentials: 'include' }),
-      fetch(SITE_SWITCHER_CONFIG.iconsUrl, { credentials: 'include' })
-    ]);
+    // Fetch sites.json with SSO credentials (required)
+    const sitesRes = await fetch(SITE_SWITCHER_CONFIG.sitesUrl, { credentials: 'include' });
 
     if (sitesRes.ok) {
       sitesData = await sitesRes.json();
@@ -813,10 +810,17 @@ async function loadSiteSwitcherData() {
       throw new Error('Failed to fetch sites.json');
     }
 
-    if (iconsRes.ok) {
-      iconsData = await iconsRes.json();
-    } else {
-      console.warn('Could not load icons.json, using fallbacks');
+    // Try to fetch icons.json (optional - fallbacks will be used if unavailable)
+    try {
+      const iconsRes = await fetch(SITE_SWITCHER_CONFIG.iconsUrl, { credentials: 'include' });
+      if (iconsRes.ok) {
+        iconsData = await iconsRes.json();
+      } else {
+        // icons.json is optional, use fallbacks silently
+        iconsData = {};
+      }
+    } catch {
+      // icons.json fetch failed, use fallbacks silently
       iconsData = {};
     }
 
