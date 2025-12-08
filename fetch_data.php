@@ -1212,16 +1212,7 @@ try {
     // Load active perimeters for breach detection
     $activePerimeters = load_active_perimeters($pdo);
     $previousPerimeterStates = [];
-
-    // Initialize perimeter states from last known position
-    if ($lastInsertedPos) {
-        $previousPerimeterStates = get_position_perimeter_states(
-            $lastInsertedPos['lat'],
-            $lastInsertedPos['lng'],
-            $activePerimeters
-        );
-        debug_log("PERIMETER INIT: initialized states from last position");
-    }
+    // NOTE: $previousPerimeterStates will be initialized AFTER $lastInsertedPos is set below
 
     $tsSet = [];
     foreach (array_keys($gnssBuckets) as $iso) $tsSet[$iso] = true;
@@ -1287,7 +1278,32 @@ try {
     } else {
         $lastInsertedPos = get_last_position($pdo);
     }
-    
+
+    // FIX: Initialize perimeter states from last known position AFTER $lastInsertedPos is set
+    // This ensures that when a new day starts, we detect exit from zones where the tracker
+    // was stationary the previous day
+    if ($lastInsertedPos && !empty($activePerimeters)) {
+        $previousPerimeterStates = get_position_perimeter_states(
+            $lastInsertedPos['lat'],
+            $lastInsertedPos['lng'],
+            $activePerimeters
+        );
+        debug_log("PERIMETER INIT: initialized states from last position ({$lastInsertedPos['lat']}, {$lastInsertedPos['lng']})");
+
+        // Log which perimeters the tracker was inside at the last known position
+        foreach ($previousPerimeterStates as $pid => $isInside) {
+            if ($isInside) {
+                $pName = '';
+                foreach ($activePerimeters as $p) {
+                    if ($p['id'] === $pid) { $pName = $p['name']; break; }
+                }
+                debug_log("PERIMETER INIT: was INSIDE '$pName' (id=$pid) at last position");
+            }
+        }
+    } else if (empty($lastInsertedPos)) {
+        debug_log("PERIMETER INIT: no previous position - first positions will not trigger breach");
+    }
+
     foreach ($allTs as $iso) {
         try {
             $isoObj = new DateTimeImmutable($iso, new DateTimeZone('UTC'));

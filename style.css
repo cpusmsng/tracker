@@ -272,53 +272,69 @@ body{padding:16px 16px 0;display:flex;flex-direction:column}
   width:20px;height:20px;stroke:var(--primary);
 }
 
-/* ========== SUBDOMAIN SWITCHER ========== */
-.subdomain-switcher{
+/* ========== SITE NAV SWITCHER (SSO) ========== */
+.site-nav{
   position:relative;
 }
 
-.subdomain-toggle{
-  display:flex;align-items:center;gap:6px;
+.site-nav-toggle{
+  display:flex;align-items:center;gap:8px;
   background:transparent;border:none;
-  cursor:pointer;padding:6px 8px;
+  cursor:pointer;padding:6px 10px;
   border-radius:8px;
   transition:background-color 0.2s;
 }
 
-.subdomain-toggle:hover{
+.site-nav-toggle:hover{
   background:var(--muted-bg);
 }
 
-.subdomain-toggle svg:first-child{
-  width:22px;height:22px;stroke:var(--primary);
+#site-nav-icon{
+  font-size:20px;line-height:1;
 }
 
-.subdomain-name{
-  font-size:18px;font-weight:700;
+#site-nav-name{
+  font-size:17px;font-weight:700;
   color:var(--text);
 }
 
-.subdomain-arrow{
-  width:14px;height:14px;
+.site-nav-arrow{
   color:var(--muted-text);
   transition:transform 0.2s;
+  flex-shrink:0;
 }
 
-.subdomain-toggle.active .subdomain-arrow{
+.site-nav-toggle.active .site-nav-arrow{
   transform:rotate(180deg);
 }
 
-/* Subdomain dropdown menu */
-.subdomain-menu{
+/* Site nav dropdown menu */
+.site-nav-menu{
   position:absolute;top:calc(100% + 8px);left:0;
   background:var(--card-bg);border:1px solid var(--border);
   border-radius:10px;padding:8px;
   box-shadow:0 4px 16px rgba(0,0,0,0.15);
-  z-index:1200;min-width:220px;
-  overflow:hidden;
+  z-index:1200;min-width:240px;
+  opacity:0;visibility:hidden;
+  transform:translateY(-8px);
+  transition:opacity 0.2s, visibility 0.2s, transform 0.2s;
 }
 
-.subdomain-item{
+.site-nav-menu:not(.hidden){
+  opacity:1;visibility:visible;
+  transform:translateY(0);
+}
+
+.site-nav-menu.hidden{
+  display:none;
+}
+
+.site-nav-loading{
+  padding:16px;text-align:center;
+  color:var(--muted-text);font-size:13px;
+}
+
+.site-nav-item{
   display:flex;align-items:center;gap:12px;
   padding:12px 14px;border-radius:8px;
   text-decoration:none;color:var(--text);
@@ -326,31 +342,37 @@ body{padding:16px 16px 0;display:flex;flex-direction:column}
   overflow:hidden;
 }
 
-.subdomain-menu.hidden{
-  display:none;
-}
-
-.subdomain-item:hover{
+.site-nav-item:hover{
   background:var(--muted-bg);
 }
 
-.subdomain-item svg{
-  width:24px;height:24px;
-  min-width:24px;max-width:24px;
-  min-height:24px;max-height:24px;
-  flex-shrink:0;stroke:var(--primary);
+.site-nav-item.active{
+  background:rgba(14,165,233,0.1);
+  border-left:3px solid var(--primary);
 }
 
-.subdomain-info{
+.site-nav-icon{
+  font-size:22px;line-height:1;
+  min-width:28px;text-align:center;
+}
+
+.site-nav-info{
   display:flex;flex-direction:column;gap:2px;
+  flex:1;min-width:0;
 }
 
-.subdomain-title{
+.site-nav-title{
   font-size:14px;font-weight:600;color:var(--text);
 }
 
-.subdomain-url{
+.site-nav-desc{
   font-size:11px;color:var(--muted-text);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+
+.site-nav-error{
+  padding:12px;text-align:center;
+  color:#ef4444;font-size:12px;
 }
 
 /* Topbar center - date controls */
@@ -1598,20 +1620,20 @@ body{padding:16px 16px 0;display:flex;flex-direction:column}
   }
 
   /* Hide the text on mobile, show only icon */
-  .subdomain-name{
+  #site-nav-name{
     display:none;
   }
 
-  .subdomain-toggle{
+  .site-nav-toggle{
     padding:4px 6px;
   }
 
-  .subdomain-arrow{
-    width:12px;height:12px;
+  .site-nav-arrow{
+    width:10px;height:10px;
   }
 
-  .subdomain-menu{
-    min-width:200px;
+  .site-nav-menu{
+    min-width:220px;
   }
 
   /* Keep last online info on mobile (important info) */

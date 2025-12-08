@@ -736,13 +736,41 @@ function initHamburgerMenu() {
   }
 }
 
-// --------- Subdomain Switcher ---------
-function initSubdomainSwitcher() {
-  const toggleBtn = $('#subdomainToggle');
-  const menu = $('#subdomainMenu');
+// --------- Site Switcher Widget (SSO) ---------
+const SITE_SWITCHER_CONFIG = {
+  sitesUrl: 'https://bagron.eu/sites.json',
+  iconsUrl: 'https://bagron.eu/icons.json',
+  // Fallback icons for common icon names
+  fallbackIcons: {
+    home: '🏠',
+    book: '📚',
+    graduation: '🎓',
+    map: '🗺️',
+    euro: '💶',
+    pot: '🍲',
+    chart: '📊',
+    calendar: '📅',
+    folder: '📁',
+    settings: '⚙️',
+    user: '👤',
+    location: '📍',
+    tracker: '🗺️'
+  }
+};
+
+let sitesData = [];
+let iconsData = {};
+
+async function initSiteSwitcher() {
+  const toggleBtn = $('#site-nav-toggle');
+  const menu = $('#site-nav-menu');
 
   if (!toggleBtn || !menu) return;
 
+  // Load sites and icons data
+  await loadSiteSwitcherData();
+
+  // Toggle menu on click
   toggleBtn.addEventListener('click', (e) => {
     e.stopPropagation();
     const isOpen = !menu.classList.contains('hidden');
@@ -767,6 +795,129 @@ function initSubdomainSwitcher() {
       }, 0);
     }
   });
+}
+
+async function loadSiteSwitcherData() {
+  const menu = $('#site-nav-menu');
+
+  try {
+    // Fetch both sites.json and icons.json in parallel with SSO credentials
+    const [sitesRes, iconsRes] = await Promise.all([
+      fetch(SITE_SWITCHER_CONFIG.sitesUrl, { credentials: 'include' }),
+      fetch(SITE_SWITCHER_CONFIG.iconsUrl, { credentials: 'include' })
+    ]);
+
+    if (sitesRes.ok) {
+      sitesData = await sitesRes.json();
+    } else {
+      throw new Error('Failed to fetch sites.json');
+    }
+
+    if (iconsRes.ok) {
+      iconsData = await iconsRes.json();
+    } else {
+      console.warn('Could not load icons.json, using fallbacks');
+      iconsData = {};
+    }
+
+    // Render the sites menu
+    renderSitesMenu();
+
+    // Update current site indicator in the toggle button
+    updateCurrentSiteIndicator();
+
+  } catch (err) {
+    console.error('Site switcher load error:', err);
+    menu.innerHTML = '<div class="site-nav-error">Nepodarilo sa načítať weby</div>';
+
+    // Keep default values
+    sitesData = [];
+    iconsData = {};
+  }
+}
+
+function getIconEmoji(iconName) {
+  // If iconName is already an emoji (charCode > 255), use it directly
+  if (iconName && iconName.length > 0) {
+    const firstChar = iconName.codePointAt(0);
+    if (firstChar > 255) {
+      return iconName;
+    }
+  }
+
+  // Try to get from loaded icons.json
+  if (iconsData && iconsData[iconName]) {
+    return iconsData[iconName];
+  }
+
+  // Use fallback icons
+  if (SITE_SWITCHER_CONFIG.fallbackIcons[iconName]) {
+    return SITE_SWITCHER_CONFIG.fallbackIcons[iconName];
+  }
+
+  // Default emoji
+  return '🌐';
+}
+
+function renderSitesMenu() {
+  const menu = $('#site-nav-menu');
+  if (!menu || !sitesData || sitesData.length === 0) {
+    menu.innerHTML = '<div class="site-nav-loading">Žiadne weby</div>';
+    return;
+  }
+
+  const currentOrigin = window.location.origin;
+
+  const menuHtml = sitesData.map(site => {
+    const emoji = getIconEmoji(site.icon);
+    const isActive = isCurrentSite(site.url, currentOrigin);
+    const activeClass = isActive ? 'active' : '';
+
+    return `
+      <a href="${escapeHtml(site.url)}" class="site-nav-item ${activeClass}">
+        <span class="site-nav-icon">${emoji}</span>
+        <div class="site-nav-info">
+          <span class="site-nav-title">${escapeHtml(site.name)}</span>
+          ${site.description ? `<span class="site-nav-desc">${escapeHtml(site.description)}</span>` : ''}
+        </div>
+      </a>
+    `;
+  }).join('');
+
+  menu.innerHTML = menuHtml;
+}
+
+function isCurrentSite(siteUrl, currentOrigin) {
+  try {
+    const siteOrigin = new URL(siteUrl).origin;
+    return siteOrigin === currentOrigin;
+  } catch {
+    return false;
+  }
+}
+
+function updateCurrentSiteIndicator() {
+  const iconEl = $('#site-nav-icon');
+  const nameEl = $('#site-nav-name');
+
+  if (!sitesData || sitesData.length === 0) return;
+
+  const currentOrigin = window.location.origin;
+  const currentSite = sitesData.find(site => isCurrentSite(site.url, currentOrigin));
+
+  if (currentSite) {
+    if (iconEl) {
+      iconEl.textContent = getIconEmoji(currentSite.icon);
+    }
+    if (nameEl) {
+      nameEl.textContent = currentSite.name;
+    }
+  }
+}
+
+// Legacy function name for backwards compatibility
+function initSubdomainSwitcher() {
+  initSiteSwitcher();
 }
 
 // --------- iBeacon Management Overlay ---------
