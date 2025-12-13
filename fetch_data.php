@@ -614,11 +614,6 @@ function send_perimeter_alert_emails(array $breach): int {
     $fromEmail = getenv('EMAIL_FROM') ?: 'tracker@bagron.eu';
     $fromName = getenv('EMAIL_FROM_NAME') ?: 'Family Tracker';
 
-    if (!$apiKey) {
-        debug_log("    EMAIL SKIP: EMAIL_API_KEY not configured");
-        return 0;
-    }
-
     $alertType = $breachType === 'enter' ? 'VSTUP DO ZÓNY' : 'OPUSTENIE ZÓNY';
     $subject = "Family Tracker: $alertType - {$p['name']}";
 
@@ -690,16 +685,20 @@ function send_perimeter_alert_emails(array $breach): int {
             continue;
         }
 
-        $payload = json_encode([
+        $payloadData = [
             'to_email' => $toEmail,
             'subject' => $subject,
             'html_body' => $htmlBody,
             'from_email' => $fromEmail,
-            'from_name' => $fromName,
-            'api_key' => $apiKey
-        ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+            'from_name' => $fromName
+        ];
+        // Only include api_key if configured
+        if (!empty($apiKey)) {
+            $payloadData['api_key'] = $apiKey;
+        }
+        $payload = json_encode($payloadData, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
 
-        debug_log("    EMAIL SENDING: to=$toEmail subject=$subject");
+        debug_log("    EMAIL SENDING: to=$toEmail subject=$subject api_key=" . (!empty($apiKey) ? 'SET' : 'NOT_SET'));
 
         $ch = curl_init($emailServiceUrl);
         curl_setopt_array($ch, [
@@ -755,11 +754,6 @@ function send_refetch_summary_email(array $breaches, string $refetchDate): int {
     $apiKey = getenv('EMAIL_API_KEY') ?: '';
     $fromEmail = getenv('EMAIL_FROM') ?: 'tracker@bagron.eu';
     $fromName = getenv('EMAIL_FROM_NAME') ?: 'Family Tracker';
-
-    if (!$apiKey) {
-        debug_log("SUMMARY EMAIL SKIP: EMAIL_API_KEY not configured");
-        return 0;
-    }
 
     // Collect all unique emails that should receive this summary
     $recipientEmails = [];
@@ -875,16 +869,20 @@ function send_refetch_summary_email(array $breaches, string $refetchDate): int {
 
     // Send to each recipient with their relevant breaches
     foreach ($recipientEmails as $toEmail => $recipientBreaches) {
-        $payload = json_encode([
+        $payloadData = [
             'to_email' => $toEmail,
             'subject' => $subject,
             'html_body' => $htmlBody,
             'from_email' => $fromEmail,
-            'from_name' => $fromName,
-            'api_key' => $apiKey
-        ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+            'from_name' => $fromName
+        ];
+        // Only include api_key if configured
+        if (!empty($apiKey)) {
+            $payloadData['api_key'] = $apiKey;
+        }
+        $payload = json_encode($payloadData, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
 
-        debug_log("SUMMARY EMAIL SENDING: to=$toEmail breaches=" . count($recipientBreaches));
+        debug_log("SUMMARY EMAIL SENDING: to=$toEmail breaches=" . count($recipientBreaches) . " api_key=" . (!empty($apiKey) ? 'SET' : 'NOT_SET'));
 
         $ch = curl_init($emailServiceUrl);
         curl_setopt_array($ch, [
