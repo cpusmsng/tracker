@@ -516,10 +516,20 @@ function load_active_perimeters(PDO $pdo): array {
                 'notification_email' => $r['notification_email'],
                 'emails' => $emails
             ];
+
+            // Log email configuration for each perimeter
+            $emailCount = count($emails);
+            $enterCount = 0;
+            $exitCount = 0;
+            foreach ($emails as $em) {
+                if ($em['alert_on_enter']) $enterCount++;
+                if ($em['alert_on_exit']) $exitCount++;
+            }
+            info_log("PERIMETER '{$r['name']}' (id=$pid): emails=$emailCount, alert_on_enter=$enterCount, alert_on_exit=$exitCount");
         }
-        debug_log("PERIMETERS: loaded ".count($perimeters)." active zones");
+        info_log("PERIMETERS: loaded ".count($perimeters)." active zones");
     } catch (Throwable $e) {
-        debug_log("PERIMETERS ERROR: ".$e->getMessage());
+        info_log("PERIMETERS ERROR: ".$e->getMessage());
     }
     return $perimeters;
 }
@@ -550,7 +560,7 @@ function check_perimeter_breaches(
 
         // Skip if no previous state (first position)
         if ($wasInside === null) {
-            debug_log("    PERIMETER '{$p['name']}': first position, inside=".($isInside?'YES':'NO'));
+            info_log("    PERIMETER '{$p['name']}': first position (no previous state), inside=".($isInside?'YES':'NO'));
             continue;
         }
 
@@ -568,6 +578,12 @@ function check_perimeter_breaches(
             $anyWantsExit = $p['alert_on_exit'];
         }
 
+        // Log state transition
+        $stateChanged = ($wasInside !== $isInside);
+        if ($stateChanged) {
+            info_log("    PERIMETER '{$p['name']}': STATE CHANGE wasInside=".($wasInside?'YES':'NO')." isInside=".($isInside?'YES':'NO')." anyWantsEnter=".($anyWantsEnter?'YES':'NO')." anyWantsExit=".($anyWantsExit?'YES':'NO'));
+        }
+
         // Detect breach
         if (!$wasInside && $isInside && $anyWantsEnter) {
             // ENTERED the zone
@@ -578,7 +594,7 @@ function check_perimeter_breaches(
                 'lng' => $lng,
                 'timestamp' => $timestamp
             ];
-            debug_log("    PERIMETER BREACH: ENTERED '{$p['name']}'");
+            info_log("    PERIMETER BREACH DETECTED: ENTERED '{$p['name']}'");
         } elseif ($wasInside && !$isInside && $anyWantsExit) {
             // EXITED the zone
             $breaches[] = [
@@ -588,7 +604,14 @@ function check_perimeter_breaches(
                 'lng' => $lng,
                 'timestamp' => $timestamp
             ];
-            debug_log("    PERIMETER BREACH: EXITED '{$p['name']}'");
+            info_log("    PERIMETER BREACH DETECTED: EXITED '{$p['name']}'");
+        } elseif ($stateChanged) {
+            // State changed but alert not configured
+            if (!$wasInside && $isInside && !$anyWantsEnter) {
+                info_log("    PERIMETER '{$p['name']}': ENTERED but alert_on_enter=NO - skipping notification");
+            } elseif ($wasInside && !$isInside && !$anyWantsExit) {
+                info_log("    PERIMETER '{$p['name']}': EXITED but alert_on_exit=NO - skipping notification");
+            }
         }
     }
 
@@ -600,8 +623,10 @@ function send_perimeter_alert_emails(array $breach): int {
     $emails = $p['emails'] ?? [];
     $breachType = $breach['type']; // 'enter' or 'exit'
 
+    info_log("    SENDING EMAIL for breach: type=$breachType perimeter='{$p['name']}' emails_count=".count($emails));
+
     if (empty($emails)) {
-        debug_log("    EMAIL SKIP: no emails configured for '{$p['name']}'");
+        info_log("    EMAIL SKIP: no emails configured for '{$p['name']}'");
         return 0;
     }
 
@@ -681,7 +706,7 @@ function send_perimeter_alert_emails(array $breach): int {
                          ($breachType === 'exit' && $emailEntry['alert_on_exit']);
 
         if (!$shouldReceive) {
-            debug_log("    EMAIL SKIP: $toEmail - alert type '$breachType' not enabled for this recipient");
+            info_log("    EMAIL SKIP: $toEmail - alert type '$breachType' not enabled for this recipient (alert_on_enter=".($emailEntry['alert_on_enter']?'1':'0').", alert_on_exit=".($emailEntry['alert_on_exit']?'1':'0').")");
             continue;
         }
 
@@ -698,7 +723,7 @@ function send_perimeter_alert_emails(array $breach): int {
         }
         $payload = json_encode($payloadData, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
 
-        debug_log("    EMAIL SENDING: to=$toEmail subject=$subject api_key=" . (!empty($apiKey) ? 'SET' : 'NOT_SET'));
+        info_log("    EMAIL SENDING: to=$toEmail url=$emailServiceUrl api_key=" . (!empty($apiKey) ? 'SET' : 'NOT_SET'));
 
         $ch = curl_init($emailServiceUrl);
         curl_setopt_array($ch, [
@@ -716,15 +741,15 @@ function send_perimeter_alert_emails(array $breach): int {
         curl_close($ch);
 
         if ($curlError) {
-            debug_log("    EMAIL ERROR: to=$toEmail curl error - $curlError");
+            info_log("    EMAIL ERROR: to=$toEmail curl error - $curlError");
             continue;
         }
 
         if ($httpCode >= 200 && $httpCode < 300) {
-            debug_log("    EMAIL SUCCESS: to=$toEmail http=$httpCode");
+            info_log("    EMAIL SUCCESS: to=$toEmail http=$httpCode");
             $sentCount++;
         } else {
-            debug_log("    EMAIL ERROR: to=$toEmail http=$httpCode response=".substr($response, 0, 200));
+            info_log("    EMAIL ERROR: to=$toEmail http=$httpCode response=".substr($response, 0, 200));
         }
     }
 
