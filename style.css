@@ -248,6 +248,12 @@ body{padding:16px 16px 0;display:flex;flex-direction:column}
   display:grid;grid-template-columns:1fr;gap:16px;
   max-width:1200px;margin:0 auto;width:100%;flex:1;
   padding-top:70px; /* Space for fixed topbar */
+  visibility:hidden; /* Hidden until authenticated */
+}
+
+/* Show content only after authentication confirmed */
+body.authenticated .container{
+  visibility:visible;
 }
 
 /* ========== TOPBAR - Flex Layout ========== */
