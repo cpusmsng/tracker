@@ -45,7 +45,13 @@ const PIN_LENGTH = 4;
 const SESSION_DURATION = 24 * 60 * 60 * 1000; // 24 hodín
 let currentUser = null;
 let ssoEnabled = false;
+let isRedirecting = false; // Prevents content flash during redirect
 const DEBUG_MODE = new URLSearchParams(window.location.search).has('debug');
+
+// Show authenticated content - call ONLY after successful auth
+function showAuthenticatedContent() {
+  document.body.classList.add('authenticated');
+}
 
 async function initPinSecurity() {
   try {
@@ -72,6 +78,17 @@ async function handleSSOAuth(loginUrl) {
     console.log('[SSO] Falling back to PIN mode');
     ssoEnabled = false;
     handlePINAuth();
+  };
+
+  // Redirect helper - sets flag to prevent content flash and multiple redirects
+  const redirectToLogin = (baseLoginUrl) => {
+    if (isRedirecting) return; // Prevent multiple redirects
+    isRedirecting = true;
+    const returnUrl = encodeURIComponent(window.location.href);
+    const url = baseLoginUrl || 'https://bagron.eu/login';
+    const separator = url.includes('?') ? '&' : '?';
+    window.location.href = `${url}${separator}redirect=${returnUrl}`;
+    // Content stays hidden (no showAuthenticatedContent call)
   };
 
   try {
@@ -103,9 +120,10 @@ async function handleSSOAuth(loginUrl) {
     console.log('[SSO] Parsed:', auth.ok, auth.authenticated, auth.user?.name);
 
     if (auth.ok && auth.authenticated && auth.user) {
-      // User is authenticated via SSO
+      // User is authenticated via SSO - NOW show content
       console.log('[SSO] SUCCESS - Authenticated as:', auth.user.name);
       currentUser = auth.user;
+      showAuthenticatedContent(); // Show content only after confirmed auth
       hidePinOverlay();
       showUserInfo(auth.user);
       initAppAfterAuth();
@@ -114,7 +132,7 @@ async function handleSSOAuth(loginUrl) {
       setInterval(checkSSOSession, 5 * 60 * 1000);
       window.addEventListener('focus', checkSSOSession);
     } else {
-      // Not authenticated via SSO
+      // Not authenticated via SSO - DO NOT show content
       console.log('[SSO] Not authenticated, debug:', auth.debug);
 
       // If debug mode, don't redirect
@@ -124,11 +142,8 @@ async function handleSSOAuth(loginUrl) {
         return;
       }
 
-      // Redirect to SSO login
-      const returnUrl = encodeURIComponent(window.location.href);
-      const baseLoginUrl = loginUrl || 'https://bagron.eu/login';
-      const separator = baseLoginUrl.includes('?') ? '&' : '?';
-      window.location.href = `${baseLoginUrl}${separator}redirect=${returnUrl}`;
+      // Redirect to SSO login - content stays hidden
+      redirectToLogin(loginUrl);
     }
   } catch (e) {
     console.error('[SSO] Auth check failed:', e.message);
@@ -138,7 +153,7 @@ async function handleSSOAuth(loginUrl) {
 }
 
 async function checkSSOSession() {
-  if (!ssoEnabled) return;
+  if (!ssoEnabled || isRedirecting) return;
 
   try {
     const authRes = await fetch(`${API}?action=auth_me`, {
@@ -147,6 +162,8 @@ async function checkSSOSession() {
     const auth = await authRes.json();
 
     if (!auth.ok || !auth.authenticated) {
+      if (isRedirecting) return; // Prevent multiple redirects
+      isRedirecting = true;
       // Session expired - redirect to login with return URL
       const returnUrl = encodeURIComponent(window.location.href);
       const baseLoginUrl = auth.loginUrl || 'https://bagron.eu/login';
@@ -220,14 +237,16 @@ function handlePINAuth() {
   if (authToken && authTime) {
     const elapsed = Date.now() - parseInt(authTime);
     if (elapsed < SESSION_DURATION) {
-      // Autentifikácia je platná
+      // Autentifikácia je platná - show content
+      showAuthenticatedContent();
       hidePinOverlay();
       initAppAfterAuth();
       return;
     }
   }
 
-  // Zobraz PIN overlay
+  // Show PIN overlay - content stays hidden until PIN is verified
+  showAuthenticatedContent(); // Show content with PIN overlay on top
   showPinOverlay();
   setupPinHandlers();
 }
