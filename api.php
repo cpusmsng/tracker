@@ -26,7 +26,7 @@ if (in_array($origin, $allowedOrigins, true)) {
     header('Access-Control-Allow-Credentials: true');
 }
 header('Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS');
-header('Access-Control-Allow-Headers: Content-Type, Accept');
+header('Access-Control-Allow-Headers: Content-Type, Accept, X-API-Key');
 
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     http_response_code(204);
@@ -39,6 +39,12 @@ date_default_timezone_set('Europe/Bratislava');
 $cfg = __DIR__ . '/config.php';
 if (is_file($cfg)) {
     require_once $cfg;
+}
+
+// API authentication middleware (3-tier: Docker network, static key, family-office)
+$authMiddleware = __DIR__ . '/middleware/api_auth.php';
+if (is_file($authMiddleware)) {
+    require_once $authMiddleware;
 }
 
 if (!function_exists('db')) {
@@ -1392,9 +1398,33 @@ if ($action === 'test_email' && $_SERVER['REQUEST_METHOD'] === 'POST') {
 
 // ========== N8N / EXTERNAL API ENDPOINTS ==========
 // These endpoints can be used by n8n workflows to read data from the tracker
-// Optional API key authentication via N8N_API_KEY env variable
+// 3-tier authentication: Docker network → Static API key → Family-office validation
 
+/**
+ * Verify API key using 3-tier authentication system
+ *
+ * Flow:
+ * 1. TRUST_DOCKER_NETWORK=true && IP is 172.x.x.x / 10.x.x.x? → Allow (internal services)
+ * 2. STATIC_API_KEY is set && X-API-Key === STATIC_API_KEY? → Allow (fallback)
+ * 3. Validate via family-office POST /api/admin/validate-key → Allow if valid
+ *
+ * Falls back to legacy N8N_API_KEY check for backwards compatibility
+ *
+ * @return bool True if authenticated
+ */
 function verify_n8n_api_key(): bool {
+    // Use new 3-tier authentication if middleware is loaded
+    if (function_exists('authenticateApiRequest')) {
+        $auth = authenticateApiRequest();
+        if ($auth !== null) {
+            // Store auth info for access in endpoint handlers
+            $GLOBALS['api_auth'] = $auth;
+            return true;
+        }
+        return false;
+    }
+
+    // Legacy fallback: N8N_API_KEY
     $apiKey = getenv('N8N_API_KEY') ?: '';
     if (empty($apiKey)) {
         // No API key configured = public access (be careful!)
@@ -1726,6 +1756,35 @@ function point_in_polygon_simple(float $lat, float $lng, array $polygon): bool {
     }
 
     return $inside;
+}
+
+// GET /api.php?action=api_auth_check
+// Returns: current authentication status (for debugging/testing)
+if ($action === 'api_auth_check') {
+    $auth = function_exists('authenticateApiRequest') ? authenticateApiRequest() : null;
+    $clientIp = function_exists('getClientIp') ? getClientIp() : ($_SERVER['REMOTE_ADDR'] ?? 'unknown');
+
+    $config = [
+        'trust_docker_network' => strtolower(getenv('TRUST_DOCKER_NETWORK') ?: 'false') === 'true',
+        'static_api_key_set' => !empty(getenv('STATIC_API_KEY')),
+        'internal_api_key_set' => !empty(getenv('INTERNAL_API_KEY')),
+        'auth_api_url' => getenv('AUTH_API_URL') ?: 'http://family-office:3001',
+        'n8n_api_key_set' => !empty(getenv('N8N_API_KEY')),
+    ];
+
+    respond([
+        'ok' => true,
+        'authenticated' => $auth !== null,
+        'auth_info' => $auth ? [
+            'method' => $auth['method'] ?? 'unknown',
+            'name' => $auth['name'] ?? 'unknown',
+            'permissions' => $auth['permissions'] ?? []
+        ] : null,
+        'client_ip' => $clientIp,
+        'is_docker_network' => function_exists('isDockerNetwork') ? isDockerNetwork($clientIp) : false,
+        'config' => $config,
+        'middleware_loaded' => function_exists('authenticateApiRequest')
+    ]);
 }
 
 respond(['ok'=>false,'error'=>'unknown action'], 400);

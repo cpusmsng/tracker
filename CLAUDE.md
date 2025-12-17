@@ -197,11 +197,19 @@ HYSTERESIS_MINUTES=30      # Min time between positions
 EMAIL_SERVICE_URL=         # For perimeter alerts
 EMAIL_API_KEY=             # Email service auth
 EMAIL_FROM=                # From address
-N8N_API_KEY=               # Protect n8n endpoints
 LOG_LEVEL=info             # error, info, debug
 SSO_ENABLED=false          # Use SSO instead of PIN
 AUTH_API_URL=              # SSO auth server
 LOGIN_URL=                 # SSO login page
+```
+
+### API Authentication (3-tier system)
+
+```env
+TRUST_DOCKER_NETWORK=true  # Allow Docker network without auth
+STATIC_API_KEY=            # Fallback static API key
+INTERNAL_API_KEY=          # Family-office communication key
+N8N_API_KEY=               # Legacy: n8n endpoints (fallback)
 ```
 
 ## Common Development Tasks
@@ -286,7 +294,12 @@ openSettingsOverlay()      // Open settings
 
 External API endpoints for automation workflows.
 
-**Authentication:** `X-API-Key` header or `?api_key=` query param (if `N8N_API_KEY` set)
+**Authentication (3-tier system):**
+1. **Docker Network**: If `TRUST_DOCKER_NETWORK=true` and request from 172.x.x.x/10.x.x.x → Allow without auth
+2. **Static API Key**: If `STATIC_API_KEY` set and `X-API-Key` header matches → Allow
+3. **Family-Office**: Validate via POST to `AUTH_API_URL/api/admin/validate-key`
+
+Legacy: `N8N_API_KEY` still supported as fallback for backwards compatibility.
 
 ```bash
 # Device status
