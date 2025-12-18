@@ -1398,22 +1398,21 @@ if ($action === 'test_email' && $_SERVER['REQUEST_METHOD'] === 'POST') {
 
 // ========== N8N / EXTERNAL API ENDPOINTS ==========
 // These endpoints can be used by n8n workflows to read data from the tracker
-// 3-tier authentication: Docker network → Static API key → Family-office validation
+// 2-tier authentication: Docker network → Family-office validation
 
 /**
- * Verify API key using 3-tier authentication system
+ * Verify API key using 2-tier authentication system
  *
  * Flow:
  * 1. TRUST_DOCKER_NETWORK=true && IP is 172.x.x.x / 10.x.x.x? → Allow (internal services)
- * 2. STATIC_API_KEY is set && X-API-Key === STATIC_API_KEY? → Allow (fallback)
- * 3. Validate via family-office POST /api/admin/validate-key → Allow if valid
+ * 2. Validate via family-office POST /api/admin/validate-key → Allow if valid
  *
  * Falls back to legacy N8N_API_KEY check for backwards compatibility
  *
  * @return bool True if authenticated
  */
 function verify_n8n_api_key(): bool {
-    // Use new 3-tier authentication if middleware is loaded
+    // Use new 2-tier authentication if middleware is loaded
     if (function_exists('authenticateApiRequest')) {
         $auth = authenticateApiRequest();
         if ($auth !== null) {
@@ -1766,7 +1765,6 @@ if ($action === 'api_auth_check') {
 
     $config = [
         'trust_docker_network' => strtolower(getenv('TRUST_DOCKER_NETWORK') ?: 'false') === 'true',
-        'static_api_key_set' => !empty(getenv('STATIC_API_KEY')),
         'internal_api_key_set' => !empty(getenv('INTERNAL_API_KEY')),
         'auth_api_url' => getenv('AUTH_API_URL') ?: 'http://family-office:3001',
         'n8n_api_key_set' => !empty(getenv('N8N_API_KEY')),

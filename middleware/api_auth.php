@@ -2,25 +2,22 @@
 declare(strict_types=1);
 
 /**
- * 3-Tier API Authentication Middleware
+ * 2-Tier API Authentication Middleware
  *
  * Authentication flow:
  * 1. TRUST_DOCKER_NETWORK=true && IP is 172.x.x.x / 10.x.x.x? → Allow (internal services, n8n)
- * 2. STATIC_API_KEY is set && X-API-Key === STATIC_API_KEY? → Allow (simple integration fallback)
- * 3. Validate via family-office: POST /api/admin/validate-key → Allow if valid
+ * 2. Validate via family-office: POST /api/admin/validate-key → Allow if valid
  *
  * Environment variables:
  * - AUTH_API_URL: URL to family-office (default: http://family-office:3001)
  * - TRUST_DOCKER_NETWORK: true = allow requests from Docker network without auth
  * - INTERNAL_API_KEY: Shared key for communication with family-office
- * - STATIC_API_KEY: Fallback static API key
  */
 
 // Configuration getters
 function getApiAuthConfig(): array {
     return [
         'auth_api_url' => getenv('AUTH_API_URL') ?: 'http://family-office:3001',
-        'static_api_key' => getenv('STATIC_API_KEY') ?: null,
         'internal_api_key' => getenv('INTERNAL_API_KEY') ?: null,
         'trust_docker_network' => strtolower(getenv('TRUST_DOCKER_NETWORK') ?: 'false') === 'true',
         'service_name' => 'tracker'
@@ -122,27 +119,6 @@ function validateApiKeyWithFamilyOffice(string $apiKey, array $config): ?array {
 }
 
 /**
- * Validate API key (static or via family-office)
- */
-function validateApiKey(?string $apiKey, array $config): ?array {
-    if (empty($apiKey)) {
-        return null;
-    }
-
-    // Tier 2: Static API key from environment variable (fallback)
-    if (!empty($config['static_api_key']) && hash_equals($config['static_api_key'], $apiKey)) {
-        return [
-            'valid' => true,
-            'name' => 'static-key',
-            'permissions' => ['read', 'write']
-        ];
-    }
-
-    // Tier 3: Validate via family-office
-    return validateApiKeyWithFamilyOffice($apiKey, $config);
-}
-
-/**
  * Main authentication function - returns authentication result or null on failure
  *
  * @return array|null Returns auth info on success, null on failure
@@ -165,14 +141,14 @@ function authenticateApiRequest(): ?array {
     // Get API key from header or query param
     $apiKey = $_SERVER['HTTP_X_API_KEY'] ?? $_GET['api_key'] ?? null;
 
-    // Tier 2 & 3: Validate API key
-    $keyData = validateApiKey($apiKey, $config);
+    // Tier 2: Validate via family-office
+    $keyData = validateApiKeyWithFamilyOffice($apiKey, $config);
 
     if ($keyData) {
         return [
             'name' => $keyData['name'],
             'permissions' => $keyData['permissions'],
-            'method' => $keyData['name'] === 'static-key' ? 'static-key' : 'family-office',
+            'method' => 'family-office',
             'client_ip' => $clientIp
         ];
     }

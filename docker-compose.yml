@@ -62,9 +62,8 @@ services:
       # N8N Integration (optional - legacy)
       - N8N_API_KEY=${N8N_API_KEY:-}
 
-      # API Authentication (3-tier system)
+      # API Authentication (2-tier system)
       - TRUST_DOCKER_NETWORK=${TRUST_DOCKER_NETWORK:-true}
-      - STATIC_API_KEY=${STATIC_API_KEY:-}
       - INTERNAL_API_KEY=${INTERNAL_API_KEY:-}
 
       # Logging
