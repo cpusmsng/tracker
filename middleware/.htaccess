@@ -1,0 +1,3 @@
+# Deny direct access to middleware files
+# These files should only be included by api.php
+Require all denied

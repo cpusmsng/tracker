@@ -59,8 +59,13 @@ services:
       - EMAIL_FROM=${EMAIL_FROM:-tracker@example.com}
       - EMAIL_FROM_NAME=${EMAIL_FROM_NAME:-Family Tracker}
 
-      # N8N Integration (optional)
+      # N8N Integration (optional - legacy)
       - N8N_API_KEY=${N8N_API_KEY:-}
+
+      # API Authentication (2-tier system)
+      - TRUST_DOCKER_NETWORK=${TRUST_DOCKER_NETWORK:-true}
+      - INTERNAL_API_KEY=${INTERNAL_API_KEY:-}
+      - SUBDOMAIN_NAME=${SUBDOMAIN_NAME:-tracker}
 
       # Logging
       - LOG_LEVEL=${LOG_LEVEL:-info}
