@@ -738,7 +738,8 @@ if ($action === 'get_settings') {
             'unique_precision' => (int)(getenv('UNIQUE_PRECISION') ?: 6),
             'unique_bucket_minutes' => (int)(getenv('UNIQUE_BUCKET_MINUTES') ?: 30),
             'mac_cache_max_age_days' => (int)(getenv('MAC_CACHE_MAX_AGE_DAYS') ?: 3600),
-            'google_force' => getenv('GOOGLE_FORCE') ?: '0'
+            'google_force' => getenv('GOOGLE_FORCE') ?: '0',
+            'log_level' => strtolower(getenv('LOG_LEVEL') ?: 'info')
         ];
 
         respond([
@@ -761,6 +762,7 @@ if ($action === 'save_settings' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         $uniqueBucketMinutes = isset($j['unique_bucket_minutes']) ? (int)$j['unique_bucket_minutes'] : null;
         $macCacheMaxAgeDays = isset($j['mac_cache_max_age_days']) ? (int)$j['mac_cache_max_age_days'] : null;
         $googleForce = isset($j['google_force']) ? (string)$j['google_force'] : null;
+        $logLevel = isset($j['log_level']) ? strtolower(trim((string)$j['log_level'])) : null;
 
         // Validácia hraničných hodnôt
         if ($hysteresisMeters !== null && ($hysteresisMeters < 10 || $hysteresisMeters > 500)) {
@@ -781,6 +783,9 @@ if ($action === 'save_settings' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($googleForce !== null && !in_array($googleForce, ['0', '1'], true)) {
             respond(['ok' => false, 'error' => 'google_force must be "0" or "1"'], 400);
         }
+        if ($logLevel !== null && !in_array($logLevel, ['error', 'info', 'debug'], true)) {
+            respond(['ok' => false, 'error' => 'log_level must be "error", "info", or "debug"'], 400);
+        }
 
         // Načítaj aktuálny .env súbor
         $envPath = __DIR__ . '/.env';
@@ -800,7 +805,8 @@ if ($action === 'save_settings' && $_SERVER['REQUEST_METHOD'] === 'POST') {
             'unique_precision' => 'UNIQUE_PRECISION',
             'unique_bucket_minutes' => 'UNIQUE_BUCKET_MINUTES',
             'mac_cache_max_age_days' => 'MAC_CACHE_MAX_AGE_DAYS',
-            'google_force' => 'GOOGLE_FORCE'
+            'google_force' => 'GOOGLE_FORCE',
+            'log_level' => 'LOG_LEVEL'
         ];
 
         $newSettings = [];
@@ -882,7 +888,8 @@ if ($action === 'reset_settings' && $_SERVER['REQUEST_METHOD'] === 'POST') {
             'UNIQUE_PRECISION' => '6',
             'UNIQUE_BUCKET_MINUTES' => '30',
             'MAC_CACHE_MAX_AGE_DAYS' => '3600',
-            'GOOGLE_FORCE' => '0'
+            'GOOGLE_FORCE' => '0',
+            'LOG_LEVEL' => 'info'
         ];
 
         // Aktualizuj riadky v .env
@@ -930,6 +937,225 @@ if ($action === 'reset_settings' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         ]);
     } catch (Throwable $e) {
         respond(['ok' => false, 'error' => 'Failed to reset settings: ' . $e->getMessage()], 500);
+    }
+}
+
+// ========== LOG VIEWER ==========
+
+if ($action === 'get_logs') {
+    try {
+        $logFile = getenv('LOG_FILE') ?: (__DIR__ . '/fetch.log');
+        $limit = min((int)(qparam('limit') ?: 200), 2000);
+        $offset = (int)(qparam('offset') ?: 0);
+        $level = qparam('level'); // error, info, debug, or null for all
+        $search = qparam('search');
+        $order = qparam('order') ?: 'desc'; // asc or desc (default newest first)
+
+        if (!is_file($logFile)) {
+            respond([
+                'ok' => true,
+                'data' => [
+                    'logs' => [],
+                    'total' => 0,
+                    'file' => basename($logFile),
+                    'file_exists' => false
+                ]
+            ]);
+        }
+
+        // Read file and parse lines
+        $allLines = file($logFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+        if ($allLines === false) {
+            respond(['ok' => false, 'error' => 'Failed to read log file'], 500);
+        }
+
+        // Parse log lines with format: [timestamp] [LEVEL] message
+        $parsedLogs = [];
+        $logPattern = '/^\[([\d\-T:+]+)\]\s*\[([A-Z]+)\]\s*(.*)$/';
+
+        foreach ($allLines as $line) {
+            if (preg_match($logPattern, $line, $matches)) {
+                $logEntry = [
+                    'timestamp' => $matches[1],
+                    'level' => strtolower($matches[2]),
+                    'message' => $matches[3]
+                ];
+
+                // Filter by level if specified
+                if ($level !== null && $logEntry['level'] !== strtolower($level)) {
+                    continue;
+                }
+
+                // Filter by search term if specified
+                if ($search !== null && $search !== '') {
+                    if (stripos($logEntry['message'], $search) === false &&
+                        stripos($logEntry['timestamp'], $search) === false) {
+                        continue;
+                    }
+                }
+
+                $parsedLogs[] = $logEntry;
+            }
+        }
+
+        $total = count($parsedLogs);
+
+        // Sort by timestamp
+        usort($parsedLogs, function($a, $b) use ($order) {
+            $cmp = strcmp($a['timestamp'], $b['timestamp']);
+            return $order === 'desc' ? -$cmp : $cmp;
+        });
+
+        // Apply pagination
+        $paginatedLogs = array_slice($parsedLogs, $offset, $limit);
+
+        respond([
+            'ok' => true,
+            'data' => [
+                'logs' => $paginatedLogs,
+                'total' => $total,
+                'offset' => $offset,
+                'limit' => $limit,
+                'file' => basename($logFile),
+                'file_exists' => true,
+                'file_size' => filesize($logFile)
+            ]
+        ]);
+    } catch (Throwable $e) {
+        respond(['ok' => false, 'error' => 'Failed to read logs: ' . $e->getMessage()], 500);
+    }
+}
+
+if ($action === 'get_log_stats') {
+    try {
+        $logFile = getenv('LOG_FILE') ?: (__DIR__ . '/fetch.log');
+        $days = min((int)(qparam('days') ?: 7), 90);
+
+        if (!is_file($logFile)) {
+            respond([
+                'ok' => true,
+                'data' => [
+                    'file_exists' => false,
+                    'counts' => ['error' => 0, 'info' => 0, 'debug' => 0],
+                    'google_api_calls' => 0,
+                    'positions_inserted' => 0,
+                    'perimeter_alerts' => 0,
+                    'fetch_runs' => 0
+                ]
+            ]);
+        }
+
+        $allLines = file($logFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+        if ($allLines === false) {
+            respond(['ok' => false, 'error' => 'Failed to read log file'], 500);
+        }
+
+        // Calculate cutoff date for filtering
+        $cutoffDate = (new DateTimeImmutable())->sub(new DateInterval("P{$days}D"))->format('Y-m-d');
+
+        $stats = [
+            'counts' => ['error' => 0, 'info' => 0, 'debug' => 0],
+            'google_api_calls' => 0,
+            'google_api_success' => 0,
+            'google_api_failed' => 0,
+            'positions_inserted' => 0,
+            'cache_hits' => 0,
+            'ibeacon_hits' => 0,
+            'perimeter_alerts' => 0,
+            'fetch_runs' => 0,
+            'total_lines' => count($allLines),
+            'lines_in_range' => 0
+        ];
+
+        $logPattern = '/^\[([\d\-T:+]+)\]\s*\[([A-Z]+)\]\s*(.*)$/';
+
+        foreach ($allLines as $line) {
+            if (preg_match($logPattern, $line, $matches)) {
+                $timestamp = $matches[1];
+                $level = strtolower($matches[2]);
+                $message = $matches[3];
+
+                // Filter by date range
+                $lineDate = substr($timestamp, 0, 10);
+                if ($lineDate < $cutoffDate) {
+                    continue;
+                }
+
+                $stats['lines_in_range']++;
+
+                // Count by level
+                if (isset($stats['counts'][$level])) {
+                    $stats['counts'][$level]++;
+                }
+
+                // Count specific events
+                if (strpos($message, 'GOOGLE REQUEST:') !== false) {
+                    $stats['google_api_calls']++;
+                }
+                if (strpos($message, 'GOOGLE SUCCESS:') !== false) {
+                    $stats['google_api_success']++;
+                }
+                if (strpos($message, 'GOOGLE ERROR:') !== false || strpos($message, 'GOOGLE FAILED') !== false) {
+                    $stats['google_api_failed']++;
+                }
+                if (strpos($message, 'INSERT SUCCESS:') !== false) {
+                    $stats['positions_inserted']++;
+                }
+                if (strpos($message, 'USING CACHE:') !== false || strpos($message, 'CACHE [+] HIT:') !== false) {
+                    $stats['cache_hits']++;
+                }
+                if (strpos($message, 'IBEACON MATCH') !== false) {
+                    $stats['ibeacon_hits']++;
+                }
+                if (strpos($message, 'PERIMETER BREACH DETECTED:') !== false) {
+                    $stats['perimeter_alerts']++;
+                }
+                if ($message === '=== FETCH START ===') {
+                    $stats['fetch_runs']++;
+                }
+            }
+        }
+
+        $stats['file_exists'] = true;
+        $stats['file_size'] = filesize($logFile);
+        $stats['days_filter'] = $days;
+        $stats['cutoff_date'] = $cutoffDate;
+
+        respond([
+            'ok' => true,
+            'data' => $stats
+        ]);
+    } catch (Throwable $e) {
+        respond(['ok' => false, 'error' => 'Failed to get log stats: ' . $e->getMessage()], 500);
+    }
+}
+
+if ($action === 'clear_logs' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    try {
+        $logFile = getenv('LOG_FILE') ?: (__DIR__ . '/fetch.log');
+
+        if (!is_file($logFile)) {
+            respond(['ok' => true, 'message' => 'Log file does not exist']);
+        }
+
+        // Backup old log with timestamp
+        $backupFile = $logFile . '.' . date('Y-m-d_H-i-s') . '.bak';
+        if (!copy($logFile, $backupFile)) {
+            respond(['ok' => false, 'error' => 'Failed to backup log file'], 500);
+        }
+
+        // Clear the log file
+        if (file_put_contents($logFile, '') === false) {
+            respond(['ok' => false, 'error' => 'Failed to clear log file'], 500);
+        }
+
+        respond([
+            'ok' => true,
+            'message' => 'Log file cleared',
+            'backup' => basename($backupFile)
+        ]);
+    } catch (Throwable $e) {
+        respond(['ok' => false, 'error' => 'Failed to clear logs: ' . $e->getMessage()], 500);
     }
 }
 

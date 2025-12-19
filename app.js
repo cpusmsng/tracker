@@ -1172,6 +1172,7 @@ async function loadCurrentSettings() {
       $('#uniqueBucketMinutes').value = data.unique_bucket_minutes || 30;
       $('#macCacheMaxAgeDays').value = data.mac_cache_max_age_days || 3600;
       $('#googleForce').checked = data.google_force === '1' || data.google_force === 1;
+      $('#logLevel').value = data.log_level || 'info';
 
       // Aktualizuj "aktuálne hodnoty" labels
       $('#currentHysteresisMeters').textContent = `(${data.hysteresis_meters || 50} m)`;
@@ -1180,6 +1181,8 @@ async function loadCurrentSettings() {
       $('#currentUniqueBucketMinutes').textContent = `(${data.unique_bucket_minutes || 30} min)`;
       $('#currentMacCacheMaxAgeDays').textContent = `(${data.mac_cache_max_age_days || 3600} dní)`;
       $('#currentGoogleForce').textContent = (data.google_force === '1' || data.google_force === 1) ? '(Zapnuté)' : '(Vypnuté)';
+      const logLevelLabels = { 'error': 'Error', 'info': 'Info', 'debug': 'Debug' };
+      $('#currentLogLevel').textContent = `(${logLevelLabels[data.log_level] || 'Info'})`;
 
       // Initialize theme toggle in settings
       initTheme();
@@ -1203,7 +1206,8 @@ async function saveSettings() {
       unique_precision: parseInt($('#uniquePrecision').value) || 6,
       unique_bucket_minutes: parseInt($('#uniqueBucketMinutes').value) || 30,
       mac_cache_max_age_days: parseInt($('#macCacheMaxAgeDays').value) || 3600,
-      google_force: $('#googleForce').checked ? '1' : '0'
+      google_force: $('#googleForce').checked ? '1' : '0',
+      log_level: $('#logLevel').value || 'info'
     };
 
     // Validácia hraničných hodnôt
@@ -1249,7 +1253,8 @@ function resetSettingToDefault(settingName, defaultValue) {
     'unique_precision': 'uniquePrecision',
     'unique_bucket_minutes': 'uniqueBucketMinutes',
     'mac_cache_max_age_days': 'macCacheMaxAgeDays',
-    'google_force': 'googleForce'
+    'google_force': 'googleForce',
+    'log_level': 'logLevel'
   };
 
   const fieldId = fieldMap[settingName];
@@ -2604,8 +2609,292 @@ window.sendTestEmail = async function() {
   }
 };
 
+// --------- Log Viewer ---------
+let logViewerState = {
+  logs: [],
+  total: 0,
+  offset: 0,
+  limit: 100,
+  level: '',
+  search: '',
+  debounceTimer: null
+};
+
+function openLogViewer() {
+  const overlay = $('#logViewerOverlay');
+  if (overlay) {
+    overlay.classList.remove('hidden');
+    loadLogStats();
+    loadLogs();
+  }
+}
+
+function closeLogViewer() {
+  const overlay = $('#logViewerOverlay');
+  if (overlay) {
+    overlay.classList.add('hidden');
+  }
+}
+
+async function loadLogStats() {
+  const days = $('#statsDays')?.value || 7;
+
+  try {
+    const response = await apiGet(`${API}?action=get_log_stats&days=${days}`);
+
+    if (response && response.ok && response.data) {
+      const d = response.data;
+
+      $('#statFetchRuns').textContent = d.fetch_runs || 0;
+      $('#statGoogleCalls').textContent = d.google_api_calls || 0;
+      $('#statGoogleDetail').textContent = `${d.google_api_success || 0} OK / ${d.google_api_failed || 0} chýb`;
+      $('#statPositions').textContent = d.positions_inserted || 0;
+      $('#statCacheHits').textContent = d.cache_hits || 0;
+      $('#statIBeaconHits').textContent = d.ibeacon_hits || 0;
+      $('#statPerimeterAlerts').textContent = d.perimeter_alerts || 0;
+      $('#statErrorCount').textContent = d.counts?.error || 0;
+      $('#statInfoCount').textContent = d.counts?.info || 0;
+      $('#statDebugCount').textContent = d.counts?.debug || 0;
+    }
+  } catch (err) {
+    console.error('Failed to load log stats:', err);
+  }
+}
+
+async function loadLogs() {
+  const container = $('#logContainer');
+  if (!container) return;
+
+  container.innerHTML = '<div class="log-loading">Načítavam logy...</div>';
+
+  try {
+    const params = new URLSearchParams({
+      limit: logViewerState.limit,
+      offset: logViewerState.offset,
+      order: 'desc'
+    });
+
+    if (logViewerState.level) {
+      params.append('level', logViewerState.level);
+    }
+    if (logViewerState.search) {
+      params.append('search', logViewerState.search);
+    }
+
+    const response = await apiGet(`${API}?action=get_logs&${params.toString()}`);
+
+    if (response && response.ok && response.data) {
+      const d = response.data;
+      logViewerState.logs = d.logs || [];
+      logViewerState.total = d.total || 0;
+
+      // Update file info
+      const fileInfo = $('#logFileInfo');
+      if (fileInfo) {
+        const sizeKB = d.file_size ? (d.file_size / 1024).toFixed(1) : 0;
+        fileInfo.textContent = `Súbor: ${d.file || 'N/A'} (${sizeKB} KB)`;
+      }
+
+      const countInfo = $('#logCountInfo');
+      if (countInfo) {
+        countInfo.textContent = `Záznamov: ${d.total} (zobrazených: ${d.logs.length})`;
+      }
+
+      renderLogs();
+      updatePagination();
+    } else {
+      container.innerHTML = '<div class="log-empty">Nepodarilo sa načítať logy</div>';
+    }
+  } catch (err) {
+    console.error('Failed to load logs:', err);
+    container.innerHTML = `<div class="log-empty">Chyba: ${err.message}</div>`;
+  }
+}
+
+function renderLogs() {
+  const container = $('#logContainer');
+  if (!container) return;
+
+  if (logViewerState.logs.length === 0) {
+    container.innerHTML = '<div class="log-empty">Žiadne logy na zobrazenie</div>';
+    return;
+  }
+
+  const html = logViewerState.logs.map(log => {
+    const levelClass = `log-level-${log.level}`;
+    const time = log.timestamp.split('T')[1]?.split('+')[0] || log.timestamp;
+    const date = log.timestamp.split('T')[0] || '';
+
+    return `
+      <div class="log-entry ${levelClass}">
+        <span class="log-time" title="${log.timestamp}">${date} ${time}</span>
+        <span class="log-level">${log.level.toUpperCase()}</span>
+        <span class="log-message">${escapeHtml(log.message)}</span>
+      </div>
+    `;
+  }).join('');
+
+  container.innerHTML = html;
+}
+
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+function updatePagination() {
+  const pageInfo = $('#logPageInfo');
+  const prevBtn = $('#logPrevPage');
+  const nextBtn = $('#logNextPage');
+
+  const currentPage = Math.floor(logViewerState.offset / logViewerState.limit) + 1;
+  const totalPages = Math.ceil(logViewerState.total / logViewerState.limit) || 1;
+
+  if (pageInfo) {
+    pageInfo.textContent = `Strana ${currentPage} z ${totalPages}`;
+  }
+
+  if (prevBtn) {
+    prevBtn.disabled = logViewerState.offset === 0;
+  }
+
+  if (nextBtn) {
+    nextBtn.disabled = logViewerState.offset + logViewerState.limit >= logViewerState.total;
+  }
+}
+
+function goToPrevPage() {
+  if (logViewerState.offset > 0) {
+    logViewerState.offset = Math.max(0, logViewerState.offset - logViewerState.limit);
+    loadLogs();
+  }
+}
+
+function goToNextPage() {
+  if (logViewerState.offset + logViewerState.limit < logViewerState.total) {
+    logViewerState.offset += logViewerState.limit;
+    loadLogs();
+  }
+}
+
+function filterLogs() {
+  logViewerState.level = $('#logLevelFilter')?.value || '';
+  logViewerState.offset = 0;
+  loadLogs();
+}
+
+function searchLogs() {
+  // Debounce search
+  if (logViewerState.debounceTimer) {
+    clearTimeout(logViewerState.debounceTimer);
+  }
+
+  logViewerState.debounceTimer = setTimeout(() => {
+    logViewerState.search = $('#logSearchFilter')?.value || '';
+    logViewerState.offset = 0;
+    loadLogs();
+  }, 300);
+}
+
+async function clearLogs() {
+  if (!confirm('Naozaj chcete vymazať všetky logy? Záloha bude vytvorená.')) {
+    return;
+  }
+
+  try {
+    const response = await apiPost('clear_logs', {});
+
+    if (response && response.ok) {
+      alert(`Logy boli vymazané. Záloha: ${response.backup}`);
+      loadLogs();
+      loadLogStats();
+    } else {
+      alert(`Chyba: ${response.error || 'Neznáma chyba'}`);
+    }
+  } catch (err) {
+    alert(`Chyba: ${err.message}`);
+  }
+}
+
+function initLogViewer() {
+  // Close button
+  const closeBtn = $('#logViewerClose');
+  if (closeBtn) {
+    closeBtn.addEventListener('click', closeLogViewer);
+  }
+
+  // Background click to close
+  const overlay = $('#logViewerOverlay');
+  if (overlay) {
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) {
+        closeLogViewer();
+      }
+    });
+  }
+
+  // Open log viewer button (from settings)
+  const openBtn = $('#openLogViewer');
+  if (openBtn) {
+    openBtn.addEventListener('click', () => {
+      closeSettingsOverlay();
+      openLogViewer();
+    });
+  }
+
+  // Stats refresh
+  const refreshStatsBtn = $('#refreshStats');
+  if (refreshStatsBtn) {
+    refreshStatsBtn.addEventListener('click', loadLogStats);
+  }
+
+  // Stats period selector
+  const statsDays = $('#statsDays');
+  if (statsDays) {
+    statsDays.addEventListener('change', loadLogStats);
+  }
+
+  // Log refresh
+  const refreshLogsBtn = $('#refreshLogs');
+  if (refreshLogsBtn) {
+    refreshLogsBtn.addEventListener('click', loadLogs);
+  }
+
+  // Clear logs
+  const clearLogsBtn = $('#clearLogs');
+  if (clearLogsBtn) {
+    clearLogsBtn.addEventListener('click', clearLogs);
+  }
+
+  // Level filter
+  const levelFilter = $('#logLevelFilter');
+  if (levelFilter) {
+    levelFilter.addEventListener('change', filterLogs);
+  }
+
+  // Search filter
+  const searchFilter = $('#logSearchFilter');
+  if (searchFilter) {
+    searchFilter.addEventListener('input', searchLogs);
+  }
+
+  // Pagination
+  const prevPageBtn = $('#logPrevPage');
+  if (prevPageBtn) {
+    prevPageBtn.addEventListener('click', goToPrevPage);
+  }
+
+  const nextPageBtn = $('#logNextPage');
+  if (nextPageBtn) {
+    nextPageBtn.addEventListener('click', goToNextPage);
+  }
+}
+
 // --------- boot ---------
 window.addEventListener('DOMContentLoaded', () => {
   // Inicializuj PIN security najprv
   initPinSecurity();
+  // Initialize log viewer
+  initLogViewer();
 });
