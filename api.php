@@ -969,11 +969,15 @@ if ($action === 'get_logs') {
             respond(['ok' => false, 'error' => 'Failed to read log file'], 500);
         }
 
+        $totalLinesRead = count($allLines);
+
         // Parse log lines with format: [timestamp] [LEVEL] message
         $parsedLogs = [];
-        $logPattern = '/^\[([\d\-T:+]+)\]\s*\[([A-Z]+)\]\s*(.*)$/';
+        $unmatchedLines = [];
+        // Updated pattern to handle timezone offsets (both + and -)
+        $logPattern = '/^\[([\d\-T:+\-]+)\]\s*\[([A-Z]+)\]\s*(.*)$/';
 
-        foreach ($allLines as $line) {
+        foreach ($allLines as $lineNum => $line) {
             if (preg_match($logPattern, $line, $matches)) {
                 $logEntry = [
                     'timestamp' => $matches[1],
@@ -995,6 +999,9 @@ if ($action === 'get_logs') {
                 }
 
                 $parsedLogs[] = $logEntry;
+            } else if (count($unmatchedLines) < 5 && trim($line) !== '') {
+                // Collect a few unmatched lines for debugging
+                $unmatchedLines[] = ['line' => $lineNum + 1, 'content' => substr($line, 0, 150)];
             }
         }
 
@@ -1009,6 +1016,16 @@ if ($action === 'get_logs') {
         // Apply pagination
         $paginatedLogs = array_slice($parsedLogs, $offset, $limit);
 
+        // Get newest and oldest timestamps for debugging
+        $newestTs = null;
+        $oldestTs = null;
+        if (!empty($parsedLogs)) {
+            $timestamps = array_column($parsedLogs, 'timestamp');
+            sort($timestamps);
+            $oldestTs = $timestamps[0] ?? null;
+            $newestTs = $timestamps[count($timestamps) - 1] ?? null;
+        }
+
         respond([
             'ok' => true,
             'data' => [
@@ -1017,8 +1034,17 @@ if ($action === 'get_logs') {
                 'offset' => $offset,
                 'limit' => $limit,
                 'file' => basename($logFile),
+                'file_path' => $logFile,
                 'file_exists' => true,
-                'file_size' => filesize($logFile)
+                'file_size' => filesize($logFile),
+                'debug' => [
+                    'total_lines_read' => $totalLinesRead,
+                    'lines_matched' => count($parsedLogs) + ($level !== null || $search !== null ? 0 : 0), // before filtering
+                    'lines_after_filter' => $total,
+                    'unmatched_samples' => $unmatchedLines,
+                    'newest_timestamp' => $newestTs,
+                    'oldest_timestamp' => $oldestTs
+                ]
             ]
         ]);
     } catch (Throwable $e) {

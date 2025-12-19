@@ -2688,11 +2688,26 @@ async function loadLogs() {
       logViewerState.logs = d.logs || [];
       logViewerState.total = d.total || 0;
 
+      // Debug info - output to console for troubleshooting
+      if (d.debug) {
+        console.log('[Log Viewer Debug]', {
+          file_path: d.file_path,
+          file_size: d.file_size,
+          total_lines_read: d.debug.total_lines_read,
+          lines_matched: d.debug.lines_matched,
+          lines_after_filter: d.debug.lines_after_filter,
+          newest_timestamp: d.debug.newest_timestamp,
+          oldest_timestamp: d.debug.oldest_timestamp,
+          unmatched_samples: d.debug.unmatched_samples
+        });
+      }
+
       // Update file info
       const fileInfo = $('#logFileInfo');
       if (fileInfo) {
         const sizeKB = d.file_size ? (d.file_size / 1024).toFixed(1) : 0;
-        fileInfo.textContent = `Súbor: ${d.file || 'N/A'} (${sizeKB} KB)`;
+        const debugInfo = d.debug ? ` | Riadkov: ${d.debug.total_lines_read} | Najnovší: ${d.debug.newest_timestamp || 'N/A'}` : '';
+        fileInfo.textContent = `Súbor: ${d.file || 'N/A'} (${sizeKB} KB)${debugInfo}`;
       }
 
       const countInfo = $('#logCountInfo');
