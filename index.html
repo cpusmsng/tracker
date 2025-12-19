@@ -437,6 +437,53 @@
             </div>
           </div>
 
+          <!-- Úroveň logovania -->
+          <div class="setting-group">
+            <div class="setting-header">
+              <label for="logLevel">
+                <strong>Úroveň logovania</strong>
+                <span class="setting-current" id="currentLogLevel">—</span>
+              </label>
+              <button type="button" class="btn-default" data-setting="log_level" data-default="info">
+                Predvolené
+              </button>
+            </div>
+            <div class="setting-description">
+              Úroveň podrobnosti logov. Error = len chyby, Info = bežné udalosti, Debug = podrobné logovanie pre diagnostiku.
+            </div>
+            <div class="setting-input-group">
+              <select id="logLevel" name="log_level" class="setting-select">
+                <option value="error">Error - len chyby</option>
+                <option value="info">Info - bežné udalosti</option>
+                <option value="debug">Debug - podrobné logovanie</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Prezerač logov -->
+          <div class="setting-group">
+            <div class="setting-header">
+              <label>
+                <strong>Systémové logy</strong>
+              </label>
+            </div>
+            <div class="setting-description">
+              Prezerajte a analyzujte systémové logy, štatistiky API volaní a udalosti perimetrov.
+            </div>
+            <div class="setting-input-group">
+              <button type="button" id="openLogViewer" class="btn-secondary">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                  <polyline points="14 2 14 8 20 8"/>
+                  <line x1="16" y1="13" x2="8" y2="13"/>
+                  <line x1="16" y1="17" x2="8" y2="17"/>
+                  <polyline points="10 9 9 9 8 9"/>
+                </svg>
+                Otvoriť prezerač logov
+              </button>
+            </div>
+          </div>
+
           <!-- Akčné tlačidlá -->
           <div class="form-actions">
             <button type="button" id="saveSettings" class="btn-primary">
@@ -605,8 +652,177 @@
     </div>
   </div>
 
+  <!-- Log Viewer Overlay -->
+  <div id="logViewerOverlay" class="overlay hidden">
+    <div class="overlay-content log-viewer-content">
+      <div class="overlay-header">
+        <h2>Systémové logy</h2>
+        <button id="logViewerClose" class="overlay-close" aria-label="Zavrieť">&times;</button>
+      </div>
+
+      <div class="overlay-body">
+        <!-- Statistics Section -->
+        <div class="log-section log-stats-section">
+          <div class="log-section-header">
+            <h3>Štatistiky</h3>
+            <div class="stats-period-selector">
+              <label for="statsDays">Obdobie:</label>
+              <select id="statsDays" class="stats-select">
+                <option value="1">Posledný deň</option>
+                <option value="7" selected>Posledných 7 dní</option>
+                <option value="30">Posledných 30 dní</option>
+                <option value="90">Posledných 90 dní</option>
+              </select>
+              <button type="button" id="refreshStats" class="btn-small btn-secondary" title="Obnoviť štatistiky">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                  <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
+                  <path d="M3 3v5h5"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+          <div id="logStats" class="log-stats-grid">
+            <div class="stat-card">
+              <div class="stat-icon stat-icon-fetch">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
+                  <path d="M3 3v5h5"/>
+                </svg>
+              </div>
+              <div class="stat-value" id="statFetchRuns">-</div>
+              <div class="stat-label">Fetch behy</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-icon stat-icon-google">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <circle cx="12" cy="12" r="10"/>
+                  <line x1="2" y1="12" x2="22" y2="12"/>
+                  <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+                </svg>
+              </div>
+              <div class="stat-value" id="statGoogleCalls">-</div>
+              <div class="stat-label">Google API volania</div>
+              <div class="stat-detail" id="statGoogleDetail">-</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-icon stat-icon-positions">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/>
+                  <circle cx="12" cy="10" r="3"/>
+                </svg>
+              </div>
+              <div class="stat-value" id="statPositions">-</div>
+              <div class="stat-label">Vložené polohy</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-icon stat-icon-cache">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <ellipse cx="12" cy="5" rx="9" ry="3"/>
+                  <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/>
+                  <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/>
+                </svg>
+              </div>
+              <div class="stat-value" id="statCacheHits">-</div>
+              <div class="stat-label">Cache hity</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-icon stat-icon-ibeacon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <circle cx="12" cy="12" r="3"/>
+                  <path d="M8 12a4 4 0 0 1 8 0"/>
+                  <path d="M5 12a7 7 0 0 1 14 0"/>
+                </svg>
+              </div>
+              <div class="stat-value" id="statIBeaconHits">-</div>
+              <div class="stat-label">iBeacon hity</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-icon stat-icon-perimeter">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polygon points="12 2 22 8.5 22 15.5 12 22 2 15.5 2 8.5"/>
+                </svg>
+              </div>
+              <div class="stat-value" id="statPerimeterAlerts">-</div>
+              <div class="stat-label">Perimeter alerty</div>
+            </div>
+            <div class="stat-card stat-card-wide">
+              <div class="stat-icon stat-icon-logs">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                  <polyline points="14 2 14 8 20 8"/>
+                </svg>
+              </div>
+              <div class="stat-counts">
+                <span class="log-count log-count-error"><span id="statErrorCount">-</span> chýb</span>
+                <span class="log-count log-count-info"><span id="statInfoCount">-</span> info</span>
+                <span class="log-count log-count-debug"><span id="statDebugCount">-</span> debug</span>
+              </div>
+              <div class="stat-label">Záznamy logov</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Log Viewer Section -->
+        <div class="log-section log-viewer-section">
+          <div class="log-section-header">
+            <h3>Logy</h3>
+            <div class="log-controls">
+              <div class="log-filter-group">
+                <select id="logLevelFilter" class="log-filter-select">
+                  <option value="">Všetky úrovne</option>
+                  <option value="error">Error</option>
+                  <option value="info">Info</option>
+                  <option value="debug">Debug</option>
+                </select>
+                <input type="text" id="logSearchFilter" class="log-search-input" placeholder="Hľadať v logoch...">
+              </div>
+              <div class="log-action-buttons">
+                <button type="button" id="refreshLogs" class="btn-small btn-secondary" title="Obnoviť logy">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                    <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
+                    <path d="M3 3v5h5"/>
+                  </svg>
+                  Obnoviť
+                </button>
+                <button type="button" id="clearLogs" class="btn-small btn-reset" title="Vymazať logy">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                    <polyline points="3 6 5 6 21 6"/>
+                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                  </svg>
+                  Vymazať
+                </button>
+              </div>
+            </div>
+          </div>
+          <div class="log-info-bar">
+            <span id="logFileInfo">Súbor: -</span>
+            <span id="logCountInfo">Záznamov: -</span>
+          </div>
+          <div id="logContainer" class="log-container">
+            <div class="log-loading">Načítavam logy...</div>
+          </div>
+          <div class="log-pagination">
+            <button type="button" id="logPrevPage" class="btn-small btn-secondary" disabled>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                <polyline points="15 18 9 12 15 6"/>
+              </svg>
+              Predošlé
+            </button>
+            <span id="logPageInfo">Strana 1</span>
+            <button type="button" id="logNextPage" class="btn-small btn-secondary" disabled>
+              Ďalšie
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                <polyline points="9 18 15 12 9 6"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
-  <script src="app.js?v=20251208b" defer></script>
+  <script src="app.js?v=20251219" defer></script>
 </body>
 </html>

@@ -8,8 +8,19 @@ declare(strict_types=1);
 if (PHP_SAPI !== 'cli') { http_response_code(404); echo "Not found\n"; exit; }
 date_default_timezone_set('Europe/Bratislava');
 
-// Log file path - can be overridden by environment
-$LOG_FILE = getenv('LOG_FILE') ?: __DIR__ . '/fetch.log';
+// Load .env FIRST before reading any environment variables
+function load_env_early(string $path): void {
+    if (!is_file($path) || !is_readable($path)) return;
+    foreach (file($path, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) as $line) {
+        if ($line === '' || $line[0] === '#' || strpos($line,'=')===false) continue;
+        [$k,$v] = array_map('trim', explode('=', $line, 2));
+        if ($k !== '') putenv("$k=$v");
+    }
+}
+load_env_early(__DIR__.'/.env');
+
+// Log file path - from env, or Docker default, or local fallback
+$LOG_FILE = getenv('LOG_FILE') ?: (is_dir('/var/log/tracker') ? '/var/log/tracker/fetch.log' : __DIR__ . '/fetch.log');
 const FETCH_LOCK_FILE = __DIR__ . '/fetch_data.lock';
 
 // LOG LEVEL: "error", "info", "debug" (from env or default to "info")
@@ -45,15 +56,6 @@ function info_log(string $msg): void {
 
 function debug_log(string $msg): void {
     logl($msg, 'debug');
-}
-
-function load_env(string $path): void {
-    if (!is_file($path) || !is_readable($path)) return;
-    foreach (file($path, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) as $line) {
-        if ($line === '' || $line[0] === '#' || strpos($line,'=')===false) continue;
-        [$k,$v] = array_map('trim', explode('=', $line, 2));
-        if ($k !== '') putenv("$k=$v");
-    }
 }
 
 function db(): PDO {
@@ -1058,7 +1060,7 @@ if ($lockFp && flock($lockFp, LOCK_EX | LOCK_NB)) {
 }
 
 try {
-    load_env(__DIR__.'/.env');
+    // .env is already loaded at the top of the file via load_env_early()
 
     $cliArgs = parse_cli_args($argv);
     
