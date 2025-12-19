@@ -6,13 +6,16 @@ declare(strict_types=1);
  *
  * Authentication flow:
  * 1. TRUST_DOCKER_NETWORK=true && IP is 172.x.x.x / 10.x.x.x? → Allow (internal services, n8n)
- * 2. Validate via family-office: POST /api/admin/validate-key → Allow if valid
+ * 2. Validate via family-office: POST /api/tokens/validate → Allow if valid
  *
  * Environment variables:
  * - AUTH_API_URL: URL to family-office (default: http://family-office:3001)
  * - TRUST_DOCKER_NETWORK: true = allow requests from Docker network without auth
  * - INTERNAL_API_KEY: Shared key for communication with family-office
+ * - SUBDOMAIN_NAME: Name of this subdomain for token validation (default: tracker)
  */
+
+const VALIDATION_TIMEOUT = 5;
 
 // Configuration getters
 function getApiAuthConfig(): array {
@@ -20,7 +23,7 @@ function getApiAuthConfig(): array {
         'auth_api_url' => getenv('AUTH_API_URL') ?: 'http://family-office:3001',
         'internal_api_key' => getenv('INTERNAL_API_KEY') ?: null,
         'trust_docker_network' => strtolower(getenv('TRUST_DOCKER_NETWORK') ?: 'false') === 'true',
-        'service_name' => 'tracker'
+        'subdomain_name' => getenv('SUBDOMAIN_NAME') ?: 'tracker'
     ];
 }
 
@@ -62,25 +65,31 @@ function getClientIp(): ?string {
 }
 
 /**
- * Validate API key against family-office service
+ * Validate API token against family-office service
+ *
+ * @param string $token The X-API-Key token to validate
+ * @param array $config Configuration array
+ * @param string $requiredScope Required scope (read, write, admin)
+ * @return array|null Token data if valid, null otherwise
  */
-function validateApiKeyWithFamilyOffice(string $apiKey, array $config): ?array {
-    if (empty($apiKey)) {
+function validateApiToken(string $token, array $config, string $requiredScope = 'read'): ?array {
+    if (empty($token)) {
         return null;
     }
 
-    $url = rtrim($config['auth_api_url'], '/') . '/api/admin/validate-key';
+    $url = rtrim($config['auth_api_url'], '/') . '/api/tokens/validate';
 
     $ch = curl_init($url);
 
     $headers = ['Content-Type: application/json'];
     if (!empty($config['internal_api_key'])) {
-        $headers[] = 'X-Internal-Api-Key: ' . $config['internal_api_key'];
+        $headers[] = 'X-Internal-API-Key: ' . $config['internal_api_key'];
     }
 
     $payload = json_encode([
-        'apiKey' => $apiKey,
-        'service' => $config['service_name']
+        'token' => $token,
+        'subdomain' => $config['subdomain_name'],
+        'required_scope' => $requiredScope
     ]);
 
     curl_setopt_array($ch, [
@@ -88,7 +97,7 @@ function validateApiKeyWithFamilyOffice(string $apiKey, array $config): ?array {
         CURLOPT_POST => true,
         CURLOPT_POSTFIELDS => $payload,
         CURLOPT_HTTPHEADER => $headers,
-        CURLOPT_TIMEOUT => 5,
+        CURLOPT_TIMEOUT => VALIDATION_TIMEOUT,
         CURLOPT_CONNECTTIMEOUT => 3
     ]);
 
@@ -98,7 +107,7 @@ function validateApiKeyWithFamilyOffice(string $apiKey, array $config): ?array {
     curl_close($ch);
 
     if ($error) {
-        error_log("API key validation error: $error");
+        error_log("API token validation error: $error");
         return null;
     }
 
@@ -113,18 +122,21 @@ function validateApiKeyWithFamilyOffice(string $apiKey, array $config): ?array {
 
     return [
         'valid' => true,
-        'name' => $data['name'] ?? 'family-office-key',
-        'permissions' => $data['permissions'] ?? ['read', 'write']
+        'name' => $data['token_name'] ?? $data['name'] ?? 'api-token',
+        'user_id' => $data['user_id'] ?? null,
+        'user_email' => $data['user_email'] ?? null,
+        'scopes' => $data['scopes'] ?? [],
+        'permissions' => $data['scopes'] ?? ['read', 'write']
     ];
 }
 
 /**
  * Main authentication function - returns authentication result or null on failure
  *
+ * @param string $requiredScope Required scope for token validation
  * @return array|null Returns auth info on success, null on failure
- *         ['name' => string, 'permissions' => array, 'method' => string]
  */
-function authenticateApiRequest(): ?array {
+function authenticateApiRequest(string $requiredScope = 'read'): ?array {
     $config = getApiAuthConfig();
     $clientIp = getClientIp();
 
@@ -132,8 +144,12 @@ function authenticateApiRequest(): ?array {
     if ($config['trust_docker_network'] && isDockerNetwork($clientIp)) {
         return [
             'name' => 'docker-network',
-            'permissions' => ['read', 'write'],
+            'user_id' => 'docker-network',
+            'user_email' => null,
+            'scopes' => ['read', 'write', 'admin'],
+            'permissions' => ['read', 'write', 'admin'],
             'method' => 'docker-network',
+            'via' => 'docker_network',
             'client_ip' => $clientIp
         ];
     }
@@ -141,14 +157,22 @@ function authenticateApiRequest(): ?array {
     // Get API key from header or query param
     $apiKey = $_SERVER['HTTP_X_API_KEY'] ?? $_GET['api_key'] ?? null;
 
-    // Tier 2: Validate via family-office
-    $keyData = validateApiKeyWithFamilyOffice($apiKey, $config);
+    if (empty($apiKey)) {
+        return null;
+    }
 
-    if ($keyData) {
+    // Tier 2: Validate via family-office
+    $tokenData = validateApiToken($apiKey, $config, $requiredScope);
+
+    if ($tokenData) {
         return [
-            'name' => $keyData['name'],
-            'permissions' => $keyData['permissions'],
+            'name' => $tokenData['name'],
+            'user_id' => $tokenData['user_id'],
+            'user_email' => $tokenData['user_email'],
+            'scopes' => $tokenData['scopes'],
+            'permissions' => $tokenData['permissions'],
             'method' => 'family-office',
+            'via' => 'api_key',
             'client_ip' => $clientIp
         ];
     }
@@ -159,10 +183,11 @@ function authenticateApiRequest(): ?array {
 /**
  * Require API authentication - responds with 401 if not authenticated
  *
+ * @param string $requiredScope Required scope for access
  * @return array Auth info if authenticated
  */
-function requireApiAuth(): array {
-    $auth = authenticateApiRequest();
+function requireApiAuth(string $requiredScope = 'read'): array {
+    $auth = authenticateApiRequest($requiredScope);
 
     if ($auth === null) {
         http_response_code(401);
@@ -178,10 +203,17 @@ function requireApiAuth(): array {
 }
 
 /**
- * Check if request has specific permission
+ * Check if request has specific scope/permission
+ */
+function hasScope(array $auth, string $scope): bool {
+    return in_array($scope, $auth['scopes'] ?? [], true);
+}
+
+/**
+ * Check if request has specific permission (alias for hasScope)
  */
 function hasPermission(array $auth, string $permission): bool {
-    return in_array($permission, $auth['permissions'] ?? [], true);
+    return hasScope($auth, $permission);
 }
 
 /**

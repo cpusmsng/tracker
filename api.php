@@ -41,7 +41,7 @@ if (is_file($cfg)) {
     require_once $cfg;
 }
 
-// API authentication middleware (3-tier: Docker network, static key, family-office)
+// API authentication middleware (2-tier: Docker network, family-office token validation)
 $authMiddleware = __DIR__ . '/middleware/api_auth.php';
 if (is_file($authMiddleware)) {
     require_once $authMiddleware;
@@ -1766,6 +1766,7 @@ if ($action === 'api_auth_check') {
     $config = [
         'trust_docker_network' => strtolower(getenv('TRUST_DOCKER_NETWORK') ?: 'false') === 'true',
         'internal_api_key_set' => !empty(getenv('INTERNAL_API_KEY')),
+        'subdomain_name' => getenv('SUBDOMAIN_NAME') ?: 'tracker',
         'auth_api_url' => getenv('AUTH_API_URL') ?: 'http://family-office:3001',
         'n8n_api_key_set' => !empty(getenv('N8N_API_KEY')),
     ];
@@ -1775,7 +1776,11 @@ if ($action === 'api_auth_check') {
         'authenticated' => $auth !== null,
         'auth_info' => $auth ? [
             'method' => $auth['method'] ?? 'unknown',
+            'via' => $auth['via'] ?? 'unknown',
             'name' => $auth['name'] ?? 'unknown',
+            'user_id' => $auth['user_id'] ?? null,
+            'user_email' => $auth['user_email'] ?? null,
+            'scopes' => $auth['scopes'] ?? [],
             'permissions' => $auth['permissions'] ?? []
         ] : null,
         'client_ip' => $clientIp,

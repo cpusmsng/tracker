@@ -208,6 +208,7 @@ LOGIN_URL=                 # SSO login page
 ```env
 TRUST_DOCKER_NETWORK=true  # Allow Docker network without auth
 INTERNAL_API_KEY=          # Family-office communication key
+SUBDOMAIN_NAME=tracker     # Subdomain for token validation
 N8N_API_KEY=               # Legacy: n8n endpoints (fallback)
 ```
 
@@ -295,7 +296,7 @@ External API endpoints for automation workflows.
 
 **Authentication (2-tier system):**
 1. **Docker Network**: If `TRUST_DOCKER_NETWORK=true` and request from 172.x.x.x/10.x.x.x → Allow without auth
-2. **Family-Office**: Validate via POST to `AUTH_API_URL/api/admin/validate-key`
+2. **Family-Office**: Validate via POST to `AUTH_API_URL/api/tokens/validate` with `{token, subdomain, required_scope}`
 
 Legacy: `N8N_API_KEY` still supported as fallback for backwards compatibility.
 

@@ -65,6 +65,7 @@ services:
       # API Authentication (2-tier system)
       - TRUST_DOCKER_NETWORK=${TRUST_DOCKER_NETWORK:-true}
       - INTERNAL_API_KEY=${INTERNAL_API_KEY:-}
+      - SUBDOMAIN_NAME=${SUBDOMAIN_NAME:-tracker}
 
       # Logging
       - LOG_LEVEL=${LOG_LEVEL:-info}
