@@ -331,7 +331,7 @@ if ($action === 'refetch_day' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     }
     
     $scriptPath = __DIR__ . '/fetch_data.php';
-    $logFile = __DIR__ . '/fetch.log';
+    $logFile = getenv('LOG_FILE') ?: (is_dir('/var/log/tracker') ? '/var/log/tracker/fetch.log' : (__DIR__ . '/fetch.log'));
     
     if (!is_file($scriptPath)) {
         respond(['ok'=>false, 'error'=>'fetch_data.php not found'], 500);
@@ -942,9 +942,13 @@ if ($action === 'reset_settings' && $_SERVER['REQUEST_METHOD'] === 'POST') {
 
 // ========== LOG VIEWER ==========
 
+// Default log path for Docker environment
+define('DEFAULT_LOG_FILE', '/var/log/tracker/fetch.log');
+
 if ($action === 'get_logs') {
     try {
-        $logFile = getenv('LOG_FILE') ?: (__DIR__ . '/fetch.log');
+        // Try environment variable first, then Docker default, then local fallback
+        $logFile = getenv('LOG_FILE') ?: (is_file(DEFAULT_LOG_FILE) ? DEFAULT_LOG_FILE : (__DIR__ . '/fetch.log'));
         $limit = min((int)(qparam('limit') ?: 200), 2000);
         $offset = (int)(qparam('offset') ?: 0);
         $level = qparam('level'); // error, info, debug, or null for all
@@ -958,7 +962,9 @@ if ($action === 'get_logs') {
                     'logs' => [],
                     'total' => 0,
                     'file' => basename($logFile),
-                    'file_exists' => false
+                    'file_exists' => false,
+                    'tried_path' => $logFile,
+                    'env_log_file' => getenv('LOG_FILE') ?: 'not set'
                 ]
             ]);
         }
@@ -1054,7 +1060,7 @@ if ($action === 'get_logs') {
 
 if ($action === 'get_log_stats') {
     try {
-        $logFile = getenv('LOG_FILE') ?: (__DIR__ . '/fetch.log');
+        $logFile = getenv('LOG_FILE') ?: (is_file(DEFAULT_LOG_FILE) ? DEFAULT_LOG_FILE : (__DIR__ . '/fetch.log'));
         $days = min((int)(qparam('days') ?: 7), 90);
 
         if (!is_file($logFile)) {
@@ -1158,7 +1164,7 @@ if ($action === 'get_log_stats') {
 
 if ($action === 'clear_logs' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     try {
-        $logFile = getenv('LOG_FILE') ?: (__DIR__ . '/fetch.log');
+        $logFile = getenv('LOG_FILE') ?: (is_file(DEFAULT_LOG_FILE) ? DEFAULT_LOG_FILE : (__DIR__ . '/fetch.log'));
 
         if (!is_file($logFile)) {
             respond(['ok' => true, 'message' => 'Log file does not exist']);
