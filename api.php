@@ -219,20 +219,35 @@ if ($action === 'root') {
 }
 
 // Health check endpoint for Docker
+// GET /api.php?action=health or GET /api/health
 if ($action === 'health') {
     try {
         // Test database connection
         $pdo->query("SELECT 1");
+
+        // Get version from VERSION file
+        $versionFile = __DIR__ . '/VERSION';
+        $version = is_file($versionFile) ? trim(file_get_contents($versionFile)) : '1.0.0';
+
+        // Get system uptime in seconds (from /proc/uptime)
+        $uptime = 0;
+        if (is_file('/proc/uptime')) {
+            $uptimeData = file_get_contents('/proc/uptime');
+            if ($uptimeData !== false) {
+                $uptime = (int)explode(' ', $uptimeData)[0];
+            }
+        }
+
         respond([
-            'ok' => true,
-            'status' => 'healthy',
+            'status' => 'ok',
+            'version' => $version,
+            'uptime' => $uptime,
             'timestamp' => date('c'),
             'database' => 'connected'
         ]);
     } catch (Throwable $e) {
         respond([
-            'ok' => false,
-            'status' => 'unhealthy',
+            'status' => 'error',
             'error' => 'Database connection failed'
         ], 503);
     }
