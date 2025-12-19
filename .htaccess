@@ -1,3 +1,9 @@
+# URL rewriting pre health endpoint
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteRule ^api/health$ api.php?action=health [L,QSA]
+</IfModule>
+
 # Ochrana .env súboru pred priamym prístupom
 <FilesMatch "^\.env">
     Require all denied
