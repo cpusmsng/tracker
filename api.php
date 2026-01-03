@@ -768,7 +768,9 @@ if ($action === 'get_settings') {
             'unique_bucket_minutes' => (int)(getenv('UNIQUE_BUCKET_MINUTES') ?: 30),
             'mac_cache_max_age_days' => (int)(getenv('MAC_CACHE_MAX_AGE_DAYS') ?: 3600),
             'google_force' => getenv('GOOGLE_FORCE') ?: '0',
-            'log_level' => strtolower(getenv('LOG_LEVEL') ?: 'info')
+            'log_level' => strtolower(getenv('LOG_LEVEL') ?: 'info'),
+            'smart_refetch_frequency_minutes' => (int)(getenv('SMART_REFETCH_FREQUENCY_MINUTES') ?: 30),
+            'smart_refetch_days' => (int)(getenv('SMART_REFETCH_DAYS') ?: 7)
         ];
 
         respond([
@@ -792,6 +794,8 @@ if ($action === 'save_settings' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         $macCacheMaxAgeDays = isset($j['mac_cache_max_age_days']) ? (int)$j['mac_cache_max_age_days'] : null;
         $googleForce = isset($j['google_force']) ? (string)$j['google_force'] : null;
         $logLevel = isset($j['log_level']) ? strtolower(trim((string)$j['log_level'])) : null;
+        $smartRefetchFrequencyMinutes = isset($j['smart_refetch_frequency_minutes']) ? (int)$j['smart_refetch_frequency_minutes'] : null;
+        $smartRefetchDays = isset($j['smart_refetch_days']) ? (int)$j['smart_refetch_days'] : null;
 
         // Validácia hraničných hodnôt
         if ($hysteresisMeters !== null && ($hysteresisMeters < 10 || $hysteresisMeters > 500)) {
@@ -815,6 +819,12 @@ if ($action === 'save_settings' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($logLevel !== null && !in_array($logLevel, ['error', 'info', 'debug'], true)) {
             respond(['ok' => false, 'error' => 'log_level must be "error", "info", or "debug"'], 400);
         }
+        if ($smartRefetchFrequencyMinutes !== null && ($smartRefetchFrequencyMinutes < 5 || $smartRefetchFrequencyMinutes > 1440)) {
+            respond(['ok' => false, 'error' => 'smart_refetch_frequency_minutes must be between 5 and 1440'], 400);
+        }
+        if ($smartRefetchDays !== null && ($smartRefetchDays < 1 || $smartRefetchDays > 30)) {
+            respond(['ok' => false, 'error' => 'smart_refetch_days must be between 1 and 30'], 400);
+        }
 
         // Načítaj aktuálny .env súbor
         $envPath = __DIR__ . '/.env';
@@ -835,7 +845,9 @@ if ($action === 'save_settings' && $_SERVER['REQUEST_METHOD'] === 'POST') {
             'unique_bucket_minutes' => 'UNIQUE_BUCKET_MINUTES',
             'mac_cache_max_age_days' => 'MAC_CACHE_MAX_AGE_DAYS',
             'google_force' => 'GOOGLE_FORCE',
-            'log_level' => 'LOG_LEVEL'
+            'log_level' => 'LOG_LEVEL',
+            'smart_refetch_frequency_minutes' => 'SMART_REFETCH_FREQUENCY_MINUTES',
+            'smart_refetch_days' => 'SMART_REFETCH_DAYS'
         ];
 
         $newSettings = [];
@@ -918,7 +930,9 @@ if ($action === 'reset_settings' && $_SERVER['REQUEST_METHOD'] === 'POST') {
             'UNIQUE_BUCKET_MINUTES' => '30',
             'MAC_CACHE_MAX_AGE_DAYS' => '3600',
             'GOOGLE_FORCE' => '0',
-            'LOG_LEVEL' => 'info'
+            'LOG_LEVEL' => 'info',
+            'SMART_REFETCH_FREQUENCY_MINUTES' => '30',
+            'SMART_REFETCH_DAYS' => '7'
         ];
 
         // Aktualizuj riadky v .env
@@ -966,6 +980,126 @@ if ($action === 'reset_settings' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         ]);
     } catch (Throwable $e) {
         respond(['ok' => false, 'error' => 'Failed to reset settings: ' . $e->getMessage()], 500);
+    }
+}
+
+// ========== POSITION EDITING ==========
+
+// Get position detail for editing
+if ($action === 'get_position_detail') {
+    try {
+        $id = (int)qparam('id');
+        if (!$id) {
+            respond(['ok' => false, 'error' => 'Position ID is required'], 400);
+        }
+
+        $pdo = db();
+        $stmt = $pdo->prepare('SELECT id, timestamp, lat, lng, source, capture_mode, mac_address FROM tracker_data WHERE id = ?');
+        $stmt->execute([$id]);
+        $position = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if (!$position) {
+            respond(['ok' => false, 'error' => 'Position not found'], 404);
+        }
+
+        respond([
+            'ok' => true,
+            'data' => $position
+        ]);
+    } catch (Throwable $e) {
+        respond(['ok' => false, 'error' => 'Failed to get position detail: ' . $e->getMessage()], 500);
+    }
+}
+
+// Update position coordinates
+if ($action === 'update_position' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    try {
+        $j = json_body();
+
+        $id = isset($j['id']) ? (int)$j['id'] : null;
+        $newLat = isset($j['lat']) ? (float)$j['lat'] : null;
+        $newLng = isset($j['lng']) ? (float)$j['lng'] : null;
+
+        if (!$id) {
+            respond(['ok' => false, 'error' => 'Position ID is required'], 400);
+        }
+        if ($newLat === null || $newLng === null) {
+            respond(['ok' => false, 'error' => 'New coordinates (lat, lng) are required'], 400);
+        }
+
+        // Validate coordinate ranges
+        if ($newLat < -90 || $newLat > 90) {
+            respond(['ok' => false, 'error' => 'Latitude must be between -90 and 90'], 400);
+        }
+        if ($newLng < -180 || $newLng > 180) {
+            respond(['ok' => false, 'error' => 'Longitude must be between -180 and 180'], 400);
+        }
+
+        $pdo = db();
+
+        // First get the current position to check it exists
+        $stmt = $pdo->prepare('SELECT id, mac_address, source FROM tracker_data WHERE id = ?');
+        $stmt->execute([$id]);
+        $position = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if (!$position) {
+            respond(['ok' => false, 'error' => 'Position not found'], 404);
+        }
+
+        // Update the position
+        $stmt = $pdo->prepare('UPDATE tracker_data SET lat = ?, lng = ? WHERE id = ?');
+        $stmt->execute([$newLat, $newLng, $id]);
+
+        // If this was a WiFi position, also update the mac_locations cache
+        if ($position['mac_address'] && ($position['source'] === 'wifi' || $position['source'] === 'Wi-Fi')) {
+            $stmt = $pdo->prepare('UPDATE mac_locations SET lat = ?, lng = ?, updated_at = datetime(\'now\') WHERE mac = ?');
+            $stmt->execute([$newLat, $newLng, $position['mac_address']]);
+        }
+
+        respond([
+            'ok' => true,
+            'message' => 'Position updated successfully'
+        ]);
+    } catch (Throwable $e) {
+        respond(['ok' => false, 'error' => 'Failed to update position: ' . $e->getMessage()], 500);
+    }
+}
+
+// Invalidate MAC address cache (remove coordinates for a MAC)
+if ($action === 'invalidate_mac' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    try {
+        $j = json_body();
+
+        $mac = isset($j['mac']) ? trim((string)$j['mac']) : null;
+        $positionId = isset($j['position_id']) ? (int)$j['position_id'] : null;
+
+        if (!$mac) {
+            respond(['ok' => false, 'error' => 'MAC address is required'], 400);
+        }
+
+        $pdo = db();
+
+        // Mark the MAC as negative in the cache (no location)
+        $stmt = $pdo->prepare('UPDATE mac_locations SET lat = NULL, lng = NULL, negative = 1, updated_at = datetime(\'now\') WHERE mac = ?');
+        $stmt->execute([$mac]);
+
+        // If mac_locations didn't have this MAC, insert it as negative
+        if ($stmt->rowCount() === 0) {
+            $stmt = $pdo->prepare('INSERT OR REPLACE INTO mac_locations (mac, lat, lng, negative, created_at, updated_at) VALUES (?, NULL, NULL, 1, datetime(\'now\'), datetime(\'now\'))');
+            $stmt->execute([$mac]);
+        }
+
+        // Clear coordinates from all tracker_data entries with this MAC
+        $stmt = $pdo->prepare('UPDATE tracker_data SET lat = NULL, lng = NULL WHERE mac_address = ?');
+        $stmt->execute([$mac]);
+        $affectedPositions = $stmt->rowCount();
+
+        respond([
+            'ok' => true,
+            'message' => "MAC cache invalidated. Affected positions: $affectedPositions"
+        ]);
+    } catch (Throwable $e) {
+        respond(['ok' => false, 'error' => 'Failed to invalidate MAC: ' . $e->getMessage()], 500);
     }
 }
 

@@ -2357,3 +2357,117 @@ body.authenticated .container{
     font-size:12px;
   }
 }
+
+/* ========== POSITION EDIT OVERLAY ========== */
+.position-edit-content{
+  max-width:700px;
+}
+
+.position-edit-info{
+  background:var(--muted-bg);
+  border-radius:8px;
+  padding:16px;
+  margin-bottom:16px;
+}
+
+.position-edit-info .info-row{
+  display:flex;
+  justify-content:space-between;
+  padding:6px 0;
+  border-bottom:1px solid var(--border);
+}
+
+.position-edit-info .info-row:last-child{
+  border-bottom:none;
+}
+
+.position-edit-info .info-label{
+  font-weight:500;
+  color:var(--muted-text);
+}
+
+.position-edit-info .info-value{
+  font-family:monospace;
+  color:var(--text);
+}
+
+#positionEditMap{
+  height:300px;
+  border-radius:8px;
+  border:1px solid var(--border);
+  margin-top:8px;
+}
+
+.form-row-inline{
+  display:flex;
+  gap:16px;
+}
+
+.form-row-inline .form-field{
+  flex:1;
+}
+
+.form-row-inline .form-field label{
+  display:block;
+  font-size:13px;
+  color:var(--muted-text);
+  font-weight:500;
+  margin-bottom:6px;
+}
+
+.form-row-inline .form-field input{
+  width:100%;
+  padding:10px 12px;
+  border:1px solid var(--border);
+  border-radius:8px;
+  font-size:14px;
+  background:var(--card-bg);
+  color:var(--text);
+}
+
+.form-row-inline .form-field input:focus{
+  outline:none;
+  border-color:var(--primary);
+  box-shadow:0 0 0 3px rgba(14,165,233,0.1);
+}
+
+.form-row-inline .form-field input[readonly]{
+  background:var(--muted-bg);
+  cursor:not-allowed;
+}
+
+.position-edit-actions{
+  margin-top:20px;
+  flex-wrap:wrap;
+}
+
+/* Edit button in positions table */
+.edit-position-btn{
+  background:none;
+  border:none;
+  padding:4px;
+  cursor:pointer;
+  color:var(--muted-text);
+  border-radius:4px;
+  transition:all 0.2s;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+}
+
+.edit-position-btn:hover{
+  background:var(--muted-bg);
+  color:var(--primary);
+}
+
+.edit-position-btn svg{
+  width:16px;
+  height:16px;
+}
+
+/* Adjust table for edit button column */
+#positionsTable .pos-table th:last-child,
+#positionsTable .pos-table td:last-child{
+  width:40px;
+  text-align:center;
+}

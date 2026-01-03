@@ -1173,6 +1173,8 @@ async function loadCurrentSettings() {
       $('#macCacheMaxAgeDays').value = data.mac_cache_max_age_days || 3600;
       $('#googleForce').checked = data.google_force === '1' || data.google_force === 1;
       $('#logLevel').value = data.log_level || 'info';
+      $('#smartRefetchFrequencyMinutes').value = data.smart_refetch_frequency_minutes || 30;
+      $('#smartRefetchDays').value = data.smart_refetch_days || 7;
 
       // Aktualizuj "aktuálne hodnoty" labels
       $('#currentHysteresisMeters').textContent = `(${data.hysteresis_meters || 50} m)`;
@@ -1183,6 +1185,8 @@ async function loadCurrentSettings() {
       $('#currentGoogleForce').textContent = (data.google_force === '1' || data.google_force === 1) ? '(Zapnuté)' : '(Vypnuté)';
       const logLevelLabels = { 'error': 'Error', 'info': 'Info', 'debug': 'Debug' };
       $('#currentLogLevel').textContent = `(${logLevelLabels[data.log_level] || 'Info'})`;
+      $('#currentSmartRefetchFrequencyMinutes').textContent = `(${data.smart_refetch_frequency_minutes || 30} min)`;
+      $('#currentSmartRefetchDays').textContent = `(${data.smart_refetch_days || 7} dní)`;
 
       // Initialize theme toggle in settings
       initTheme();
@@ -1207,7 +1211,9 @@ async function saveSettings() {
       unique_bucket_minutes: parseInt($('#uniqueBucketMinutes').value) || 30,
       mac_cache_max_age_days: parseInt($('#macCacheMaxAgeDays').value) || 3600,
       google_force: $('#googleForce').checked ? '1' : '0',
-      log_level: $('#logLevel').value || 'info'
+      log_level: $('#logLevel').value || 'info',
+      smart_refetch_frequency_minutes: parseInt($('#smartRefetchFrequencyMinutes').value) || 30,
+      smart_refetch_days: parseInt($('#smartRefetchDays').value) || 7
     };
 
     // Validácia hraničných hodnôt
@@ -1229,6 +1235,14 @@ async function saveSettings() {
     }
     if (settings.mac_cache_max_age_days < 1 || settings.mac_cache_max_age_days > 7200) {
       alert('Platnosť cache musí byť medzi 1 a 7200 dňami');
+      return;
+    }
+    if (settings.smart_refetch_frequency_minutes < 5 || settings.smart_refetch_frequency_minutes > 1440) {
+      alert('Frekvencia Smart Refetch musí byť medzi 5 a 1440 min');
+      return;
+    }
+    if (settings.smart_refetch_days < 1 || settings.smart_refetch_days > 30) {
+      alert('Kontrolované obdobie musí byť medzi 1 a 30 dňami');
       return;
     }
 
@@ -1254,7 +1268,9 @@ function resetSettingToDefault(settingName, defaultValue) {
     'unique_bucket_minutes': 'uniqueBucketMinutes',
     'mac_cache_max_age_days': 'macCacheMaxAgeDays',
     'google_force': 'googleForce',
-    'log_level': 'logLevel'
+    'log_level': 'logLevel',
+    'smart_refetch_frequency_minutes': 'smartRefetchFrequencyMinutes',
+    'smart_refetch_days': 'smartRefetchDays'
   };
 
   const fieldId = fieldMap[settingName];
@@ -1530,6 +1546,7 @@ async function loadHistory(dateStr) {
     const durMin = nxt ? Math.max(0, Math.round((new Date(nxt.timestamp) - new Date(cur.timestamp)) / 60000)) : 0;
     rows.push({
       i: i+1,
+      id: cur.id, // Add position ID for editing
       from: cur.timestamp,
       to: nxt ? nxt.timestamp : null,
       durMin: durMin,
@@ -1559,21 +1576,22 @@ function renderTable(rows) {
     { label: 'Trvanie', sortable: true },
     { label: 'Zdroj', sortable: true },
     { label: 'Lat', sortable: true },
-    { label: 'Lng', sortable: true }
+    { label: 'Lng', sortable: true },
+    { label: '', sortable: false }
   ];
-  
-  const thHtml = headers.map((h, idx) => 
+
+  const thHtml = headers.map((h, idx) =>
     `<th class="${h.sortable ? 'sortable' : ''}" data-col="${idx}">${h.label}</th>`
   ).join('');
-  
+
   const th = `<thead><tr>${thHtml}</tr></thead>`;
-  
+
   const tb = rows.map((r, idx) => {
     let rowClass = '';
     let displayNum = r.i;
     let fromDisplay = toTime(r.from);
     let toDisplay = r.to ? toTime(r.to) : '—';
-    
+
     if (r.isPrevDay) {
       rowClass = 'prev-day-row';
       displayNum = '↑';
@@ -1582,19 +1600,27 @@ function renderTable(rows) {
       displayNum = '📍';
       // Pre poslednú známu polohu zobraz plný dátum a čas
       const d = new Date(r.from);
-      fromDisplay = d.toLocaleDateString('sk-SK', { 
-        day: '2-digit', 
-        month: '2-digit', 
-        year: 'numeric' 
-      }) + ' ' + d.toLocaleTimeString('sk-SK', { 
-        hour: '2-digit', 
-        minute: '2-digit' 
+      fromDisplay = d.toLocaleDateString('sk-SK', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric'
+      }) + ' ' + d.toLocaleTimeString('sk-SK', {
+        hour: '2-digit',
+        minute: '2-digit'
       });
       toDisplay = 'teraz';
     }
-    
+
+    const editBtn = r.id ? `
+      <button class="edit-position-btn" data-id="${r.id}" title="Upraviť záznam">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+          <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+        </svg>
+      </button>` : '';
+
     return `
-    <tr class="${rowClass}" data-lat="${r.lat}" data-lng="${r.lng}" data-idx="${idx}">
+    <tr class="${rowClass}" data-lat="${r.lat}" data-lng="${r.lng}" data-idx="${idx}" data-id="${r.id || ''}">
       <td>${displayNum}</td>
       <td>${fromDisplay}</td>
       <td>${toDisplay}</td>
@@ -1602,6 +1628,7 @@ function renderTable(rows) {
       <td>${r.source}</td>
       <td>${r.lat.toFixed(6)}</td>
       <td>${r.lng.toFixed(6)}</td>
+      <td>${editBtn}</td>
     </tr>`;
   }).join('');
   
@@ -1682,6 +1709,207 @@ function renderTable(rows) {
       map.setView([lat, lng], 16);
     });
   });
+
+  // Add edit button click handlers
+  $('#positionsTable').querySelectorAll('.edit-position-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation(); // Prevent row click
+      const positionId = btn.getAttribute('data-id');
+      if (positionId) {
+        openPositionEditModal(parseInt(positionId));
+      }
+    });
+  });
+}
+
+// --------- Position Edit Modal ---------
+let positionEditMap = null;
+let positionEditCurrentMarker = null;
+let positionEditNewMarker = null;
+let currentEditPosition = null;
+
+function openPositionEditOverlay() {
+  $('#positionEditOverlay').classList.remove('hidden');
+
+  // Initialize map if not already done
+  if (!positionEditMap) {
+    setTimeout(() => {
+      positionEditMap = L.map('positionEditMap').setView([48.1486, 17.1077], 13);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '© OpenStreetMap contributors'
+      }).addTo(positionEditMap);
+
+      positionEditMap.on('click', (e) => {
+        const { lat, lng } = e.latlng;
+        $('#editNewLat').value = lat.toFixed(6);
+        $('#editNewLng').value = lng.toFixed(6);
+        updatePositionEditNewMarker(lat, lng);
+      });
+    }, 100);
+  } else {
+    setTimeout(() => positionEditMap.invalidateSize(), 100);
+  }
+}
+
+function closePositionEditOverlay() {
+  $('#positionEditOverlay').classList.add('hidden');
+  // Clear markers
+  if (positionEditCurrentMarker) {
+    positionEditMap.removeLayer(positionEditCurrentMarker);
+    positionEditCurrentMarker = null;
+  }
+  if (positionEditNewMarker) {
+    positionEditMap.removeLayer(positionEditNewMarker);
+    positionEditNewMarker = null;
+  }
+  currentEditPosition = null;
+}
+
+function updatePositionEditNewMarker(lat, lng) {
+  if (positionEditNewMarker) {
+    positionEditMap.removeLayer(positionEditNewMarker);
+  }
+  positionEditNewMarker = L.marker([lat, lng], {
+    icon: L.divIcon({
+      className: 'custom-marker',
+      html: '<div style="background: #ef4444; width: 12px; height: 12px; border-radius: 50%; border: 2px solid white; box-shadow: 0 2px 4px rgba(0,0,0,0.3);"></div>',
+      iconSize: [16, 16],
+      iconAnchor: [8, 8]
+    })
+  }).addTo(positionEditMap);
+}
+
+async function openPositionEditModal(positionId) {
+  try {
+    const result = await apiGet(`${API}?action=get_position_detail&id=${positionId}`);
+
+    if (!result.ok) {
+      alert(`Chyba: ${result.error || 'Nepodarilo sa načítať záznam'}`);
+      return;
+    }
+
+    currentEditPosition = result.data;
+
+    // Fill in the form
+    $('#editPositionId').value = currentEditPosition.id;
+    $('#editPositionIdDisplay').textContent = currentEditPosition.id;
+
+    const timestamp = new Date(currentEditPosition.timestamp);
+    $('#editPositionTimestamp').textContent = timestamp.toLocaleString('sk-SK');
+    $('#editPositionSource').textContent = currentEditPosition.source || '—';
+
+    if (currentEditPosition.mac_address) {
+      $('#editMacRow').style.display = 'flex';
+      $('#editPositionMac').textContent = currentEditPosition.mac_address;
+      $('#invalidateMac').style.display = 'inline-flex';
+    } else {
+      $('#editMacRow').style.display = 'none';
+      $('#invalidateMac').style.display = 'none';
+    }
+
+    $('#editCurrentLat').value = currentEditPosition.lat;
+    $('#editCurrentLng').value = currentEditPosition.lng;
+    $('#editNewLat').value = '';
+    $('#editNewLng').value = '';
+
+    openPositionEditOverlay();
+
+    // Set map view and add current position marker
+    setTimeout(() => {
+      if (positionEditMap && currentEditPosition.lat && currentEditPosition.lng) {
+        positionEditMap.setView([currentEditPosition.lat, currentEditPosition.lng], 16);
+
+        if (positionEditCurrentMarker) {
+          positionEditMap.removeLayer(positionEditCurrentMarker);
+        }
+        positionEditCurrentMarker = L.marker([currentEditPosition.lat, currentEditPosition.lng], {
+          icon: L.divIcon({
+            className: 'custom-marker',
+            html: '<div style="background: #3b82f6; width: 12px; height: 12px; border-radius: 50%; border: 2px solid white; box-shadow: 0 2px 4px rgba(0,0,0,0.3);"></div>',
+            iconSize: [16, 16],
+            iconAnchor: [8, 8]
+          })
+        }).addTo(positionEditMap);
+      }
+    }, 200);
+
+  } catch (err) {
+    alert(`Chyba pri načítavaní záznamu: ${err.message}`);
+  }
+}
+
+async function savePositionEdit() {
+  const positionId = parseInt($('#editPositionId').value);
+  const newLat = parseFloat($('#editNewLat').value);
+  const newLng = parseFloat($('#editNewLng').value);
+
+  if (!positionId) {
+    alert('Chýba ID záznamu');
+    return;
+  }
+
+  if (isNaN(newLat) || isNaN(newLng)) {
+    alert('Zadajte nové súradnice (kliknutím na mapu alebo manuálne)');
+    return;
+  }
+
+  if (newLat < -90 || newLat > 90) {
+    alert('Šírka musí byť medzi -90 a 90');
+    return;
+  }
+  if (newLng < -180 || newLng > 180) {
+    alert('Dĺžka musí byť medzi -180 a 180');
+    return;
+  }
+
+  try {
+    const result = await apiPost('update_position', {
+      id: positionId,
+      lat: newLat,
+      lng: newLng
+    });
+
+    if (result.ok) {
+      alert('Poloha bola úspešne aktualizovaná');
+      closePositionEditOverlay();
+      // Reload the current day's data
+      loadData(fmt(currentDate));
+    } else {
+      alert(`Chyba: ${result.error || 'Nepodarilo sa uložiť zmeny'}`);
+    }
+  } catch (err) {
+    alert(`Chyba pri ukladaní: ${err.message}`);
+  }
+}
+
+async function invalidateMacCache() {
+  if (!currentEditPosition || !currentEditPosition.mac_address) {
+    alert('Tento záznam nemá MAC adresu');
+    return;
+  }
+
+  const mac = currentEditPosition.mac_address;
+  if (!confirm(`Naozaj chcete zneplatniť cache pre MAC adresu ${mac}?\n\nToto odstráni súradnice zo všetkých záznamov s touto MAC adresou a označí ju ako neplatnú.`)) {
+    return;
+  }
+
+  try {
+    const result = await apiPost('invalidate_mac', {
+      mac: mac,
+      position_id: currentEditPosition.id
+    });
+
+    if (result.ok) {
+      alert(result.message || 'MAC cache bola zneplatnená');
+      closePositionEditOverlay();
+      // Reload the current day's data
+      loadData(fmt(currentDate));
+    } else {
+      alert(`Chyba: ${result.error || 'Nepodarilo sa zneplatniť cache'}`);
+    }
+  } catch (err) {
+    alert(`Chyba: ${err.message}`);
+  }
 }
 
 // --------- Refetch day ---------
@@ -1969,6 +2197,52 @@ function addUIHandlers() {
         await loadPerimeterTrail(trailDateInput.value);
       }
     });
+  }
+
+  // Position edit modal handlers
+  const positionEditClose = $('#positionEditClose');
+  if (positionEditClose) {
+    positionEditClose.addEventListener('click', closePositionEditOverlay);
+  }
+
+  const savePositionEditBtn = $('#savePositionEdit');
+  if (savePositionEditBtn) {
+    savePositionEditBtn.addEventListener('click', savePositionEdit);
+  }
+
+  const cancelPositionEditBtn = $('#cancelPositionEdit');
+  if (cancelPositionEditBtn) {
+    cancelPositionEditBtn.addEventListener('click', closePositionEditOverlay);
+  }
+
+  const invalidateMacBtn = $('#invalidateMac');
+  if (invalidateMacBtn) {
+    invalidateMacBtn.addEventListener('click', invalidateMacCache);
+  }
+
+  const positionEditOverlay = $('#positionEditOverlay');
+  if (positionEditOverlay) {
+    positionEditOverlay.addEventListener('click', (e) => {
+      if (e.target === positionEditOverlay) {
+        closePositionEditOverlay();
+      }
+    });
+  }
+
+  // Update new marker when input fields change
+  const editNewLatInput = $('#editNewLat');
+  const editNewLngInput = $('#editNewLng');
+  if (editNewLatInput && editNewLngInput) {
+    const updateMarkerFromInputs = () => {
+      const lat = parseFloat(editNewLatInput.value);
+      const lng = parseFloat(editNewLngInput.value);
+      if (!isNaN(lat) && !isNaN(lng) && positionEditMap) {
+        updatePositionEditNewMarker(lat, lng);
+        positionEditMap.setView([lat, lng], positionEditMap.getZoom());
+      }
+    };
+    editNewLatInput.addEventListener('change', updateMarkerFromInputs);
+    editNewLngInput.addEventListener('change', updateMarkerFromInputs);
   }
 }
 
