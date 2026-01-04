@@ -1000,7 +1000,7 @@ if ($action === 'get_position_detail') {
         }
 
         $pdo = db();
-        $stmt = $pdo->prepare('SELECT id, timestamp, latitude, longitude, source, raw_wifi_macs FROM tracker_data WHERE id = ?');
+        $stmt = $pdo->prepare('SELECT id, timestamp, latitude, longitude, source, raw_wifi_macs FROM tracker_data WHERE CAST(id AS INTEGER) = ?');
         $stmt->execute([$id]);
         $position = $stmt->fetch(PDO::FETCH_ASSOC);
 
@@ -1054,7 +1054,7 @@ if ($action === 'update_position' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         $pdo = db();
 
         // First get the current position to check it exists
-        $stmt = $pdo->prepare('SELECT id, raw_wifi_macs, source FROM tracker_data WHERE id = ?');
+        $stmt = $pdo->prepare('SELECT id, raw_wifi_macs, source FROM tracker_data WHERE CAST(id AS INTEGER) = ?');
         $stmt->execute([$id]);
         $position = $stmt->fetch(PDO::FETCH_ASSOC);
 
@@ -1063,7 +1063,7 @@ if ($action === 'update_position' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         // Update the position
-        $stmt = $pdo->prepare('UPDATE tracker_data SET latitude = ?, longitude = ? WHERE id = ?');
+        $stmt = $pdo->prepare('UPDATE tracker_data SET latitude = ?, longitude = ? WHERE CAST(id AS INTEGER) = ?');
         $stmt->execute([$newLat, $newLng, $id]);
 
         // If this was a WiFi position, also update the mac_locations cache
