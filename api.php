@@ -1129,14 +1129,15 @@ if ($action === 'get_mac_history') {
         }
 
         $pdo = db();
+        // Search for MAC in comma-separated list
         $stmt = $pdo->prepare('
             SELECT id, timestamp, latitude, longitude, source
             FROM tracker_data
-            WHERE raw_wifi_macs = ?
+            WHERE raw_wifi_macs LIKE ?
             ORDER BY timestamp DESC
             LIMIT 20
         ');
-        $stmt->execute([$mac]);
+        $stmt->execute(['%' . $mac . '%']);
         $records = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
         $history = [];

@@ -266,13 +266,14 @@ function get_last_position(PDO $pdo, ?string $beforeDate = null): ?array {
 }
 
 function insert_position_with_hysteresis(
-    PDO $pdo, 
-    string $iso, 
-    float $lat, 
-    float $lng, 
-    string $source, 
-    int $hysteresisMeters, 
-    ?array &$lastInsertedPos
+    PDO $pdo,
+    string $iso,
+    float $lat,
+    float $lng,
+    string $source,
+    int $hysteresisMeters,
+    ?array &$lastInsertedPos,
+    ?string $rawMacs = null
 ): array {
     
     $lastPos = $lastInsertedPos;
@@ -312,12 +313,12 @@ function insert_position_with_hysteresis(
     $ts = $dt->format('Y-m-d H:i:s');
     
     try {
-        $stmt = $pdo->prepare("INSERT INTO tracker_data (timestamp, latitude, longitude, source) VALUES (:t,:la,:lo,:s)");
-        $stmt->execute([':t'=>$ts, ':la'=>$lat, ':lo'=>$lng, ':s'=>$source]);
-        
+        $stmt = $pdo->prepare("INSERT INTO tracker_data (timestamp, latitude, longitude, source, raw_wifi_macs) VALUES (:t,:la,:lo,:s,:macs)");
+        $stmt->execute([':t'=>$ts, ':la'=>$lat, ':lo'=>$lng, ':s'=>$source, ':macs'=>$rawMacs]);
+
         $lastInsertedPos = ['lat' => $lat, 'lng' => $lng, 'source' => $source];
-        
-        debug_log("    INSERT SUCCESS: $source @ ($lat, $lng)");
+
+        debug_log("    INSERT SUCCESS: $source @ ($lat, $lng)" . ($rawMacs ? " [MACs: $rawMacs]" : ""));
         return ['inserted' => true, 'reason' => 'ok', 'distance' => $dist !== null ? round($dist, 1) : null];
     } catch (Throwable $e) {
         $errorMsg = $e->getMessage();
@@ -1518,7 +1519,8 @@ try {
         
         if ($positiveCache !== null) {
             debug_log("  -> USING CACHE: MAC=".$positiveCache['mac']);
-            $result = insert_position_with_hysteresis($pdo, $iso, $positiveCache['lat'], $positiveCache['lng'], 'wifi-cache', $HYSTERESIS_METERS, $lastInsertedPos);
+            $allMacs = implode(',', array_map(fn($ap) => $ap['mac'], $wifiForTs));
+            $result = insert_position_with_hysteresis($pdo, $iso, $positiveCache['lat'], $positiveCache['lng'], 'wifi-cache', $HYSTERESIS_METERS, $lastInsertedPos, $allMacs);
             if ($result['inserted']) {
                 $inserted++; $cacheHits++;
                 $checkPerimetersAfterInsert($positiveCache['lat'], $positiveCache['lng'], $iso);
@@ -1545,7 +1547,8 @@ try {
         $geo = google_geolocate($GKEY, $unknownAps, $WIFI_MIN_APS, $iso, $MAX_APS, $RSSI_FLOOR);
         if ($geo) {
             [$lat,$lng,$acc] = $geo;
-            $result = insert_position_with_hysteresis($pdo, $iso, $lat, $lng, 'wifi-google', $HYSTERESIS_METERS, $lastInsertedPos);
+            $allMacs = implode(',', array_map(fn($ap) => $ap['mac'], $wifiForTs));
+            $result = insert_position_with_hysteresis($pdo, $iso, $lat, $lng, 'wifi-google', $HYSTERESIS_METERS, $lastInsertedPos, $allMacs);
             if ($result['inserted']) {
                 $inserted++;
                 $checkPerimetersAfterInsert($lat, $lng, $iso);
