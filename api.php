@@ -1084,10 +1084,14 @@ if ($action === 'update_position' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         $stmt->execute([$newLat, $newLng, $id]);
 
         // If this was a WiFi position, also update the mac_locations cache
-        $macAddress = $position['raw_wifi_macs'];
-        if ($macAddress && strpos($position['source'], 'wifi') !== false) {
-            $stmt = $pdo->prepare('UPDATE mac_locations SET lat = ?, lng = ?, updated_at = datetime(\'now\') WHERE mac = ?');
-            $stmt->execute([$newLat, $newLng, $macAddress]);
+        $rawMacs = $position['raw_wifi_macs'];
+        if ($rawMacs && strpos($position['source'], 'wifi') !== false) {
+            // Update all MACs from this position
+            $macs = array_filter(array_map('trim', explode(',', $rawMacs)));
+            foreach ($macs as $mac) {
+                $stmt = $pdo->prepare('UPDATE mac_locations SET latitude = ?, longitude = ?, last_queried = datetime(\'now\') WHERE mac_address = ?');
+                $stmt->execute([$newLat, $newLng, $mac]);
+            }
         }
 
         respond([
