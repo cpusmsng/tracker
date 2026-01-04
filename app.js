@@ -1613,7 +1613,7 @@ function renderTable(rows) {
     { label: 'Zdroj', sortable: true },
     { label: 'Lat', sortable: true },
     { label: 'Lng', sortable: true },
-    { label: '', sortable: false }
+    { label: '✎', sortable: false }
   ];
 
   const thHtml = headers.map((h, idx) =>
@@ -1646,6 +1646,9 @@ function renderTable(rows) {
       });
       toDisplay = 'teraz';
     }
+
+    // Debug: log row data to verify id exists
+    console.log('Row data:', { i: r.i, id: r.id, source: r.source });
 
     const editBtn = r.id ? `
       <button class="edit-position-btn" data-id="${r.id}" title="Upraviť záznam">
