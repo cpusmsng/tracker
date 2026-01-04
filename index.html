@@ -8,7 +8,7 @@
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%230ea5e9' stroke-width='2'%3E%3Cpath d='M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z'/%3E%3Ccircle cx='12' cy='10' r='3'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css">
-  <link rel="stylesheet" href="style.css?v=20260104f">
+  <link rel="stylesheet" href="style.css?v=20260104g">
 </head>
 <body>
   <div class="container">
@@ -629,13 +629,20 @@
               </div>
 
               <!-- Bulk actions -->
-              <div class="mac-bulk-actions" style="display:flex;gap:10px;flex-wrap:wrap;">
+              <div class="mac-bulk-actions" style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
                 <button type="button" id="macRetryGoogle" class="btn-secondary btn-small" disabled>
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
                     <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
                     <path d="M3 3v5h5"/>
                   </svg>
                   Skúsiť znova Google API (vybrané)
+                </button>
+                <button type="button" id="macDeleteCoords" class="btn-reset btn-small" disabled>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                    <polyline points="3 6 5 6 21 6"/>
+                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                  </svg>
+                  Zmazať súradnice (vybrané)
                 </button>
                 <span id="macSelectedCount" style="align-self:center;color:var(--muted-text);font-size:0.9em;">0 vybraných</span>
               </div>
@@ -1071,13 +1078,55 @@
                 </tbody>
               </table>
             </div>
-            <div class="mac-history-actions" style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
+            <div class="mac-history-actions" style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
               <button type="button" id="refetchSelectedDays" class="btn-secondary btn-small" disabled>
                 Refetch vybraných dní
               </button>
               <button type="button" id="refetchAllMacDays" class="btn-secondary btn-small">
                 Refetch všetkých dní s touto MAC
               </button>
+              <button type="button" id="testGoogleApiBtn" class="btn-secondary btn-small">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                  <circle cx="12" cy="12" r="10"/>
+                  <line x1="2" y1="12" x2="22" y2="12"/>
+                  <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+                </svg>
+                Skúsiť Google API
+              </button>
+            </div>
+
+            <!-- Google API comparison result -->
+            <div id="googleComparisonResult" class="google-comparison-result" style="display:none;margin-top:15px;padding:15px;background:var(--muted-bg);border-radius:8px;border:1px solid var(--border);">
+              <h4 style="margin:0 0 10px 0;">Porovnanie súradníc</h4>
+              <div class="comparison-table" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:15px;">
+                <div>
+                  <strong style="font-size:12px;color:var(--muted-text);">Zdroj</strong>
+                </div>
+                <div>
+                  <strong style="font-size:12px;color:var(--muted-text);">Latitude</strong>
+                </div>
+                <div>
+                  <strong style="font-size:12px;color:var(--muted-text);">Longitude</strong>
+                </div>
+                <div>Cache (aktuálna)</div>
+                <div id="compCacheLat" style="font-family:monospace;">-</div>
+                <div id="compCacheLng" style="font-family:monospace;">-</div>
+                <div>Google API</div>
+                <div id="compGoogleLat" style="font-family:monospace;">-</div>
+                <div id="compGoogleLng" style="font-family:monospace;">-</div>
+                <div>Rozdiel</div>
+                <div id="compDiffLat" style="font-family:monospace;font-size:12px;">-</div>
+                <div id="compDiffLng" style="font-family:monospace;font-size:12px;">-</div>
+              </div>
+              <div id="compDistance" style="margin-bottom:15px;font-size:14px;"></div>
+              <div class="comparison-actions" style="display:flex;gap:8px;">
+                <button type="button" id="acceptGoogleCoords" class="btn-primary btn-small">
+                  Akceptovať Google súradnice
+                </button>
+                <button type="button" id="rejectGoogleCoords" class="btn-secondary btn-small">
+                  Zamietnuť
+                </button>
+              </div>
             </div>
           </div>
 
@@ -1109,6 +1158,6 @@
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
-  <script src="app.js?v=20260104f" defer></script>
+  <script src="app.js?v=20260104g" defer></script>
 </body>
 </html>

@@ -1456,6 +1456,166 @@ if ($action === 'retry_google_macs' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
+// Test Google API and compare with cache coordinates
+if ($action === 'test_google_api' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    try {
+        $j = json_body();
+        $positionId = isset($j['position_id']) ? (int)$j['position_id'] : null;
+
+        if (!$positionId) {
+            respond(['ok' => false, 'error' => 'Position ID is required'], 400);
+        }
+
+        $googleApiKey = getenv('GOOGLE_API_KEY') ?: '';
+        if (!$googleApiKey) {
+            respond(['ok' => false, 'error' => 'Google API key not configured'], 500);
+        }
+
+        $pdo = db();
+
+        // Get position data
+        $stmt = $pdo->prepare("SELECT * FROM tracker_data WHERE id = ?");
+        $stmt->execute([$positionId]);
+        $position = $stmt->fetch();
+
+        if (!$position) {
+            respond(['ok' => false, 'error' => 'Position not found'], 404);
+        }
+
+        if (empty($position['raw_wifi_macs'])) {
+            respond(['ok' => false, 'error' => 'No WiFi MAC data for this position'], 400);
+        }
+
+        // Current (cache) coordinates
+        $cacheLat = (float)$position['latitude'];
+        $cacheLng = (float)$position['longitude'];
+
+        // Parse all MACs from the position
+        $allMacs = array_filter(array_map('trim', explode(',', $position['raw_wifi_macs'])));
+
+        // Build WiFi access points array for Google API
+        $wifiAccessPoints = [];
+        foreach ($allMacs as $mac) {
+            $mac = strtoupper(preg_replace('/[^0-9A-F]/i', '', $mac));
+            if (strlen($mac) !== 12) continue;
+            $formattedMac = implode(':', str_split($mac, 2));
+            $wifiAccessPoints[] = [
+                'macAddress' => $formattedMac,
+                'signalStrength' => -70
+            ];
+        }
+
+        if (count($wifiAccessPoints) < 1) {
+            respond(['ok' => false, 'error' => 'No valid MAC addresses to query'], 400);
+        }
+
+        // Call Google Geolocation API
+        $url = 'https://www.googleapis.com/geolocation/v1/geolocate?key=' . rawurlencode($googleApiKey);
+        $payload = json_encode([
+            'considerIp' => false,
+            'wifiAccessPoints' => array_slice($wifiAccessPoints, 0, 6)
+        ], JSON_UNESCAPED_SLASHES);
+
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_POST => true,
+            CURLOPT_POSTFIELDS => $payload,
+            CURLOPT_HTTPHEADER => ['Content-Type: application/json'],
+            CURLOPT_TIMEOUT => 15,
+            CURLOPT_CONNECTTIMEOUT => 8,
+        ]);
+        $response = curl_exec($ch);
+        $httpCode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+
+        if ($response === false || $httpCode !== 200) {
+            $error = $response ? json_decode($response, true) : null;
+            $errorMsg = isset($error['error']['message']) ? $error['error']['message'] : 'HTTP ' . $httpCode;
+            respond(['ok' => false, 'error' => 'Google API error: ' . $errorMsg], 500);
+        }
+
+        $data = json_decode($response, true);
+        if (!isset($data['location']['lat']) || !isset($data['location']['lng'])) {
+            respond(['ok' => false, 'error' => 'Google API returned no location'], 500);
+        }
+
+        $googleLat = (float)$data['location']['lat'];
+        $googleLng = (float)$data['location']['lng'];
+        $accuracy = isset($data['accuracy']) ? (float)$data['accuracy'] : null;
+
+        // Calculate distance between cache and Google coordinates
+        $distance = haversineDistance($cacheLat, $cacheLng, $googleLat, $googleLng);
+
+        respond([
+            'ok' => true,
+            'cache' => [
+                'lat' => $cacheLat,
+                'lng' => $cacheLng
+            ],
+            'google' => [
+                'lat' => $googleLat,
+                'lng' => $googleLng,
+                'accuracy' => $accuracy
+            ],
+            'distance_meters' => round($distance, 1),
+            'macs_used' => count($wifiAccessPoints)
+        ]);
+    } catch (Throwable $e) {
+        respond(['ok' => false, 'error' => 'Failed to test Google API: ' . $e->getMessage()], 500);
+    }
+}
+
+// Helper function for distance calculation
+if (!function_exists('haversineDistance')) {
+    function haversineDistance($lat1, $lng1, $lat2, $lng2) {
+        $earthRadius = 6371000; // meters
+        $lat1Rad = deg2rad($lat1);
+        $lat2Rad = deg2rad($lat2);
+        $deltaLat = deg2rad($lat2 - $lat1);
+        $deltaLng = deg2rad($lng2 - $lng1);
+
+        $a = sin($deltaLat / 2) * sin($deltaLat / 2) +
+             cos($lat1Rad) * cos($lat2Rad) *
+             sin($deltaLng / 2) * sin($deltaLng / 2);
+        $c = 2 * atan2(sqrt($a), sqrt(1 - $a));
+
+        return $earthRadius * $c;
+    }
+}
+
+// Delete MAC coordinates (set to NULL)
+if ($action === 'delete_mac_coordinates' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    try {
+        $j = json_body();
+        $macs = isset($j['macs']) ? (array)$j['macs'] : [];
+
+        if (empty($macs)) {
+            respond(['ok' => false, 'error' => 'No MAC addresses provided'], 400);
+        }
+
+        $pdo = db();
+        $deleted = 0;
+
+        foreach ($macs as $mac) {
+            $mac = trim((string)$mac);
+            if (!$mac) continue;
+
+            $stmt = $pdo->prepare("UPDATE mac_locations SET latitude = NULL, longitude = NULL, last_queried = datetime('now') WHERE mac_address = ?");
+            $stmt->execute([$mac]);
+            $deleted += $stmt->rowCount();
+        }
+
+        respond([
+            'ok' => true,
+            'message' => "Súradnice boli zmazané pre $deleted MAC adries",
+            'deleted' => $deleted
+        ]);
+    } catch (Throwable $e) {
+        respond(['ok' => false, 'error' => 'Failed to delete MAC coordinates: ' . $e->getMessage()], 500);
+    }
+}
+
 // ========== LOG VIEWER ==========
 
 if ($action === 'get_logs') {

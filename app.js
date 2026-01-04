@@ -1838,6 +1838,14 @@ let currentEditPosition = null;
 function openPositionEditOverlay() {
   $('#positionEditOverlay').classList.remove('hidden');
 
+  // Reset Google comparison UI
+  $('#googleComparisonResult').style.display = 'none';
+  pendingGoogleCoords = null;
+  if (window.googleComparisonMarker && positionEditMap) {
+    positionEditMap.removeLayer(window.googleComparisonMarker);
+    window.googleComparisonMarker = null;
+  }
+
   // Initialize map if not already done
   if (!positionEditMap) {
     setTimeout(() => {
@@ -2209,6 +2217,113 @@ async function invalidateMacCache() {
   }
 }
 
+// Store pending Google coordinates for accept/reject
+let pendingGoogleCoords = null;
+
+async function testGoogleApiForPosition() {
+  if (!currentEditPosition || !currentEditPosition.id) {
+    alert('Nie je vybraný žiadny záznam');
+    return;
+  }
+
+  const btn = $('#testGoogleApiBtn');
+  const originalText = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = `<svg class="spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><circle cx="12" cy="12" r="10"/></svg> Volám API...`;
+
+  try {
+    const result = await apiPost('test_google_api', { position_id: currentEditPosition.id });
+
+    if (!result.ok) {
+      alert('Chyba: ' + (result.error || 'Nepodarilo sa zavolať Google API'));
+      return;
+    }
+
+    // Store Google coordinates for accept action
+    pendingGoogleCoords = {
+      lat: result.google.lat,
+      lng: result.google.lng
+    };
+
+    // Display comparison result
+    const compDiv = $('#googleComparisonResult');
+    compDiv.style.display = 'block';
+
+    $('#compCacheLat').textContent = result.cache.lat.toFixed(6);
+    $('#compCacheLng').textContent = result.cache.lng.toFixed(6);
+    $('#compGoogleLat').textContent = result.google.lat.toFixed(6);
+    $('#compGoogleLng').textContent = result.google.lng.toFixed(6);
+
+    const diffLat = result.google.lat - result.cache.lat;
+    const diffLng = result.google.lng - result.cache.lng;
+    $('#compDiffLat').textContent = (diffLat >= 0 ? '+' : '') + diffLat.toFixed(6);
+    $('#compDiffLng').textContent = (diffLng >= 0 ? '+' : '') + diffLng.toFixed(6);
+
+    let distanceText = `Vzdialenosť: <strong>${result.distance_meters} m</strong>`;
+    if (result.google.accuracy) {
+      distanceText += ` (presnosť Google: ${result.google.accuracy} m)`;
+    }
+    distanceText += ` | Použitých ${result.macs_used} MAC adries`;
+    $('#compDistance').innerHTML = distanceText;
+
+    // Also show on map
+    if (positionEditMap) {
+      // Add green marker for Google position
+      if (window.googleComparisonMarker) {
+        positionEditMap.removeLayer(window.googleComparisonMarker);
+      }
+      window.googleComparisonMarker = L.marker([result.google.lat, result.google.lng], {
+        icon: L.divIcon({
+          className: 'custom-marker',
+          html: '<div style="background: #22c55e; width: 14px; height: 14px; border-radius: 50%; border: 2px solid white; box-shadow: 0 2px 4px rgba(0,0,0,0.3);"></div>',
+          iconSize: [18, 18],
+          iconAnchor: [9, 9]
+        })
+      }).addTo(positionEditMap);
+      window.googleComparisonMarker.bindPopup('Google API').openPopup();
+    }
+
+  } catch (err) {
+    console.error('Test Google API error:', err);
+    alert('Chyba pri volaní Google API: ' + err.message);
+  } finally {
+    btn.innerHTML = originalText;
+    btn.disabled = false;
+  }
+}
+
+async function acceptGoogleCoordinates() {
+  if (!pendingGoogleCoords || !currentEditPosition) {
+    alert('Nie sú dostupné Google súradnice');
+    return;
+  }
+
+  // Update position coordinates
+  try {
+    const result = await apiPost('update_position', {
+      id: currentEditPosition.id,
+      lat: pendingGoogleCoords.lat,
+      lng: pendingGoogleCoords.lng
+    });
+
+    if (result.ok) {
+      // Also update mac_locations for all MACs in this position
+      if (currentEditPosition.all_macs) {
+        const macs = currentEditPosition.all_macs.split(',').map(m => m.trim());
+        await apiPost('retry_google_macs', { macs });
+      }
+
+      alert('Súradnice boli aktualizované na Google hodnoty');
+      closePositionEditOverlay();
+      loadData(fmt(currentDate));
+    } else {
+      alert('Chyba: ' + (result.error || 'Nepodarilo sa aktualizovať súradnice'));
+    }
+  } catch (err) {
+    alert('Chyba: ' + err.message);
+  }
+}
+
 // --------- Refetch day ---------
 async function refetchDay() {
   const dateStr = fmt(currentDate);
@@ -2538,6 +2653,26 @@ function addUIHandlers() {
     });
   }
 
+  // Test Google API button
+  const testGoogleApiBtn = $('#testGoogleApiBtn');
+  if (testGoogleApiBtn) {
+    testGoogleApiBtn.addEventListener('click', testGoogleApiForPosition);
+  }
+
+  // Accept/Reject Google coordinates
+  const acceptGoogleBtn = $('#acceptGoogleCoords');
+  if (acceptGoogleBtn) {
+    acceptGoogleBtn.addEventListener('click', acceptGoogleCoordinates);
+  }
+
+  const rejectGoogleBtn = $('#rejectGoogleCoords');
+  if (rejectGoogleBtn) {
+    rejectGoogleBtn.addEventListener('click', () => {
+      $('#googleComparisonResult').style.display = 'none';
+      pendingGoogleCoords = null;
+    });
+  }
+
   const positionEditOverlay = $('#positionEditOverlay');
   if (positionEditOverlay) {
     positionEditOverlay.addEventListener('click', (e) => {
@@ -2623,6 +2758,12 @@ function initMacManagement() {
   const retryBtn = $('#macRetryGoogle');
   if (retryBtn) {
     retryBtn.addEventListener('click', retryGoogleForSelectedMacs);
+  }
+
+  // Delete coordinates button
+  const deleteBtn = $('#macDeleteCoords');
+  if (deleteBtn) {
+    deleteBtn.addEventListener('click', deleteSelectedMacCoordinates);
   }
 
   // Sortable headers
@@ -2814,6 +2955,7 @@ function updateMacSelectedCount() {
   const count = document.querySelectorAll('#macManagementBody .mac-select-cb:checked').length;
   $('#macSelectedCount').textContent = `${count} vybraných`;
   $('#macRetryGoogle').disabled = count === 0;
+  $('#macDeleteCoords').disabled = count === 0;
 }
 
 async function retryGoogleForSelectedMacs() {
@@ -2861,6 +3003,47 @@ async function retryGoogleForSelectedMacs() {
   } catch (err) {
     console.error('Retry Google API error:', err);
     alert('Chyba pri volaní Google API: ' + err.message);
+  } finally {
+    btn.innerHTML = originalText;
+    btn.disabled = false;
+    updateMacSelectionCount();
+  }
+}
+
+async function deleteSelectedMacCoordinates() {
+  const checkboxes = document.querySelectorAll('#macManagementBody .mac-select-cb:checked');
+  const macs = [...checkboxes].map(cb => cb.dataset.mac);
+
+  if (macs.length === 0) {
+    alert('Vyberte aspoň jednu MAC adresu');
+    return;
+  }
+
+  if (!confirm(`Naozaj chcete zmazať súradnice pre ${macs.length} MAC adries?\n\nToto nastaví lat/lng na NULL v mac_locations.`)) {
+    return;
+  }
+
+  const btn = $('#macDeleteCoords');
+  const originalText = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = `<svg class="spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><circle cx="12" cy="12" r="10"/></svg> Mažem...`;
+
+  try {
+    const response = await apiPost('delete_mac_coordinates', { macs });
+
+    if (!response.ok) {
+      alert('Chyba: ' + (response.error || 'Neznáma chyba'));
+      return;
+    }
+
+    alert(response.message || `Súradnice zmazané pre ${response.deleted} MAC adries`);
+
+    // Reload the MAC list
+    await loadMacLocations();
+
+  } catch (err) {
+    console.error('Delete MAC coordinates error:', err);
+    alert('Chyba pri mazaní súradníc: ' + err.message);
   } finally {
     btn.innerHTML = originalText;
     btn.disabled = false;
