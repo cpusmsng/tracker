@@ -1143,7 +1143,7 @@ async function openSettingsOverlay() {
   console.log('Overlay should now be visible');
 
   // Inicializuj accordion sekcie
-  initSettingsAccordion();
+  initSettingsTabs();
 
   // Načítaj aktuálne nastavenia
   try {
@@ -1153,26 +1153,36 @@ async function openSettingsOverlay() {
   }
 }
 
-function initSettingsAccordion() {
+function initSettingsTabs() {
+  const tabs = document.querySelectorAll('.settings-tab');
   const sections = document.querySelectorAll('.settings-section');
 
-  sections.forEach(section => {
-    const header = section.querySelector('.settings-section-header');
-    if (!header) return;
+  tabs.forEach(tab => {
+    tab.addEventListener('click', () => {
+      const targetSection = tab.dataset.tab;
 
-    // Odstráň staré listenery (ak existujú)
-    const newHeader = header.cloneNode(true);
-    header.parentNode.replaceChild(newHeader, header);
+      // Deaktivuj všetky taby
+      tabs.forEach(t => t.classList.remove('active'));
+      // Aktivuj kliknutý tab
+      tab.classList.add('active');
 
-    newHeader.addEventListener('click', () => {
-      // Toggle aktuálnu sekciu
-      section.classList.toggle('open');
+      // Skry všetky sekcie
+      sections.forEach(s => s.classList.remove('open'));
+      // Zobraz cieľovú sekciu
+      const target = document.querySelector(`.settings-section[data-section="${targetSection}"]`);
+      if (target) {
+        target.classList.add('open');
+      }
     });
   });
 
   // Otvor prvú sekciu ako default
   if (sections.length > 0 && !document.querySelector('.settings-section.open')) {
     sections[0].classList.add('open');
+  }
+  // Aktivuj prvý tab ako default
+  if (tabs.length > 0 && !document.querySelector('.settings-tab.active')) {
+    tabs[0].classList.add('active');
   }
 }
 
@@ -1900,21 +1910,16 @@ async function openPositionEditModal(positionId) {
     // MAC address display - separate primary_mac and all_macs
     const primaryMac = currentEditPosition.primary_mac;
     const allMacs = currentEditPosition.all_macs;
+    // For backward compatibility: use first MAC from all_macs if primary_mac not set
+    const effectiveMac = primaryMac || (allMacs ? allMacs.split(',')[0].trim() : null);
+    const isWifiSource = currentEditPosition.source && currentEditPosition.source.includes('wifi');
 
     // Show primary MAC (the one that determined the position)
     if (primaryMac) {
       $('#editPrimaryMacRow').style.display = 'flex';
       $('#editPrimaryMac').textContent = primaryMac;
-      $('#invalidateMac').style.display = 'inline-flex';
-      $('#macHistorySection').style.display = 'block';
-      $('#macHistoryMacAddress').textContent = primaryMac;
-      // Load MAC history for primary MAC
-      loadMacHistory(primaryMac);
     } else {
       $('#editPrimaryMacRow').style.display = 'none';
-      $('#invalidateMac').style.display = 'none';
-      $('#macHistorySection').style.display = 'none';
-      $('#macHistoryBody').innerHTML = '';
     }
 
     // Show all MACs (comma-separated)
@@ -1923,6 +1928,18 @@ async function openPositionEditModal(positionId) {
       $('#editAllMacs').textContent = allMacs;
     } else {
       $('#editAllMacsRow').style.display = 'none';
+    }
+
+    // Show invalidate button and history for wifi sources with any MAC info
+    if (isWifiSource && effectiveMac) {
+      $('#invalidateMac').style.display = 'inline-flex';
+      $('#macHistorySection').style.display = 'block';
+      $('#macHistoryMacAddress').textContent = effectiveMac;
+      loadMacHistory(effectiveMac);
+    } else {
+      $('#invalidateMac').style.display = 'none';
+      $('#macHistorySection').style.display = 'none';
+      $('#macHistoryBody').innerHTML = '';
     }
 
     $('#editCurrentLat').value = currentEditPosition.lat;
@@ -2557,7 +2574,32 @@ function initMacManagement() {
   // Filter apply button
   const filterBtn = $('#macFilterApply');
   if (filterBtn) {
-    filterBtn.addEventListener('click', loadMacLocations);
+    filterBtn.addEventListener('click', () => loadMacLocations());
+  }
+
+  // Quick filter: Last 7 days
+  const last7DaysBtn = $('#macFilterLast7Days');
+  if (last7DaysBtn) {
+    last7DaysBtn.addEventListener('click', () => {
+      const today = new Date();
+      const weekAgo = new Date(today);
+      weekAgo.setDate(weekAgo.getDate() - 7);
+      $('#macFilterDateFrom').value = weekAgo.toISOString().split('T')[0];
+      $('#macFilterDateTo').value = today.toISOString().split('T')[0];
+      loadMacLocations();
+    });
+  }
+
+  // Clear filter
+  const clearFilterBtn = $('#macFilterClear');
+  if (clearFilterBtn) {
+    clearFilterBtn.addEventListener('click', () => {
+      $('#macFilterSearch').value = '';
+      $('#macFilterType').value = 'no-coords';
+      $('#macFilterDateFrom').value = '';
+      $('#macFilterDateTo').value = '';
+      loadMacLocations();
+    });
   }
 
   // Select all checkbox
@@ -2591,20 +2633,21 @@ function initMacManagement() {
     });
   });
 
-  // Load initial data when section is opened
+  // Load initial data when section is opened (using MutationObserver for reliability)
   const macSection = document.querySelector('[data-section="mac-management"]');
   if (macSection) {
-    const header = macSection.querySelector('.settings-section-header');
-    if (header) {
-      header.addEventListener('click', () => {
-        setTimeout(() => {
-          if (macSection.classList.contains('open') && macManagementData.length === 0) {
+    const observer = new MutationObserver((mutations) => {
+      mutations.forEach((mutation) => {
+        if (mutation.attributeName === 'class' && macSection.classList.contains('open')) {
+          if (macManagementData.length === 0) {
             loadMacLocations();
-            initMacManagementMap();
           }
-        }, 100);
+          // Init map when visible
+          setTimeout(() => initMacManagementMap(), 200);
+        }
       });
-    }
+    });
+    observer.observe(macSection, { attributes: true });
   }
 }
 

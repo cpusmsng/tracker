@@ -2472,67 +2472,72 @@ body.authenticated .container{
   text-align:center;
 }
 
-/* ========== SETTINGS ACCORDION SECTIONS ========== */
+/* ========== SETTINGS TABS NAVIGATION ========== */
+.settings-tabs{
+  display:flex;
+  flex-wrap:wrap;
+  gap:4px;
+  margin-bottom:16px;
+  border-bottom:2px solid var(--border);
+  padding-bottom:0;
+}
+
+.settings-tab{
+  padding:10px 16px;
+  border:none;
+  background:transparent;
+  cursor:pointer;
+  font-size:14px;
+  font-weight:500;
+  color:var(--muted-text);
+  border-bottom:2px solid transparent;
+  margin-bottom:-2px;
+  transition:color 0.2s, border-color 0.2s, background 0.2s;
+  border-radius:6px 6px 0 0;
+  white-space:nowrap;
+}
+
+.settings-tab:hover{
+  color:var(--text);
+  background:var(--muted-bg);
+}
+
+.settings-tab.active{
+  color:var(--primary);
+  border-bottom-color:var(--primary);
+  background:transparent;
+  font-weight:600;
+}
+
+/* ========== SETTINGS SECTIONS (Tab Content) ========== */
 .settings-section{
+  display:none;
   border:1px solid var(--border);
   border-radius:8px;
-  margin-bottom:12px;
   overflow:hidden;
   background:var(--surface);
 }
 
-.settings-section-header{
-  display:flex;
-  align-items:center;
-  gap:10px;
-  padding:14px 16px;
-  cursor:pointer;
-  background:var(--muted-bg);
-  border-bottom:1px solid transparent;
-  transition:background 0.2s, border-color 0.2s;
-  user-select:none;
-}
-
-.settings-section-header:hover{
-  background:var(--border);
-}
-
-.settings-section.open .settings-section-header{
-  border-bottom-color:var(--border);
-}
-
-.settings-section-header .section-icon{
-  width:20px;
-  height:20px;
-  flex-shrink:0;
-  color:var(--primary);
-}
-
-.settings-section-header span{
-  flex:1;
-  font-weight:600;
-  font-size:15px;
-  color:var(--text);
-}
-
-.settings-section-header .section-chevron{
-  width:18px;
-  height:18px;
-  color:var(--muted-text);
-  transition:transform 0.2s;
-}
-
-.settings-section.open .settings-section-header .section-chevron{
-  transform:rotate(180deg);
+.settings-section.open{
+  display:block;
 }
 
 .settings-section-content{
-  display:none;
   padding:16px;
 }
 
-.settings-section.open .settings-section-content{
-  display:block;
+/* Responsive tabs - stack on mobile */
+@media (max-width:600px){
+  .settings-tabs{
+    gap:2px;
+  }
+  .settings-tab{
+    padding:8px 10px;
+    font-size:12px;
+    flex:1;
+    text-align:center;
+    min-width:auto;
+  }
 }
 
 /* Compact setting groups inside sections */

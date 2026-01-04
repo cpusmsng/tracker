@@ -8,7 +8,7 @@
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%230ea5e9' stroke-width='2'%3E%3Cpath d='M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z'/%3E%3Ccircle cx='12' cy='10' r='3'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css">
-  <link rel="stylesheet" href="style.css?v=20260104d">
+  <link rel="stylesheet" href="style.css?v=20260104e">
 </head>
 <body>
   <div class="container">
@@ -252,18 +252,18 @@
       <div class="overlay-body">
         <form id="settingsForm" novalidate>
 
+          <!-- Settings Tabs Navigation -->
+          <div class="settings-tabs">
+            <button type="button" class="settings-tab active" data-tab="appearance">Vzhľad</button>
+            <button type="button" class="settings-tab" data-tab="data-collection">Zber dát</button>
+            <button type="button" class="settings-tab" data-tab="position-filtering">Filtrovanie</button>
+            <button type="button" class="settings-tab" data-tab="geolocation">Geolokácia</button>
+            <button type="button" class="settings-tab" data-tab="system">Systém</button>
+            <button type="button" class="settings-tab" data-tab="mac-management">MAC adresy</button>
+          </div>
+
           <!-- ===== SEKCIA: VZHĽAD ===== -->
-          <div class="settings-section" data-section="appearance">
-            <div class="settings-section-header" data-toggle="appearance">
-              <svg class="section-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <circle cx="12" cy="12" r="5"/>
-                <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
-              </svg>
-              <span>Vzhľad</span>
-              <svg class="section-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <polyline points="6 9 12 15 18 9"/>
-              </svg>
-            </div>
+          <div class="settings-section open" data-section="appearance">
             <div class="settings-section-content">
               <div class="setting-group">
                 <div class="setting-header">
@@ -316,17 +316,6 @@
 
           <!-- ===== SEKCIA: ZBER DÁT ===== -->
           <div class="settings-section" data-section="data-collection">
-            <div class="settings-section-header" data-toggle="data-collection">
-              <svg class="section-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                <polyline points="7 10 12 15 17 10"/>
-                <line x1="12" y1="15" x2="12" y2="3"/>
-              </svg>
-              <span>Zber dát</span>
-              <svg class="section-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <polyline points="6 9 12 15 18 9"/>
-              </svg>
-            </div>
             <div class="settings-section-content">
               <!-- Frekvencia bežného fetchu -->
               <div class="setting-group">
@@ -389,15 +378,6 @@
 
           <!-- ===== SEKCIA: FILTROVANIE POZÍCIÍ ===== -->
           <div class="settings-section" data-section="position-filtering">
-            <div class="settings-section-header" data-toggle="position-filtering">
-              <svg class="section-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>
-              </svg>
-              <span>Filtrovanie pozícií</span>
-              <svg class="section-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <polyline points="6 9 12 15 18 9"/>
-              </svg>
-            </div>
             <div class="settings-section-content">
               <!-- Hysteréza vzdialenosti -->
               <div class="setting-group">
@@ -479,16 +459,6 @@
 
           <!-- ===== SEKCIA: GEOLOKÁCIA ===== -->
           <div class="settings-section" data-section="geolocation">
-            <div class="settings-section-header" data-toggle="geolocation">
-              <svg class="section-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/>
-                <circle cx="12" cy="10" r="3"/>
-              </svg>
-              <span>Geolokácia</span>
-              <svg class="section-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <polyline points="6 9 12 15 18 9"/>
-              </svg>
-            </div>
             <div class="settings-section-content">
               <!-- Cache pre MAC adresy -->
               <div class="setting-group">
@@ -536,16 +506,6 @@
 
           <!-- ===== SEKCIA: SYSTÉM ===== -->
           <div class="settings-section" data-section="system">
-            <div class="settings-section-header" data-toggle="system">
-              <svg class="section-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <circle cx="12" cy="12" r="3"/>
-                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
-              </svg>
-              <span>Systém</span>
-              <svg class="section-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <polyline points="6 9 12 15 18 9"/>
-              </svg>
-            </div>
             <div class="settings-section-content">
               <!-- Úroveň logovania -->
               <div class="setting-group">
@@ -594,19 +554,12 @@
 
           <!-- MAC Address Management -->
           <div class="settings-section" data-section="mac-management">
-            <div class="settings-section-header" data-toggle="mac-management">
-              <svg class="section-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M5 12.55a11 11 0 0 1 14.08 0"/>
-                <path d="M1.42 9a16 16 0 0 1 21.16 0"/>
-                <path d="M8.53 16.11a6 6 0 0 1 6.95 0"/>
-                <line x1="12" y1="20" x2="12.01" y2="20"/>
-              </svg>
-              <span>Správa MAC adries</span>
-              <svg class="section-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <polyline points="6 9 12 15 18 9"/>
-              </svg>
-            </div>
             <div class="settings-section-content">
+              <!-- Quick filter buttons -->
+              <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap;">
+                <button type="button" id="macFilterLast7Days" class="btn-secondary btn-small">Posledných 7 dní</button>
+                <button type="button" id="macFilterClear" class="btn-secondary btn-small">Vyčistiť filter</button>
+              </div>
               <!-- Filter controls -->
               <div class="mac-filter-controls" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:15px;">
                 <div class="form-field" style="flex:1;min-width:150px;">
@@ -1156,6 +1109,6 @@
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
-  <script src="app.js?v=20260104d" defer></script>
+  <script src="app.js?v=20260104e" defer></script>
 </body>
 </html>

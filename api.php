@@ -1121,7 +1121,7 @@ if ($action === 'invalidate_mac' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-// Get MAC address history (last 20 records where this MAC was the primary/determining MAC)
+// Get MAC address history (last 20 records where this MAC was used)
 if ($action === 'get_mac_history') {
     try {
         $mac = qparam('mac');
@@ -1130,15 +1130,15 @@ if ($action === 'get_mac_history') {
         }
 
         $pdo = db();
-        // Search by primary_mac (exact match) - this is the MAC that determined the position
+        // Search by primary_mac (exact) OR raw_wifi_macs (LIKE) for backward compatibility
         $stmt = $pdo->prepare('
-            SELECT id, timestamp, latitude, longitude, source, primary_mac
+            SELECT id, timestamp, latitude, longitude, source, primary_mac, raw_wifi_macs
             FROM tracker_data
-            WHERE primary_mac = ?
+            WHERE primary_mac = ? OR raw_wifi_macs LIKE ?
             ORDER BY timestamp DESC
             LIMIT 20
         ');
-        $stmt->execute([$mac]);
+        $stmt->execute([$mac, '%' . $mac . '%']);
         $records = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
         $history = [];
