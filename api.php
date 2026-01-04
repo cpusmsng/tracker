@@ -99,6 +99,22 @@ function utc_to_local(string $utcTimestamp): string {
     return $dt->format(DateTime::ATOM);
 }
 
+// Helper function for distance calculation (Haversine formula)
+function haversineDistance(float $lat1, float $lng1, float $lat2, float $lng2): float {
+    $earthRadius = 6371000; // meters
+    $lat1Rad = deg2rad($lat1);
+    $lat2Rad = deg2rad($lat2);
+    $deltaLat = deg2rad($lat2 - $lat1);
+    $deltaLng = deg2rad($lng2 - $lng1);
+
+    $a = sin($deltaLat / 2) * sin($deltaLat / 2) +
+         cos($lat1Rad) * cos($lat2Rad) *
+         sin($deltaLng / 2) * sin($deltaLng / 2);
+    $c = 2 * atan2(sqrt($a), sqrt(1 - $a));
+
+    return $earthRadius * $c;
+}
+
 // Helper function to get log file path - same logic as fetch_data.php
 function get_log_file_path(): string {
     $envPath = getenv('LOG_FILE');
@@ -1563,24 +1579,6 @@ if ($action === 'test_google_api' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         ]);
     } catch (Throwable $e) {
         respond(['ok' => false, 'error' => 'Failed to test Google API: ' . $e->getMessage()], 500);
-    }
-}
-
-// Helper function for distance calculation
-if (!function_exists('haversineDistance')) {
-    function haversineDistance($lat1, $lng1, $lat2, $lng2) {
-        $earthRadius = 6371000; // meters
-        $lat1Rad = deg2rad($lat1);
-        $lat2Rad = deg2rad($lat2);
-        $deltaLat = deg2rad($lat2 - $lat1);
-        $deltaLng = deg2rad($lng2 - $lng1);
-
-        $a = sin($deltaLat / 2) * sin($deltaLat / 2) +
-             cos($lat1Rad) * cos($lat2Rad) *
-             sin($deltaLng / 2) * sin($deltaLng / 2);
-        $c = 2 * atan2(sqrt($a), sqrt(1 - $a));
-
-        return $earthRadius * $c;
     }
 }
 
