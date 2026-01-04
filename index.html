@@ -8,7 +8,7 @@
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%230ea5e9' stroke-width='2'%3E%3Cpath d='M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z'/%3E%3Ccircle cx='12' cy='10' r='3'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css">
-  <link rel="stylesheet" href="style.css?v=20260104c">
+  <link rel="stylesheet" href="style.css?v=20260104d">
 </head>
 <body>
   <div class="container">
@@ -592,6 +592,103 @@
             </div>
           </div>
 
+          <!-- MAC Address Management -->
+          <div class="settings-section" data-section="mac-management">
+            <div class="settings-section-header" data-toggle="mac-management">
+              <svg class="section-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M5 12.55a11 11 0 0 1 14.08 0"/>
+                <path d="M1.42 9a16 16 0 0 1 21.16 0"/>
+                <path d="M8.53 16.11a6 6 0 0 1 6.95 0"/>
+                <line x1="12" y1="20" x2="12.01" y2="20"/>
+              </svg>
+              <span>Správa MAC adries</span>
+              <svg class="section-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="6 9 12 15 18 9"/>
+              </svg>
+            </div>
+            <div class="settings-section-content">
+              <!-- Filter controls -->
+              <div class="mac-filter-controls" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:15px;">
+                <div class="form-field" style="flex:1;min-width:150px;">
+                  <label for="macFilterSearch">Hľadať MAC</label>
+                  <input type="text" id="macFilterSearch" placeholder="XX:XX:XX:XX:XX:XX">
+                </div>
+                <div class="form-field" style="flex:1;min-width:120px;">
+                  <label for="macFilterType">Typ</label>
+                  <select id="macFilterType">
+                    <option value="no-coords">Bez súradníc</option>
+                    <option value="with-coords">So súradnicami</option>
+                    <option value="all">Všetky</option>
+                  </select>
+                </div>
+                <div class="form-field" style="flex:1;min-width:120px;">
+                  <label for="macFilterDateFrom">Od dátumu</label>
+                  <input type="date" id="macFilterDateFrom">
+                </div>
+                <div class="form-field" style="flex:1;min-width:120px;">
+                  <label for="macFilterDateTo">Do dátumu</label>
+                  <input type="date" id="macFilterDateTo">
+                </div>
+                <div class="form-field" style="align-self:flex-end;">
+                  <button type="button" id="macFilterApply" class="btn-secondary btn-small">Filtrovať</button>
+                </div>
+              </div>
+
+              <!-- MAC Table -->
+              <div class="mac-management-container" style="max-height:300px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;margin-bottom:15px;">
+                <table class="mac-management-table" style="width:100%;">
+                  <thead style="position:sticky;top:0;background:var(--bg-secondary);">
+                    <tr>
+                      <th style="width:30px;"><input type="checkbox" id="macSelectAll" title="Vybrať všetky"></th>
+                      <th class="sortable" data-sort="mac">MAC adresa</th>
+                      <th class="sortable" data-sort="lat">Lat</th>
+                      <th class="sortable" data-sort="lng">Lng</th>
+                      <th class="sortable" data-sort="date">Posledné použitie</th>
+                    </tr>
+                  </thead>
+                  <tbody id="macManagementBody">
+                    <tr><td colspan="5" style="text-align:center;padding:20px;">Načítavam...</td></tr>
+                  </tbody>
+                </table>
+              </div>
+
+              <!-- Selected MAC info and map -->
+              <div id="macSelectedInfo" style="display:none;margin-bottom:15px;">
+                <h4 style="margin:0 0 10px 0;">Vybraná MAC: <span id="macSelectedAddress" style="font-family:monospace;"></span></h4>
+                <div style="display:flex;gap:15px;flex-wrap:wrap;">
+                  <div style="flex:1;min-width:200px;">
+                    <div class="form-row form-row-inline">
+                      <div class="form-field">
+                        <label for="macEditLat">Latitude</label>
+                        <input type="number" id="macEditLat" step="0.000001" placeholder="48.1486">
+                      </div>
+                      <div class="form-field">
+                        <label for="macEditLng">Longitude</label>
+                        <input type="number" id="macEditLng" step="0.000001" placeholder="17.1077">
+                      </div>
+                    </div>
+                    <button type="button" id="macSaveCoords" class="btn-primary btn-small" style="margin-top:10px;">Uložiť súradnice</button>
+                  </div>
+                  <div style="flex:1;min-width:250px;">
+                    <div id="macManagementMap" style="height:200px;border-radius:8px;"></div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Bulk actions -->
+              <div class="mac-bulk-actions" style="display:flex;gap:10px;flex-wrap:wrap;">
+                <button type="button" id="macRetryGoogle" class="btn-secondary btn-small" disabled>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                    <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
+                    <path d="M3 3v5h5"/>
+                  </svg>
+                  Skúsiť znova Google API (vybrané)
+                </button>
+                <span id="macSelectedCount" style="align-self:center;color:var(--muted-text);font-size:0.9em;">0 vybraných</span>
+              </div>
+            </div>
+          </div>
+
           <!-- Akčné tlačidlá -->
           <div class="form-actions">
             <button type="button" id="saveSettings" class="btn-primary">
@@ -955,9 +1052,13 @@
               <span class="info-label">Zdroj:</span>
               <span class="info-value" id="editPositionSource">—</span>
             </div>
-            <div class="info-row" id="editMacRow">
-              <span class="info-label">MAC adresa:</span>
-              <span class="info-value" id="editPositionMac">—</span>
+            <div class="info-row" id="editPrimaryMacRow" style="display:none;">
+              <span class="info-label">Určujúca MAC:</span>
+              <span class="info-value" id="editPrimaryMac">—</span>
+            </div>
+            <div class="info-row" id="editAllMacsRow" style="display:none;">
+              <span class="info-label">Všetky MAC:</span>
+              <span class="info-value" id="editAllMacs" style="font-size:0.85em;word-break:break-all;">—</span>
             </div>
           </div>
 
@@ -999,14 +1100,15 @@
             <div id="positionEditMap"></div>
           </div>
 
-          <!-- MAC History (only for WiFi positions) -->
+          <!-- MAC History (only for WiFi positions with primary_mac) -->
           <div class="perimeter-section" id="macHistorySection" style="display: none;">
-            <h3>História tejto MAC adresy</h3>
-            <p class="section-description">Posledných 20 záznamov. Kliknutím zobrazíte pohyby daného dňa na mape.</p>
+            <h3>História tejto MAC adresy: <span id="macHistoryMacAddress" style="font-family:monospace;font-weight:normal;"></span></h3>
+            <p class="section-description">Záznamy kde táto MAC určila polohu. Označte záznamy pre refetch.</p>
             <div id="macHistoryTable" class="mac-history-container">
               <table class="mac-history-table">
                 <thead>
                   <tr>
+                    <th style="width:30px;"><input type="checkbox" id="macHistorySelectAll" title="Vybrať všetky"></th>
                     <th>Dátum</th>
                     <th>Čas</th>
                     <th>Súradnice</th>
@@ -1015,6 +1117,14 @@
                 <tbody id="macHistoryBody">
                 </tbody>
               </table>
+            </div>
+            <div class="mac-history-actions" style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
+              <button type="button" id="refetchSelectedDays" class="btn-secondary btn-small" disabled>
+                Refetch vybraných dní
+              </button>
+              <button type="button" id="refetchAllMacDays" class="btn-secondary btn-small">
+                Refetch všetkých dní s touto MAC
+              </button>
             </div>
           </div>
 
@@ -1046,6 +1156,6 @@
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
-  <script src="app.js?v=20260104c" defer></script>
+  <script src="app.js?v=20260104d" defer></script>
 </body>
 </html>

@@ -1000,7 +1000,7 @@ if ($action === 'get_position_detail') {
         }
 
         $pdo = db();
-        $stmt = $pdo->prepare('SELECT id, timestamp, latitude, longitude, source, raw_wifi_macs FROM tracker_data WHERE CAST(id AS INTEGER) = ?');
+        $stmt = $pdo->prepare('SELECT id, timestamp, latitude, longitude, source, raw_wifi_macs, primary_mac FROM tracker_data WHERE CAST(id AS INTEGER) = ?');
         $stmt->execute([$id]);
         $position = $stmt->fetch(PDO::FETCH_ASSOC);
 
@@ -1015,7 +1015,8 @@ if ($action === 'get_position_detail') {
             'lat' => (float)$position['latitude'],
             'lng' => (float)$position['longitude'],
             'source' => $position['source'],
-            'mac_address' => $position['raw_wifi_macs']
+            'all_macs' => $position['raw_wifi_macs'],
+            'primary_mac' => $position['primary_mac']
         ];
 
         respond([
@@ -1120,7 +1121,7 @@ if ($action === 'invalidate_mac' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-// Get MAC address history (last 20 records)
+// Get MAC address history (last 20 records where this MAC was the primary/determining MAC)
 if ($action === 'get_mac_history') {
     try {
         $mac = qparam('mac');
@@ -1129,15 +1130,15 @@ if ($action === 'get_mac_history') {
         }
 
         $pdo = db();
-        // Search for MAC in comma-separated list
+        // Search by primary_mac (exact match) - this is the MAC that determined the position
         $stmt = $pdo->prepare('
-            SELECT id, timestamp, latitude, longitude, source
+            SELECT id, timestamp, latitude, longitude, source, primary_mac
             FROM tracker_data
-            WHERE raw_wifi_macs LIKE ?
+            WHERE primary_mac = ?
             ORDER BY timestamp DESC
             LIMIT 20
         ');
-        $stmt->execute(['%' . $mac . '%']);
+        $stmt->execute([$mac]);
         $records = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
         $history = [];
@@ -1147,7 +1148,8 @@ if ($action === 'get_mac_history') {
                 'timestamp' => utc_to_local($r['timestamp']),
                 'lat' => $r['latitude'] ? (float)$r['latitude'] : null,
                 'lng' => $r['longitude'] ? (float)$r['longitude'] : null,
-                'source' => $r['source']
+                'source' => $r['source'],
+                'primary_mac' => $r['primary_mac']
             ];
         }
 
@@ -1157,6 +1159,152 @@ if ($action === 'get_mac_history') {
         ]);
     } catch (Throwable $e) {
         respond(['ok' => false, 'error' => 'Failed to get MAC history: ' . $e->getMessage()], 500);
+    }
+}
+
+// ========== MAC MANAGEMENT ==========
+
+// Get all MAC locations with filtering
+if ($action === 'get_mac_locations') {
+    try {
+        $pdo = db();
+
+        $type = qparam('type') ?: 'no-coords'; // no-coords, with-coords, all
+        $search = qparam('search');
+        $dateFrom = qparam('date_from');
+        $dateTo = qparam('date_to');
+        $sortBy = qparam('sort') ?: 'date';
+        $sortDir = qparam('dir') ?: 'desc';
+
+        $where = [];
+        $params = [];
+
+        if ($type === 'no-coords') {
+            $where[] = '(latitude IS NULL OR longitude IS NULL)';
+        } elseif ($type === 'with-coords') {
+            $where[] = '(latitude IS NOT NULL AND longitude IS NOT NULL)';
+        }
+
+        if ($search) {
+            $where[] = 'mac_address LIKE ?';
+            $params[] = '%' . $search . '%';
+        }
+
+        if ($dateFrom) {
+            $where[] = 'last_queried >= ?';
+            $params[] = $dateFrom;
+        }
+
+        if ($dateTo) {
+            $where[] = 'last_queried <= ?';
+            $params[] = $dateTo . ' 23:59:59';
+        }
+
+        $whereClause = count($where) > 0 ? 'WHERE ' . implode(' AND ', $where) : '';
+
+        $validSorts = ['mac' => 'mac_address', 'lat' => 'latitude', 'lng' => 'longitude', 'date' => 'last_queried'];
+        $orderCol = $validSorts[$sortBy] ?? 'last_queried';
+        $orderDir = strtoupper($sortDir) === 'ASC' ? 'ASC' : 'DESC';
+
+        $sql = "SELECT mac_address, latitude, longitude, last_queried FROM mac_locations $whereClause ORDER BY $orderCol $orderDir LIMIT 500";
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute($params);
+        $records = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        $data = [];
+        foreach ($records as $r) {
+            $data[] = [
+                'mac' => $r['mac_address'],
+                'lat' => $r['latitude'] !== null ? (float)$r['latitude'] : null,
+                'lng' => $r['longitude'] !== null ? (float)$r['longitude'] : null,
+                'last_queried' => $r['last_queried'] ? utc_to_local($r['last_queried']) : null
+            ];
+        }
+
+        respond(['ok' => true, 'data' => $data]);
+    } catch (Throwable $e) {
+        respond(['ok' => false, 'error' => 'Failed to get MAC locations: ' . $e->getMessage()], 500);
+    }
+}
+
+// Update MAC location coordinates
+if ($action === 'update_mac_coordinates' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    try {
+        $j = json_body();
+        $mac = isset($j['mac']) ? trim((string)$j['mac']) : null;
+        $lat = isset($j['lat']) ? (float)$j['lat'] : null;
+        $lng = isset($j['lng']) ? (float)$j['lng'] : null;
+
+        if (!$mac) {
+            respond(['ok' => false, 'error' => 'MAC address is required'], 400);
+        }
+
+        $pdo = db();
+        $stmt = $pdo->prepare('UPDATE mac_locations SET latitude = ?, longitude = ?, last_queried = datetime("now") WHERE mac_address = ?');
+        $stmt->execute([$lat, $lng, $mac]);
+
+        if ($stmt->rowCount() === 0) {
+            // Insert if not exists
+            $stmt = $pdo->prepare('INSERT INTO mac_locations (mac_address, latitude, longitude, last_queried) VALUES (?, ?, ?, datetime("now"))');
+            $stmt->execute([$mac, $lat, $lng]);
+        }
+
+        respond(['ok' => true, 'message' => 'MAC coordinates updated']);
+    } catch (Throwable $e) {
+        respond(['ok' => false, 'error' => 'Failed to update MAC coordinates: ' . $e->getMessage()], 500);
+    }
+}
+
+// Batch refetch days for positions with specific primary_mac
+if ($action === 'batch_refetch_days' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    try {
+        $j = json_body();
+        $dates = isset($j['dates']) ? (array)$j['dates'] : [];
+        $mac = isset($j['mac']) ? trim((string)$j['mac']) : null;
+
+        if (empty($dates) && !$mac) {
+            respond(['ok' => false, 'error' => 'Either dates array or MAC address is required'], 400);
+        }
+
+        $pdo = db();
+        $refetchedDays = [];
+
+        // If MAC is provided, get all days where this MAC was the primary
+        if ($mac && empty($dates)) {
+            $stmt = $pdo->prepare("SELECT DISTINCT DATE(timestamp) as day FROM tracker_data WHERE primary_mac = ?");
+            $stmt->execute([$mac]);
+            while ($r = $stmt->fetch()) {
+                $dates[] = $r['day'];
+            }
+        }
+
+        // Delete positions for these days and queue refetch
+        foreach ($dates as $date) {
+            if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) continue;
+
+            // Delete positions for this day
+            $stmt = $pdo->prepare("DELETE FROM tracker_data WHERE DATE(timestamp) = ?");
+            $stmt->execute([$date]);
+            $deleted = $stmt->rowCount();
+
+            // Insert into refetch queue (if table exists)
+            try {
+                $stmt = $pdo->prepare("INSERT OR REPLACE INTO refetch_state (date, status, reason) VALUES (?, 'pending', 'manual_mac_invalidation')");
+                $stmt->execute([$date]);
+            } catch (Throwable $e) {
+                // refetch_state table might not exist, ignore
+            }
+
+            $refetchedDays[] = ['date' => $date, 'deleted' => $deleted];
+        }
+
+        respond([
+            'ok' => true,
+            'message' => 'Days queued for refetch',
+            'days' => $refetchedDays
+        ]);
+    } catch (Throwable $e) {
+        respond(['ok' => false, 'error' => 'Failed to batch refetch: ' . $e->getMessage()], 500);
     }
 }
 

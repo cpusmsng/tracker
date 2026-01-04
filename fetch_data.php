@@ -273,7 +273,8 @@ function insert_position_with_hysteresis(
     string $source,
     int $hysteresisMeters,
     ?array &$lastInsertedPos,
-    ?string $rawMacs = null
+    ?string $rawMacs = null,
+    ?string $primaryMac = null
 ): array {
     
     $lastPos = $lastInsertedPos;
@@ -313,12 +314,12 @@ function insert_position_with_hysteresis(
     $ts = $dt->format('Y-m-d H:i:s');
     
     try {
-        $stmt = $pdo->prepare("INSERT INTO tracker_data (timestamp, latitude, longitude, source, raw_wifi_macs) VALUES (:t,:la,:lo,:s,:macs)");
-        $stmt->execute([':t'=>$ts, ':la'=>$lat, ':lo'=>$lng, ':s'=>$source, ':macs'=>$rawMacs]);
+        $stmt = $pdo->prepare("INSERT INTO tracker_data (timestamp, latitude, longitude, source, raw_wifi_macs, primary_mac) VALUES (:t,:la,:lo,:s,:macs,:pmac)");
+        $stmt->execute([':t'=>$ts, ':la'=>$lat, ':lo'=>$lng, ':s'=>$source, ':macs'=>$rawMacs, ':pmac'=>$primaryMac]);
 
         $lastInsertedPos = ['lat' => $lat, 'lng' => $lng, 'source' => $source];
 
-        debug_log("    INSERT SUCCESS: $source @ ($lat, $lng)" . ($rawMacs ? " [MACs: $rawMacs]" : ""));
+        debug_log("    INSERT SUCCESS: $source @ ($lat, $lng)" . ($primaryMac ? " [Primary: $primaryMac]" : "") . ($rawMacs ? " [All MACs: $rawMacs]" : ""));
         return ['inserted' => true, 'reason' => 'ok', 'distance' => $dist !== null ? round($dist, 1) : null];
     } catch (Throwable $e) {
         $errorMsg = $e->getMessage();
@@ -1520,7 +1521,8 @@ try {
         if ($positiveCache !== null) {
             debug_log("  -> USING CACHE: MAC=".$positiveCache['mac']);
             $allMacs = implode(',', array_map(fn($ap) => $ap['mac'], $wifiForTs));
-            $result = insert_position_with_hysteresis($pdo, $iso, $positiveCache['lat'], $positiveCache['lng'], 'wifi-cache', $HYSTERESIS_METERS, $lastInsertedPos, $allMacs);
+            $primaryMac = $positiveCache['mac'];
+            $result = insert_position_with_hysteresis($pdo, $iso, $positiveCache['lat'], $positiveCache['lng'], 'wifi-cache', $HYSTERESIS_METERS, $lastInsertedPos, $allMacs, $primaryMac);
             if ($result['inserted']) {
                 $inserted++; $cacheHits++;
                 $checkPerimetersAfterInsert($positiveCache['lat'], $positiveCache['lng'], $iso);

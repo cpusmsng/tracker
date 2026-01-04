@@ -1897,19 +1897,32 @@ async function openPositionEditModal(positionId) {
     $('#editPositionTimestamp').textContent = timestamp.toLocaleString('sk-SK');
     $('#editPositionSource').textContent = currentEditPosition.source || '—';
 
-    // MAC address and history
-    if (currentEditPosition.mac_address) {
-      $('#editMacRow').style.display = 'flex';
-      $('#editPositionMac').textContent = currentEditPosition.mac_address;
+    // MAC address display - separate primary_mac and all_macs
+    const primaryMac = currentEditPosition.primary_mac;
+    const allMacs = currentEditPosition.all_macs;
+
+    // Show primary MAC (the one that determined the position)
+    if (primaryMac) {
+      $('#editPrimaryMacRow').style.display = 'flex';
+      $('#editPrimaryMac').textContent = primaryMac;
       $('#invalidateMac').style.display = 'inline-flex';
       $('#macHistorySection').style.display = 'block';
-      // Load MAC history
-      loadMacHistory(currentEditPosition.mac_address);
+      $('#macHistoryMacAddress').textContent = primaryMac;
+      // Load MAC history for primary MAC
+      loadMacHistory(primaryMac);
     } else {
-      $('#editMacRow').style.display = 'none';
+      $('#editPrimaryMacRow').style.display = 'none';
       $('#invalidateMac').style.display = 'none';
       $('#macHistorySection').style.display = 'none';
       $('#macHistoryBody').innerHTML = '';
+    }
+
+    // Show all MACs (comma-separated)
+    if (allMacs) {
+      $('#editAllMacsRow').style.display = 'flex';
+      $('#editAllMacs').textContent = allMacs;
+    } else {
+      $('#editAllMacsRow').style.display = 'none';
     }
 
     $('#editCurrentLat').value = currentEditPosition.lat;
@@ -1949,15 +1962,20 @@ async function openPositionEditModal(positionId) {
   }
 }
 
+let currentMacHistoryMac = null;
+
 async function loadMacHistory(mac) {
   const tbody = $('#macHistoryBody');
-  tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;">Načítavam...</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;">Načítavam...</td></tr>';
+  currentMacHistoryMac = mac;
 
   try {
     const result = await apiGet(`${API}?action=get_mac_history&mac=${encodeURIComponent(mac)}`);
 
     if (!result.ok || !result.data || result.data.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;color:var(--muted-text);">Žiadna história</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--muted-text);">Žiadna história</td></tr>';
+      $('#refetchSelectedDays').disabled = true;
+      $('#refetchAllMacDays').disabled = true;
       return;
     }
 
@@ -1966,29 +1984,91 @@ async function loadMacHistory(mac) {
       const dateStr = d.toLocaleDateString('sk-SK');
       const timeStr = d.toLocaleTimeString('sk-SK', { hour: '2-digit', minute: '2-digit' });
       const coords = h.lat && h.lng ? `${h.lat.toFixed(5)}, ${h.lng.toFixed(5)}` : '—';
-      const dateValue = d.toISOString().split('T')[0]; // YYYY-MM-DD for fetching
+      const dateValue = d.toISOString().split('T')[0];
       return `<tr data-date="${dateValue}" data-lat="${h.lat || ''}" data-lng="${h.lng || ''}">
+        <td><input type="checkbox" class="mac-history-checkbox" data-date="${dateValue}"></td>
         <td>${dateStr}</td>
         <td>${timeStr}</td>
         <td>${coords}</td>
       </tr>`;
     }).join('');
 
-    // Add click handlers for history rows
+    $('#refetchAllMacDays').disabled = false;
+    updateMacHistoryRefetchButton();
+
+    // Add click handlers for history rows (on the row, not checkbox)
     tbody.querySelectorAll('tr').forEach(tr => {
-      tr.addEventListener('click', () => {
+      tr.addEventListener('click', (e) => {
+        if (e.target.type === 'checkbox') return; // Don't handle checkbox clicks
         const date = tr.getAttribute('data-date');
         if (date) {
-          // Remove active class from all rows
           tbody.querySelectorAll('tr').forEach(r => r.classList.remove('active'));
           tr.classList.add('active');
-          // Load day movements on mini map
           loadHistoryDayOnMap(date);
         }
       });
     });
+
+    // Checkbox change handlers
+    tbody.querySelectorAll('.mac-history-checkbox').forEach(cb => {
+      cb.addEventListener('change', updateMacHistoryRefetchButton);
+    });
+
   } catch (err) {
-    tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;color:#ef4444;">Chyba načítania</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:#ef4444;">Chyba načítania</td></tr>';
+  }
+}
+
+function updateMacHistoryRefetchButton() {
+  const checked = document.querySelectorAll('#macHistoryBody .mac-history-checkbox:checked').length;
+  $('#refetchSelectedDays').disabled = checked === 0;
+}
+
+async function refetchSelectedMacDays() {
+  const checkboxes = document.querySelectorAll('#macHistoryBody .mac-history-checkbox:checked');
+  const dates = [...checkboxes].map(cb => cb.dataset.date);
+
+  if (dates.length === 0) {
+    alert('Vyberte aspoň jeden deň');
+    return;
+  }
+
+  if (!confirm(`Refetch ${dates.length} dní? Existujúce záznamy budú vymazané a znovu načítané.`)) {
+    return;
+  }
+
+  try {
+    const result = await apiPost('batch_refetch_days', { dates });
+    if (result.ok) {
+      alert(`Úspešne naplánovaný refetch pre ${result.days.length} dní`);
+      closePositionEditOverlay();
+      loadCurrentDate();
+    } else {
+      alert(`Chyba: ${result.error}`);
+    }
+  } catch (err) {
+    alert(`Chyba: ${err.message}`);
+  }
+}
+
+async function refetchAllMacDays() {
+  if (!currentMacHistoryMac) return;
+
+  if (!confirm(`Refetch všetkých dní kde MAC ${currentMacHistoryMac} určila polohu? Existujúce záznamy budú vymazané a znovu načítané.`)) {
+    return;
+  }
+
+  try {
+    const result = await apiPost('batch_refetch_days', { mac: currentMacHistoryMac });
+    if (result.ok) {
+      alert(`Úspešne naplánovaný refetch pre ${result.days.length} dní`);
+      closePositionEditOverlay();
+      loadCurrentDate();
+    } else {
+      alert(`Chyba: ${result.error}`);
+    }
+  } catch (err) {
+    alert(`Chyba: ${err.message}`);
   }
 }
 
@@ -2420,6 +2500,27 @@ function addUIHandlers() {
     invalidateMacBtn.addEventListener('click', invalidateMacCache);
   }
 
+  // MAC History refetch buttons
+  const refetchSelectedBtn = $('#refetchSelectedDays');
+  if (refetchSelectedBtn) {
+    refetchSelectedBtn.addEventListener('click', refetchSelectedMacDays);
+  }
+
+  const refetchAllMacBtn = $('#refetchAllMacDays');
+  if (refetchAllMacBtn) {
+    refetchAllMacBtn.addEventListener('click', refetchAllMacDays);
+  }
+
+  const macHistorySelectAll = $('#macHistorySelectAll');
+  if (macHistorySelectAll) {
+    macHistorySelectAll.addEventListener('change', (e) => {
+      document.querySelectorAll('#macHistoryBody .mac-history-checkbox').forEach(cb => {
+        cb.checked = e.target.checked;
+      });
+      updateMacHistoryRefetchButton();
+    });
+  }
+
   const positionEditOverlay = $('#positionEditOverlay');
   if (positionEditOverlay) {
     positionEditOverlay.addEventListener('click', (e) => {
@@ -2444,6 +2545,244 @@ function addUIHandlers() {
     editNewLatInput.addEventListener('change', updateMarkerFromInputs);
     editNewLngInput.addEventListener('change', updateMarkerFromInputs);
   }
+}
+
+// --------- MAC Address Management ---------
+let macManagementMap = null;
+let macManagementMarker = null;
+let macManagementData = [];
+let selectedMacAddress = null;
+
+function initMacManagement() {
+  // Filter apply button
+  const filterBtn = $('#macFilterApply');
+  if (filterBtn) {
+    filterBtn.addEventListener('click', loadMacLocations);
+  }
+
+  // Select all checkbox
+  const selectAllCb = $('#macSelectAll');
+  if (selectAllCb) {
+    selectAllCb.addEventListener('change', (e) => {
+      document.querySelectorAll('#macManagementBody input[type="checkbox"]').forEach(cb => {
+        cb.checked = e.target.checked;
+      });
+      updateMacSelectedCount();
+    });
+  }
+
+  // Save coordinates button
+  const saveBtn = $('#macSaveCoords');
+  if (saveBtn) {
+    saveBtn.addEventListener('click', saveMacCoordinates);
+  }
+
+  // Retry Google button
+  const retryBtn = $('#macRetryGoogle');
+  if (retryBtn) {
+    retryBtn.addEventListener('click', retryGoogleForSelectedMacs);
+  }
+
+  // Sortable headers
+  document.querySelectorAll('.mac-management-table th.sortable').forEach(th => {
+    th.addEventListener('click', () => {
+      const sort = th.dataset.sort;
+      loadMacLocations(sort);
+    });
+  });
+
+  // Load initial data when section is opened
+  const macSection = document.querySelector('[data-section="mac-management"]');
+  if (macSection) {
+    const header = macSection.querySelector('.settings-section-header');
+    if (header) {
+      header.addEventListener('click', () => {
+        setTimeout(() => {
+          if (macSection.classList.contains('open') && macManagementData.length === 0) {
+            loadMacLocations();
+            initMacManagementMap();
+          }
+        }, 100);
+      });
+    }
+  }
+}
+
+function initMacManagementMap() {
+  if (macManagementMap) return;
+
+  const mapContainer = $('#macManagementMap');
+  if (!mapContainer) return;
+
+  macManagementMap = L.map('macManagementMap').setView([48.1486, 17.1077], 13);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© OpenStreetMap'
+  }).addTo(macManagementMap);
+
+  macManagementMap.on('click', (e) => {
+    const { lat, lng } = e.latlng;
+    $('#macEditLat').value = lat.toFixed(6);
+    $('#macEditLng').value = lng.toFixed(6);
+    updateMacManagementMarker(lat, lng);
+  });
+}
+
+function updateMacManagementMarker(lat, lng) {
+  if (!macManagementMap) return;
+
+  if (macManagementMarker) {
+    macManagementMap.removeLayer(macManagementMarker);
+  }
+
+  macManagementMarker = L.marker([lat, lng]).addTo(macManagementMap);
+  macManagementMap.setView([lat, lng], 16);
+}
+
+async function loadMacLocations(sortBy = 'date') {
+  const tbody = $('#macManagementBody');
+  if (!tbody) return;
+
+  tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:20px;">Načítavam...</td></tr>';
+
+  const type = $('#macFilterType')?.value || 'no-coords';
+  const search = $('#macFilterSearch')?.value || '';
+  const dateFrom = $('#macFilterDateFrom')?.value || '';
+  const dateTo = $('#macFilterDateTo')?.value || '';
+
+  try {
+    const params = new URLSearchParams({
+      action: 'get_mac_locations',
+      type,
+      sort: sortBy,
+      dir: 'desc'
+    });
+    if (search) params.append('search', search);
+    if (dateFrom) params.append('date_from', dateFrom);
+    if (dateTo) params.append('date_to', dateTo);
+
+    const result = await apiGet(`${API}?${params}`);
+
+    if (!result.ok || !result.data) {
+      tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#ef4444;">Chyba načítania</td></tr>';
+      return;
+    }
+
+    macManagementData = result.data;
+
+    if (result.data.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--muted-text);">Žiadne MAC adresy</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = result.data.map(m => {
+      const lastQueried = m.last_queried ? new Date(m.last_queried).toLocaleDateString('sk-SK') : '—';
+      const lat = m.lat !== null ? m.lat.toFixed(5) : '—';
+      const lng = m.lng !== null ? m.lng.toFixed(5) : '—';
+      return `<tr data-mac="${m.mac}">
+        <td><input type="checkbox" class="mac-select-cb" data-mac="${m.mac}"></td>
+        <td style="font-family:monospace;font-size:0.85em;">${m.mac}</td>
+        <td>${lat}</td>
+        <td>${lng}</td>
+        <td>${lastQueried}</td>
+      </tr>`;
+    }).join('');
+
+    // Row click handlers
+    tbody.querySelectorAll('tr').forEach(tr => {
+      tr.addEventListener('click', (e) => {
+        if (e.target.type === 'checkbox') return;
+        const mac = tr.dataset.mac;
+        selectMacForEdit(mac);
+      });
+    });
+
+    // Checkbox handlers
+    tbody.querySelectorAll('.mac-select-cb').forEach(cb => {
+      cb.addEventListener('change', updateMacSelectedCount);
+    });
+
+  } catch (err) {
+    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#ef4444;">Chyba: ' + err.message + '</td></tr>';
+  }
+}
+
+function selectMacForEdit(mac) {
+  const macData = macManagementData.find(m => m.mac === mac);
+  if (!macData) return;
+
+  selectedMacAddress = mac;
+
+  // Show edit section
+  $('#macSelectedInfo').style.display = 'block';
+  $('#macSelectedAddress').textContent = mac;
+  $('#macEditLat').value = macData.lat !== null ? macData.lat : '';
+  $('#macEditLng').value = macData.lng !== null ? macData.lng : '';
+
+  // Update map
+  initMacManagementMap();
+  if (macData.lat !== null && macData.lng !== null) {
+    updateMacManagementMarker(macData.lat, macData.lng);
+  } else {
+    if (macManagementMarker) {
+      macManagementMap.removeLayer(macManagementMarker);
+      macManagementMarker = null;
+    }
+  }
+
+  // Highlight selected row
+  document.querySelectorAll('#macManagementBody tr').forEach(tr => {
+    tr.classList.toggle('selected', tr.dataset.mac === mac);
+  });
+}
+
+async function saveMacCoordinates() {
+  if (!selectedMacAddress) {
+    alert('Vyberte MAC adresu');
+    return;
+  }
+
+  const lat = parseFloat($('#macEditLat').value);
+  const lng = parseFloat($('#macEditLng').value);
+
+  if (isNaN(lat) || isNaN(lng)) {
+    alert('Zadajte platné súradnice');
+    return;
+  }
+
+  try {
+    const result = await apiPost('update_mac_coordinates', {
+      mac: selectedMacAddress,
+      lat,
+      lng
+    });
+
+    if (result.ok) {
+      alert('Súradnice uložené');
+      loadMacLocations();
+    } else {
+      alert(`Chyba: ${result.error}`);
+    }
+  } catch (err) {
+    alert(`Chyba: ${err.message}`);
+  }
+}
+
+function updateMacSelectedCount() {
+  const count = document.querySelectorAll('#macManagementBody .mac-select-cb:checked').length;
+  $('#macSelectedCount').textContent = `${count} vybraných`;
+  $('#macRetryGoogle').disabled = count === 0;
+}
+
+async function retryGoogleForSelectedMacs() {
+  const checkboxes = document.querySelectorAll('#macManagementBody .mac-select-cb:checked');
+  const macs = [...checkboxes].map(cb => cb.dataset.mac);
+
+  if (macs.length === 0) {
+    alert('Vyberte aspoň jednu MAC adresu');
+    return;
+  }
+
+  alert(`Funkcia "Retry Google API" pre ${macs.length} MAC adries bude implementovaná v ďalšej verzii.\n\nPre teraz môžete:\n1. Zmazať MAC z cache (pomocou Zneplatniť MAC)\n2. Spustiť manuálny refetch dňa`);
 }
 
 // --------- Perimeter Management ---------
@@ -3386,4 +3725,6 @@ window.addEventListener('DOMContentLoaded', () => {
   initPinSecurity();
   // Initialize log viewer
   initLogViewer();
+  // Initialize MAC management
+  initMacManagement();
 });
