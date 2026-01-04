@@ -2825,7 +2825,47 @@ async function retryGoogleForSelectedMacs() {
     return;
   }
 
-  alert(`Funkcia "Retry Google API" pre ${macs.length} MAC adries bude implementovaná v ďalšej verzii.\n\nPre teraz môžete:\n1. Zmazať MAC z cache (pomocou Zneplatniť MAC)\n2. Spustiť manuálny refetch dňa`);
+  const btn = $('#macRetryGoogle');
+  const originalText = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = `<svg class="spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><circle cx="12" cy="12" r="10" stroke-dasharray="32" stroke-dashoffset="32"/></svg> Spracovávam...`;
+
+  try {
+    const response = await apiPost('retry_google_macs', { macs });
+
+    if (!response.ok) {
+      alert('Chyba: ' + (response.error || 'Neznáma chyba'));
+      return;
+    }
+
+    // Build result message
+    const summary = response.summary;
+    const results = response.results || [];
+
+    let message = `Google API výsledky:\n\n`;
+    message += `Úspešných: ${summary.success} z ${summary.total}\n\n`;
+
+    results.forEach(r => {
+      if (r.status === 'success') {
+        message += `✓ ${r.mac}: ${r.lat.toFixed(6)}, ${r.lng.toFixed(6)} (presnosť: ${r.accuracy ? r.accuracy + 'm' : '?'})\n`;
+      } else {
+        message += `✗ ${r.mac}: ${r.message || r.status}\n`;
+      }
+    });
+
+    alert(message);
+
+    // Reload the MAC list to show updated coordinates
+    await loadMacLocations();
+
+  } catch (err) {
+    console.error('Retry Google API error:', err);
+    alert('Chyba pri volaní Google API: ' + err.message);
+  } finally {
+    btn.innerHTML = originalText;
+    btn.disabled = false;
+    updateMacSelectionCount();
+  }
 }
 
 // --------- Perimeter Management ---------

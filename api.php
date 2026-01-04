@@ -1308,6 +1308,154 @@ if ($action === 'batch_refetch_days' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
+// Retry Google Geolocation API for selected MACs
+if ($action === 'retry_google_macs' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    try {
+        $j = json_body();
+        $macs = isset($j['macs']) ? (array)$j['macs'] : [];
+
+        if (empty($macs)) {
+            respond(['ok' => false, 'error' => 'No MAC addresses provided'], 400);
+        }
+
+        $googleApiKey = getenv('GOOGLE_API_KEY') ?: '';
+        if (!$googleApiKey) {
+            respond(['ok' => false, 'error' => 'Google API key not configured'], 500);
+        }
+
+        $pdo = db();
+        $results = [];
+        $successCount = 0;
+        $failedCount = 0;
+
+        // For each selected MAC, find tracker_data records and get all MACs from that position
+        foreach ($macs as $targetMac) {
+            $targetMac = trim((string)$targetMac);
+            if (!$targetMac) continue;
+
+            // Find a position that contains this MAC (either as primary_mac or in raw_wifi_macs)
+            $stmt = $pdo->prepare("
+                SELECT raw_wifi_macs, timestamp
+                FROM tracker_data
+                WHERE source LIKE 'wifi%'
+                  AND (primary_mac = ? OR raw_wifi_macs LIKE ?)
+                ORDER BY timestamp DESC
+                LIMIT 1
+            ");
+            $stmt->execute([$targetMac, '%' . $targetMac . '%']);
+            $row = $stmt->fetch();
+
+            if (!$row || empty($row['raw_wifi_macs'])) {
+                $results[] = ['mac' => $targetMac, 'status' => 'no_data', 'message' => 'No WiFi data found for this MAC'];
+                $failedCount++;
+                continue;
+            }
+
+            // Parse all MACs from this position
+            $allMacs = array_filter(array_map('trim', explode(',', $row['raw_wifi_macs'])));
+            if (count($allMacs) < 1) {
+                $results[] = ['mac' => $targetMac, 'status' => 'no_data', 'message' => 'No valid MACs found'];
+                $failedCount++;
+                continue;
+            }
+
+            // Build WiFi access points array for Google API
+            // Since we don't have RSSI stored, use a reasonable default (-70 dBm)
+            $wifiAccessPoints = [];
+            foreach ($allMacs as $mac) {
+                $mac = strtoupper(preg_replace('/[^0-9A-F]/i', '', $mac));
+                if (strlen($mac) !== 12) continue;
+                $formattedMac = implode(':', str_split($mac, 2));
+                $wifiAccessPoints[] = [
+                    'macAddress' => $formattedMac,
+                    'signalStrength' => -70 // Default RSSI since we don't store it
+                ];
+            }
+
+            if (count($wifiAccessPoints) < 1) {
+                $results[] = ['mac' => $targetMac, 'status' => 'invalid_macs', 'message' => 'No valid MAC addresses to query'];
+                $failedCount++;
+                continue;
+            }
+
+            // Call Google Geolocation API
+            $url = 'https://www.googleapis.com/geolocation/v1/geolocate?key=' . rawurlencode($googleApiKey);
+            $payload = json_encode([
+                'considerIp' => false,
+                'wifiAccessPoints' => array_slice($wifiAccessPoints, 0, 6) // Max 6 APs
+            ], JSON_UNESCAPED_SLASHES);
+
+            $ch = curl_init($url);
+            curl_setopt_array($ch, [
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_POST => true,
+                CURLOPT_POSTFIELDS => $payload,
+                CURLOPT_HTTPHEADER => ['Content-Type: application/json'],
+                CURLOPT_TIMEOUT => 15,
+                CURLOPT_CONNECTTIMEOUT => 8,
+            ]);
+            $response = curl_exec($ch);
+            $httpCode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            curl_close($ch);
+
+            if ($response === false || $httpCode !== 200) {
+                $error = $response ? json_decode($response, true) : null;
+                $errorMsg = isset($error['error']['message']) ? $error['error']['message'] : 'HTTP ' . $httpCode;
+                $results[] = ['mac' => $targetMac, 'status' => 'api_error', 'message' => $errorMsg];
+                $failedCount++;
+                continue;
+            }
+
+            $data = json_decode($response, true);
+            if (!isset($data['location']['lat']) || !isset($data['location']['lng'])) {
+                $results[] = ['mac' => $targetMac, 'status' => 'no_location', 'message' => 'Google API returned no location'];
+                $failedCount++;
+                continue;
+            }
+
+            $lat = (float)$data['location']['lat'];
+            $lng = (float)$data['location']['lng'];
+            $accuracy = isset($data['accuracy']) ? (float)$data['accuracy'] : null;
+
+            // Update mac_locations for ALL MACs that were used in this query
+            foreach ($wifiAccessPoints as $ap) {
+                $macAddr = $ap['macAddress'];
+                $stmt = $pdo->prepare("
+                    INSERT INTO mac_locations (mac_address, latitude, longitude, last_queried)
+                    VALUES (?, ?, ?, datetime('now'))
+                    ON CONFLICT(mac_address) DO UPDATE SET
+                        latitude = excluded.latitude,
+                        longitude = excluded.longitude,
+                        last_queried = excluded.last_queried
+                ");
+                $stmt->execute([$macAddr, $lat, $lng]);
+            }
+
+            $results[] = [
+                'mac' => $targetMac,
+                'status' => 'success',
+                'lat' => $lat,
+                'lng' => $lng,
+                'accuracy' => $accuracy,
+                'macs_updated' => count($wifiAccessPoints)
+            ];
+            $successCount++;
+        }
+
+        respond([
+            'ok' => true,
+            'results' => $results,
+            'summary' => [
+                'total' => count($macs),
+                'success' => $successCount,
+                'failed' => $failedCount
+            ]
+        ]);
+    } catch (Throwable $e) {
+        respond(['ok' => false, 'error' => 'Failed to retry Google API: ' . $e->getMessage()], 500);
+    }
+}
+
 // ========== LOG VIEWER ==========
 
 if ($action === 'get_logs') {
