@@ -460,6 +460,28 @@
             </div>
           </div>
 
+          <!-- Frekvencia bežného fetchu -->
+          <div class="setting-group">
+            <div class="setting-header">
+              <label for="fetchFrequencyMinutes">
+                <strong>Frekvencia bežného fetchu</strong>
+                <span class="setting-current" id="currentFetchFrequencyMinutes">—</span>
+              </label>
+              <button type="button" class="btn-default" data-setting="fetch_frequency_minutes" data-default="5">
+                Predvolené
+              </button>
+            </div>
+            <div class="setting-description">
+              Ako často sa sťahujú nové dáta zo SenseCAP. Cron beží každú minútu, ale fetch sa spustí len ak uplynul nastavený interval.
+            </div>
+            <div class="setting-input-group">
+              <input type="number" id="fetchFrequencyMinutes" name="fetch_frequency_minutes"
+                     min="1" max="60" step="1" placeholder="5">
+              <span class="setting-unit">min</span>
+              <span class="setting-range">(1 – 60 min)</span>
+            </div>
+          </div>
+
           <!-- Smart Refetch - Frekvencia -->
           <div class="setting-group">
             <div class="setting-header">

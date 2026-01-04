@@ -1173,6 +1173,7 @@ async function loadCurrentSettings() {
       $('#macCacheMaxAgeDays').value = data.mac_cache_max_age_days || 3600;
       $('#googleForce').checked = data.google_force === '1' || data.google_force === 1;
       $('#logLevel').value = data.log_level || 'info';
+      $('#fetchFrequencyMinutes').value = data.fetch_frequency_minutes || 5;
       $('#smartRefetchFrequencyMinutes').value = data.smart_refetch_frequency_minutes || 30;
       $('#smartRefetchDays').value = data.smart_refetch_days || 7;
 
@@ -1185,6 +1186,7 @@ async function loadCurrentSettings() {
       $('#currentGoogleForce').textContent = (data.google_force === '1' || data.google_force === 1) ? '(Zapnuté)' : '(Vypnuté)';
       const logLevelLabels = { 'error': 'Error', 'info': 'Info', 'debug': 'Debug' };
       $('#currentLogLevel').textContent = `(${logLevelLabels[data.log_level] || 'Info'})`;
+      $('#currentFetchFrequencyMinutes').textContent = `(${data.fetch_frequency_minutes || 5} min)`;
       $('#currentSmartRefetchFrequencyMinutes').textContent = `(${data.smart_refetch_frequency_minutes || 30} min)`;
       $('#currentSmartRefetchDays').textContent = `(${data.smart_refetch_days || 7} dní)`;
 
@@ -1212,6 +1214,7 @@ async function saveSettings() {
       mac_cache_max_age_days: parseInt($('#macCacheMaxAgeDays').value) || 3600,
       google_force: $('#googleForce').checked ? '1' : '0',
       log_level: $('#logLevel').value || 'info',
+      fetch_frequency_minutes: parseInt($('#fetchFrequencyMinutes').value) || 5,
       smart_refetch_frequency_minutes: parseInt($('#smartRefetchFrequencyMinutes').value) || 30,
       smart_refetch_days: parseInt($('#smartRefetchDays').value) || 7
     };
@@ -1235,6 +1238,10 @@ async function saveSettings() {
     }
     if (settings.mac_cache_max_age_days < 1 || settings.mac_cache_max_age_days > 7200) {
       alert('Platnosť cache musí byť medzi 1 a 7200 dňami');
+      return;
+    }
+    if (settings.fetch_frequency_minutes < 1 || settings.fetch_frequency_minutes > 60) {
+      alert('Frekvencia bežného fetchu musí byť medzi 1 a 60 min');
       return;
     }
     if (settings.smart_refetch_frequency_minutes < 5 || settings.smart_refetch_frequency_minutes > 1440) {
@@ -1269,6 +1276,7 @@ function resetSettingToDefault(settingName, defaultValue) {
     'mac_cache_max_age_days': 'macCacheMaxAgeDays',
     'google_force': 'googleForce',
     'log_level': 'logLevel',
+    'fetch_frequency_minutes': 'fetchFrequencyMinutes',
     'smart_refetch_frequency_minutes': 'smartRefetchFrequencyMinutes',
     'smart_refetch_days': 'smartRefetchDays'
   };

@@ -769,6 +769,7 @@ if ($action === 'get_settings') {
             'mac_cache_max_age_days' => (int)(getenv('MAC_CACHE_MAX_AGE_DAYS') ?: 3600),
             'google_force' => getenv('GOOGLE_FORCE') ?: '0',
             'log_level' => strtolower(getenv('LOG_LEVEL') ?: 'info'),
+            'fetch_frequency_minutes' => (int)(getenv('FETCH_FREQUENCY_MINUTES') ?: 5),
             'smart_refetch_frequency_minutes' => (int)(getenv('SMART_REFETCH_FREQUENCY_MINUTES') ?: 30),
             'smart_refetch_days' => (int)(getenv('SMART_REFETCH_DAYS') ?: 7)
         ];
@@ -794,6 +795,7 @@ if ($action === 'save_settings' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         $macCacheMaxAgeDays = isset($j['mac_cache_max_age_days']) ? (int)$j['mac_cache_max_age_days'] : null;
         $googleForce = isset($j['google_force']) ? (string)$j['google_force'] : null;
         $logLevel = isset($j['log_level']) ? strtolower(trim((string)$j['log_level'])) : null;
+        $fetchFrequencyMinutes = isset($j['fetch_frequency_minutes']) ? (int)$j['fetch_frequency_minutes'] : null;
         $smartRefetchFrequencyMinutes = isset($j['smart_refetch_frequency_minutes']) ? (int)$j['smart_refetch_frequency_minutes'] : null;
         $smartRefetchDays = isset($j['smart_refetch_days']) ? (int)$j['smart_refetch_days'] : null;
 
@@ -818,6 +820,9 @@ if ($action === 'save_settings' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         }
         if ($logLevel !== null && !in_array($logLevel, ['error', 'info', 'debug'], true)) {
             respond(['ok' => false, 'error' => 'log_level must be "error", "info", or "debug"'], 400);
+        }
+        if ($fetchFrequencyMinutes !== null && ($fetchFrequencyMinutes < 1 || $fetchFrequencyMinutes > 60)) {
+            respond(['ok' => false, 'error' => 'fetch_frequency_minutes must be between 1 and 60'], 400);
         }
         if ($smartRefetchFrequencyMinutes !== null && ($smartRefetchFrequencyMinutes < 5 || $smartRefetchFrequencyMinutes > 1440)) {
             respond(['ok' => false, 'error' => 'smart_refetch_frequency_minutes must be between 5 and 1440'], 400);
@@ -846,6 +851,7 @@ if ($action === 'save_settings' && $_SERVER['REQUEST_METHOD'] === 'POST') {
             'mac_cache_max_age_days' => 'MAC_CACHE_MAX_AGE_DAYS',
             'google_force' => 'GOOGLE_FORCE',
             'log_level' => 'LOG_LEVEL',
+            'fetch_frequency_minutes' => 'FETCH_FREQUENCY_MINUTES',
             'smart_refetch_frequency_minutes' => 'SMART_REFETCH_FREQUENCY_MINUTES',
             'smart_refetch_days' => 'SMART_REFETCH_DAYS'
         ];

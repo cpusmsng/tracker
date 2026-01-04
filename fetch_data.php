@@ -1059,12 +1059,53 @@ if ($lockFp && flock($lockFp, LOCK_EX | LOCK_NB)) {
     exit(0);
 }
 
+// ============== FREQUENCY CHECK ==============
+// Check if enough time has passed since last run (skip for refetch mode)
+$cliArgs = parse_cli_args($argv);
+$isRefetchMode = isset($cliArgs['refetch_date']);
+
+if (!$isRefetchMode) {
+    $fetchFrequencyMinutes = (int)(getenv('FETCH_FREQUENCY_MINUTES') ?: 5);
+    $lastRunFile = __DIR__ . '/data/.fetch_last_run';
+
+    // Ensure data directory exists
+    if (!is_dir(__DIR__ . '/data')) {
+        @mkdir(__DIR__ . '/data', 0755, true);
+    }
+
+    $now = time();
+    $lastRunTime = 0;
+
+    if (is_file($lastRunFile)) {
+        $lastRunTime = (int)file_get_contents($lastRunFile);
+    }
+
+    $elapsedMinutes = ($now - $lastRunTime) / 60;
+
+    if ($elapsedMinutes < $fetchFrequencyMinutes) {
+        debug_log(sprintf(
+            'FREQUENCY CHECK: Only %.1f minutes elapsed since last run (required: %d min), skipping',
+            $elapsedMinutes,
+            $fetchFrequencyMinutes
+        ));
+        exit(0);
+    }
+
+    // Update last run time
+    file_put_contents($lastRunFile, (string)$now);
+    debug_log(sprintf(
+        'FREQUENCY CHECK: %.1f minutes elapsed since last run (required: %d min), proceeding',
+        $elapsedMinutes,
+        $fetchFrequencyMinutes
+    ));
+}
+// ============================================
+
 try {
     // .env is already loaded at the top of the file via load_env_early()
+    // $cliArgs already parsed above for frequency check
 
-    $cliArgs = parse_cli_args($argv);
-    
-    if (isset($cliArgs['refetch_date'])) {
+    if ($isRefetchMode) {
         $REFETCH_MODE = true;
         $REFETCH_DATE = $cliArgs['refetch_date'];
         info_log("REFETCH MODE: Enabled for date $REFETCH_DATE");
