@@ -2471,3 +2471,86 @@ body.authenticated .container{
   width:40px;
   text-align:center;
 }
+
+/* ========== SETTINGS ACCORDION SECTIONS ========== */
+.settings-section{
+  border:1px solid var(--border);
+  border-radius:8px;
+  margin-bottom:12px;
+  overflow:hidden;
+  background:var(--surface);
+}
+
+.settings-section-header{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  padding:14px 16px;
+  cursor:pointer;
+  background:var(--muted-bg);
+  border-bottom:1px solid transparent;
+  transition:background 0.2s, border-color 0.2s;
+  user-select:none;
+}
+
+.settings-section-header:hover{
+  background:var(--border);
+}
+
+.settings-section.open .settings-section-header{
+  border-bottom-color:var(--border);
+}
+
+.settings-section-header .section-icon{
+  width:20px;
+  height:20px;
+  flex-shrink:0;
+  color:var(--primary);
+}
+
+.settings-section-header span{
+  flex:1;
+  font-weight:600;
+  font-size:15px;
+  color:var(--text);
+}
+
+.settings-section-header .section-chevron{
+  width:18px;
+  height:18px;
+  color:var(--muted-text);
+  transition:transform 0.2s;
+}
+
+.settings-section.open .settings-section-header .section-chevron{
+  transform:rotate(180deg);
+}
+
+.settings-section-content{
+  display:none;
+  padding:16px;
+}
+
+.settings-section.open .settings-section-content{
+  display:block;
+}
+
+/* Compact setting groups inside sections */
+.settings-section .setting-group{
+  padding:12px 0;
+  border-bottom:1px solid var(--border);
+}
+
+.settings-section .setting-group:first-child{
+  padding-top:0;
+}
+
+.settings-section .setting-group:last-child{
+  padding-bottom:0;
+  border-bottom:none;
+}
+
+.settings-section .setting-description{
+  font-size:12px;
+  margin-bottom:8px;
+}

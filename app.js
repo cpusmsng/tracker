@@ -1142,11 +1142,37 @@ async function openSettingsOverlay() {
   overlay.classList.remove('hidden');
   console.log('Overlay should now be visible');
 
+  // Inicializuj accordion sekcie
+  initSettingsAccordion();
+
   // Načítaj aktuálne nastavenia
   try {
     await loadCurrentSettings();
   } catch (err) {
     console.error('Error loading settings:', err);
+  }
+}
+
+function initSettingsAccordion() {
+  const sections = document.querySelectorAll('.settings-section');
+
+  sections.forEach(section => {
+    const header = section.querySelector('.settings-section-header');
+    if (!header) return;
+
+    // Odstráň staré listenery (ak existujú)
+    const newHeader = header.cloneNode(true);
+    header.parentNode.replaceChild(newHeader, header);
+
+    newHeader.addEventListener('click', () => {
+      // Toggle aktuálnu sekciu
+      section.classList.toggle('open');
+    });
+  });
+
+  // Otvor prvú sekciu ako default
+  if (sections.length > 0 && !document.querySelector('.settings-section.open')) {
+    sections[0].classList.add('open');
   }
 }
 
@@ -1431,6 +1457,7 @@ async function loadHistory(dateStr) {
         // Zobraz info v tabuľke
         const rows = [{
           i: 1,
+          id: lastPosition.id, // Add position ID for editing
           from: lastPosition.timestamp,
           to: null,
           durMin: 0,
@@ -1528,6 +1555,7 @@ async function loadHistory(dateStr) {
     const durMin = Math.max(0, Math.round((new Date(firstCur.timestamp) - new Date(lastPrevPoint.timestamp)) / 60000));
     rows.push({
       i: 0,
+      id: lastPrevPoint.id, // Add position ID for editing
       from: lastPrevPoint.timestamp,
       to: firstCur.timestamp,
       durMin: durMin,

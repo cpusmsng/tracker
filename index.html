@@ -252,301 +252,343 @@
       <div class="overlay-body">
         <form id="settingsForm" novalidate>
 
-          <!-- Režim zobrazenia -->
-          <div class="setting-group">
-            <div class="setting-header">
-              <label>
-                <strong>Režim zobrazenia</strong>
-              </label>
+          <!-- ===== SEKCIA: VZHĽAD ===== -->
+          <div class="settings-section" data-section="appearance">
+            <div class="settings-section-header" data-toggle="appearance">
+              <svg class="section-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="5"/>
+                <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
+              </svg>
+              <span>Vzhľad</span>
+              <svg class="section-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="6 9 12 15 18 9"/>
+              </svg>
             </div>
-            <div class="setting-description">
-              Vzhľad aplikácie - automaticky podľa nastavenia zariadenia, svetlý alebo tmavý režim.
-            </div>
-            <div class="theme-toggle-group">
-              <label class="theme-option">
-                <input type="radio" name="theme" value="auto" checked>
-                <span class="theme-label">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <circle cx="12" cy="12" r="5"/>
-                    <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
-                  </svg>
-                  Auto
-                </span>
-              </label>
-              <label class="theme-option">
-                <input type="radio" name="theme" value="light">
-                <span class="theme-label">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <circle cx="12" cy="12" r="5"/>
-                    <line x1="12" y1="1" x2="12" y2="3"/>
-                    <line x1="12" y1="21" x2="12" y2="23"/>
-                    <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/>
-                    <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
-                    <line x1="1" y1="12" x2="3" y2="12"/>
-                    <line x1="21" y1="12" x2="23" y2="12"/>
-                    <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
-                    <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
-                  </svg>
-                  Svetlý
-                </span>
-              </label>
-              <label class="theme-option">
-                <input type="radio" name="theme" value="dark">
-                <span class="theme-label">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
-                  </svg>
-                  Tmavý
-                </span>
-              </label>
-            </div>
-          </div>
-
-          <!-- Hysteréza vzdialenosti -->
-          <div class="setting-group">
-            <div class="setting-header">
-              <label for="hysteresisMeters">
-                <strong>Minimálna vzdialenosť zmeny polohy</strong>
-                <span class="setting-current" id="currentHysteresisMeters">—</span>
-              </label>
-              <button type="button" class="btn-default" data-setting="hysteresis_meters" data-default="50">
-                Predvolené
-              </button>
-            </div>
-            <div class="setting-description">
-              Minimálna vzdialenosť v metroch, ktorú musí zariadenie prejsť, aby sa zaznamenala nová poloha. Vyššia hodnota = menej záznamov, ale menšia presnosť.
-            </div>
-            <div class="setting-input-group">
-              <input type="number" id="hysteresisMeters" name="hysteresis_meters"
-                     min="10" max="500" step="5" placeholder="50">
-              <span class="setting-unit">m</span>
-              <span class="setting-range">(10 – 500 m)</span>
-            </div>
-          </div>
-
-          <!-- Hysteréza času -->
-          <div class="setting-group">
-            <div class="setting-header">
-              <label for="hysteresisMinutes">
-                <strong>Minimálny čas zmeny polohy</strong>
-                <span class="setting-current" id="currentHysteresisMinutes">—</span>
-              </label>
-              <button type="button" class="btn-default" data-setting="hysteresis_minutes" data-default="30">
-                Predvolené
-              </button>
-            </div>
-            <div class="setting-description">
-              Minimálny časový interval v minútach medzi záznamami polohy. Aj keď sa vzdialenosť zmení, nová poloha sa zaznamená až po uplynutí tohto času.
-            </div>
-            <div class="setting-input-group">
-              <input type="number" id="hysteresisMinutes" name="hysteresis_minutes"
-                     min="5" max="180" step="5" placeholder="30">
-              <span class="setting-unit">min</span>
-              <span class="setting-range">(5 – 180 min)</span>
-            </div>
-          </div>
-
-          <!-- Presnosť súradníc -->
-          <div class="setting-group">
-            <div class="setting-header">
-              <label for="uniquePrecision">
-                <strong>Presnosť súradníc</strong>
-                <span class="setting-current" id="currentUniquePrecision">—</span>
-              </label>
-              <button type="button" class="btn-default" data-setting="unique_precision" data-default="6">
-                Predvolené
-              </button>
-            </div>
-            <div class="setting-description">
-              Počet desatinných miest pre GPS súradnice. Viac = vyššia presnosť (6 = ~11 cm, 5 = ~1 m, 4 = ~11 m).
-            </div>
-            <div class="setting-input-group">
-              <input type="number" id="uniquePrecision" name="unique_precision"
-                     min="4" max="8" step="1" placeholder="6">
-              <span class="setting-unit">desatinných miest</span>
-              <span class="setting-range">(4 – 8)</span>
-            </div>
-          </div>
-
-          <!-- Časový bucket -->
-          <div class="setting-group">
-            <div class="setting-header">
-              <label for="uniqueBucketMinutes">
-                <strong>Časový interval pre unikátne polohy</strong>
-                <span class="setting-current" id="currentUniqueBucketMinutes">—</span>
-              </label>
-              <button type="button" class="btn-default" data-setting="unique_bucket_minutes" data-default="30">
-                Predvolené
-              </button>
-            </div>
-            <div class="setting-description">
-              Časový interval v minútach, v ktorom sa duplicitné polohy zlúčia do jednej. Vyššia hodnota = menej záznamov.
-            </div>
-            <div class="setting-input-group">
-              <input type="number" id="uniqueBucketMinutes" name="unique_bucket_minutes"
-                     min="5" max="180" step="5" placeholder="30">
-              <span class="setting-unit">min</span>
-              <span class="setting-range">(5 – 180 min)</span>
-            </div>
-          </div>
-
-          <!-- Cache pre MAC adresy -->
-          <div class="setting-group">
-            <div class="setting-header">
-              <label for="macCacheMaxAgeDays">
-                <strong>Platnosť cache pre Wi-Fi geolokáciu</strong>
-                <span class="setting-current" id="currentMacCacheMaxAgeDays">—</span>
-              </label>
-              <button type="button" class="btn-default" data-setting="mac_cache_max_age_days" data-default="3600">
-                Predvolené
-              </button>
-            </div>
-            <div class="setting-description">
-              Počet dní, po ktoré sa uchovávajú GPS súradnice Wi-Fi prístupových bodov v cache. Vyššia hodnota šetrí API requesty.
-            </div>
-            <div class="setting-input-group">
-              <input type="number" id="macCacheMaxAgeDays" name="mac_cache_max_age_days"
-                     min="1" max="7200" step="30" placeholder="3600">
-              <span class="setting-unit">dní</span>
-              <span class="setting-range">(1 – 7200 dní)</span>
-            </div>
-          </div>
-
-          <!-- Google Force -->
-          <div class="setting-group">
-            <div class="setting-header">
-              <label for="googleForce">
-                <strong>Vynútiť Google Geolocation API</strong>
-                <span class="setting-current" id="currentGoogleForce">—</span>
-              </label>
-              <button type="button" class="btn-default" data-setting="google_force" data-default="0">
-                Predvolené
-              </button>
-            </div>
-            <div class="setting-description">
-              Ak je zapnuté, všetky Wi-Fi lokalizácie budú používať Google Geolocation API namiesto cache. Vypnuté šetrí API requesty a náklady.
-            </div>
-            <div class="setting-input-group">
-              <div class="toggle-switch">
-                <input type="checkbox" id="googleForce" name="google_force">
-                <label for="googleForce" class="toggle-label">
-                  <span class="toggle-inner"></span>
-                  <span class="toggle-switch-text"></span>
-                </label>
+            <div class="settings-section-content">
+              <div class="setting-group">
+                <div class="setting-header">
+                  <label><strong>Režim zobrazenia</strong></label>
+                </div>
+                <div class="setting-description">
+                  Vzhľad aplikácie - automaticky podľa nastavenia zariadenia, svetlý alebo tmavý režim.
+                </div>
+                <div class="theme-toggle-group">
+                  <label class="theme-option">
+                    <input type="radio" name="theme" value="auto" checked>
+                    <span class="theme-label">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="5"/>
+                        <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
+                      </svg>
+                      Auto
+                    </span>
+                  </label>
+                  <label class="theme-option">
+                    <input type="radio" name="theme" value="light">
+                    <span class="theme-label">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="5"/>
+                        <line x1="12" y1="1" x2="12" y2="3"/>
+                        <line x1="12" y1="21" x2="12" y2="23"/>
+                        <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/>
+                        <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+                        <line x1="1" y1="12" x2="3" y2="12"/>
+                        <line x1="21" y1="12" x2="23" y2="12"/>
+                        <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
+                        <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+                      </svg>
+                      Svetlý
+                    </span>
+                  </label>
+                  <label class="theme-option">
+                    <input type="radio" name="theme" value="dark">
+                    <span class="theme-label">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+                      </svg>
+                      Tmavý
+                    </span>
+                  </label>
+                </div>
               </div>
             </div>
           </div>
 
-          <!-- Úroveň logovania -->
-          <div class="setting-group">
-            <div class="setting-header">
-              <label for="logLevel">
-                <strong>Úroveň logovania</strong>
-                <span class="setting-current" id="currentLogLevel">—</span>
-              </label>
-              <button type="button" class="btn-default" data-setting="log_level" data-default="info">
-                Predvolené
-              </button>
+          <!-- ===== SEKCIA: ZBER DÁT ===== -->
+          <div class="settings-section" data-section="data-collection">
+            <div class="settings-section-header" data-toggle="data-collection">
+              <svg class="section-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                <polyline points="7 10 12 15 17 10"/>
+                <line x1="12" y1="15" x2="12" y2="3"/>
+              </svg>
+              <span>Zber dát</span>
+              <svg class="section-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="6 9 12 15 18 9"/>
+              </svg>
             </div>
-            <div class="setting-description">
-              Úroveň podrobnosti logov. Error = len chyby, Info = bežné udalosti, Debug = podrobné logovanie pre diagnostiku.
-            </div>
-            <div class="setting-input-group">
-              <select id="logLevel" name="log_level" class="setting-select">
-                <option value="error">Error - len chyby</option>
-                <option value="info">Info - bežné udalosti</option>
-                <option value="debug">Debug - podrobné logovanie</option>
-              </select>
+            <div class="settings-section-content">
+              <!-- Frekvencia bežného fetchu -->
+              <div class="setting-group">
+                <div class="setting-header">
+                  <label for="fetchFrequencyMinutes">
+                    <strong>Frekvencia bežného fetchu</strong>
+                    <span class="setting-current" id="currentFetchFrequencyMinutes">—</span>
+                  </label>
+                  <button type="button" class="btn-default" data-setting="fetch_frequency_minutes" data-default="5">Predvolené</button>
+                </div>
+                <div class="setting-description">
+                  Ako často sa sťahujú nové dáta zo SenseCAP.
+                </div>
+                <div class="setting-input-group">
+                  <input type="number" id="fetchFrequencyMinutes" name="fetch_frequency_minutes" min="1" max="60" step="1" placeholder="5">
+                  <span class="setting-unit">min</span>
+                  <span class="setting-range">(1 – 60)</span>
+                </div>
+              </div>
+
+              <!-- Smart Refetch - Frekvencia -->
+              <div class="setting-group">
+                <div class="setting-header">
+                  <label for="smartRefetchFrequencyMinutes">
+                    <strong>Frekvencia Smart Refetch</strong>
+                    <span class="setting-current" id="currentSmartRefetchFrequencyMinutes">—</span>
+                  </label>
+                  <button type="button" class="btn-default" data-setting="smart_refetch_frequency_minutes" data-default="30">Predvolené</button>
+                </div>
+                <div class="setting-description">
+                  Ako často sa kontroluje, či neboli oneskorene nahrané dáta.
+                </div>
+                <div class="setting-input-group">
+                  <input type="number" id="smartRefetchFrequencyMinutes" name="smart_refetch_frequency_minutes" min="5" max="1440" step="5" placeholder="30">
+                  <span class="setting-unit">min</span>
+                  <span class="setting-range">(5 – 1440)</span>
+                </div>
+              </div>
+
+              <!-- Smart Refetch - Počet dní -->
+              <div class="setting-group">
+                <div class="setting-header">
+                  <label for="smartRefetchDays">
+                    <strong>Smart Refetch - obdobie</strong>
+                    <span class="setting-current" id="currentSmartRefetchDays">—</span>
+                  </label>
+                  <button type="button" class="btn-default" data-setting="smart_refetch_days" data-default="7">Predvolené</button>
+                </div>
+                <div class="setting-description">
+                  Koľko dní dozadu sa kontroluje či nepribudli nové záznamy.
+                </div>
+                <div class="setting-input-group">
+                  <input type="number" id="smartRefetchDays" name="smart_refetch_days" min="1" max="30" step="1" placeholder="7">
+                  <span class="setting-unit">dní</span>
+                  <span class="setting-range">(1 – 30)</span>
+                </div>
+              </div>
             </div>
           </div>
 
-          <!-- Frekvencia bežného fetchu -->
-          <div class="setting-group">
-            <div class="setting-header">
-              <label for="fetchFrequencyMinutes">
-                <strong>Frekvencia bežného fetchu</strong>
-                <span class="setting-current" id="currentFetchFrequencyMinutes">—</span>
-              </label>
-              <button type="button" class="btn-default" data-setting="fetch_frequency_minutes" data-default="5">
-                Predvolené
-              </button>
+          <!-- ===== SEKCIA: FILTROVANIE POZÍCIÍ ===== -->
+          <div class="settings-section" data-section="position-filtering">
+            <div class="settings-section-header" data-toggle="position-filtering">
+              <svg class="section-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>
+              </svg>
+              <span>Filtrovanie pozícií</span>
+              <svg class="section-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="6 9 12 15 18 9"/>
+              </svg>
             </div>
-            <div class="setting-description">
-              Ako často sa sťahujú nové dáta zo SenseCAP. Cron beží každú minútu, ale fetch sa spustí len ak uplynul nastavený interval.
-            </div>
-            <div class="setting-input-group">
-              <input type="number" id="fetchFrequencyMinutes" name="fetch_frequency_minutes"
-                     min="1" max="60" step="1" placeholder="5">
-              <span class="setting-unit">min</span>
-              <span class="setting-range">(1 – 60 min)</span>
+            <div class="settings-section-content">
+              <!-- Hysteréza vzdialenosti -->
+              <div class="setting-group">
+                <div class="setting-header">
+                  <label for="hysteresisMeters">
+                    <strong>Minimálna vzdialenosť</strong>
+                    <span class="setting-current" id="currentHysteresisMeters">—</span>
+                  </label>
+                  <button type="button" class="btn-default" data-setting="hysteresis_meters" data-default="50">Predvolené</button>
+                </div>
+                <div class="setting-description">
+                  Minimálna vzdialenosť pre zaznamenanie novej polohy.
+                </div>
+                <div class="setting-input-group">
+                  <input type="number" id="hysteresisMeters" name="hysteresis_meters" min="10" max="500" step="5" placeholder="50">
+                  <span class="setting-unit">m</span>
+                  <span class="setting-range">(10 – 500)</span>
+                </div>
+              </div>
+
+              <!-- Hysteréza času -->
+              <div class="setting-group">
+                <div class="setting-header">
+                  <label for="hysteresisMinutes">
+                    <strong>Minimálny čas</strong>
+                    <span class="setting-current" id="currentHysteresisMinutes">—</span>
+                  </label>
+                  <button type="button" class="btn-default" data-setting="hysteresis_minutes" data-default="30">Predvolené</button>
+                </div>
+                <div class="setting-description">
+                  Minimálny časový interval medzi záznamami polohy.
+                </div>
+                <div class="setting-input-group">
+                  <input type="number" id="hysteresisMinutes" name="hysteresis_minutes" min="5" max="180" step="5" placeholder="30">
+                  <span class="setting-unit">min</span>
+                  <span class="setting-range">(5 – 180)</span>
+                </div>
+              </div>
+
+              <!-- Presnosť súradníc -->
+              <div class="setting-group">
+                <div class="setting-header">
+                  <label for="uniquePrecision">
+                    <strong>Presnosť súradníc</strong>
+                    <span class="setting-current" id="currentUniquePrecision">—</span>
+                  </label>
+                  <button type="button" class="btn-default" data-setting="unique_precision" data-default="6">Predvolené</button>
+                </div>
+                <div class="setting-description">
+                  Počet desatinných miest (6 = ~11 cm, 5 = ~1 m, 4 = ~11 m).
+                </div>
+                <div class="setting-input-group">
+                  <input type="number" id="uniquePrecision" name="unique_precision" min="4" max="8" step="1" placeholder="6">
+                  <span class="setting-unit">des. miest</span>
+                  <span class="setting-range">(4 – 8)</span>
+                </div>
+              </div>
+
+              <!-- Časový bucket -->
+              <div class="setting-group">
+                <div class="setting-header">
+                  <label for="uniqueBucketMinutes">
+                    <strong>Časový interval zlúčenia</strong>
+                    <span class="setting-current" id="currentUniqueBucketMinutes">—</span>
+                  </label>
+                  <button type="button" class="btn-default" data-setting="unique_bucket_minutes" data-default="30">Predvolené</button>
+                </div>
+                <div class="setting-description">
+                  Interval, v ktorom sa duplicitné polohy zlúčia do jednej.
+                </div>
+                <div class="setting-input-group">
+                  <input type="number" id="uniqueBucketMinutes" name="unique_bucket_minutes" min="5" max="180" step="5" placeholder="30">
+                  <span class="setting-unit">min</span>
+                  <span class="setting-range">(5 – 180)</span>
+                </div>
+              </div>
             </div>
           </div>
 
-          <!-- Smart Refetch - Frekvencia -->
-          <div class="setting-group">
-            <div class="setting-header">
-              <label for="smartRefetchFrequencyMinutes">
-                <strong>Frekvencia Smart Refetch</strong>
-                <span class="setting-current" id="currentSmartRefetchFrequencyMinutes">—</span>
-              </label>
-              <button type="button" class="btn-default" data-setting="smart_refetch_frequency_minutes" data-default="30">
-                Predvolené
-              </button>
+          <!-- ===== SEKCIA: GEOLOKÁCIA ===== -->
+          <div class="settings-section" data-section="geolocation">
+            <div class="settings-section-header" data-toggle="geolocation">
+              <svg class="section-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/>
+                <circle cx="12" cy="10" r="3"/>
+              </svg>
+              <span>Geolokácia</span>
+              <svg class="section-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="6 9 12 15 18 9"/>
+              </svg>
             </div>
-            <div class="setting-description">
-              Ako často sa kontroluje, či na SenseCAP neboli oneskorene nahrané dáta. Systém automaticky doplní chýbajúce záznamy.
-            </div>
-            <div class="setting-input-group">
-              <input type="number" id="smartRefetchFrequencyMinutes" name="smart_refetch_frequency_minutes"
-                     min="5" max="1440" step="5" placeholder="30">
-              <span class="setting-unit">min</span>
-              <span class="setting-range">(5 – 1440 min)</span>
+            <div class="settings-section-content">
+              <!-- Cache pre MAC adresy -->
+              <div class="setting-group">
+                <div class="setting-header">
+                  <label for="macCacheMaxAgeDays">
+                    <strong>Platnosť Wi-Fi cache</strong>
+                    <span class="setting-current" id="currentMacCacheMaxAgeDays">—</span>
+                  </label>
+                  <button type="button" class="btn-default" data-setting="mac_cache_max_age_days" data-default="3600">Predvolené</button>
+                </div>
+                <div class="setting-description">
+                  Počet dní, po ktoré sa uchovávajú súradnice Wi-Fi bodov v cache.
+                </div>
+                <div class="setting-input-group">
+                  <input type="number" id="macCacheMaxAgeDays" name="mac_cache_max_age_days" min="1" max="7200" step="30" placeholder="3600">
+                  <span class="setting-unit">dní</span>
+                  <span class="setting-range">(1 – 7200)</span>
+                </div>
+              </div>
+
+              <!-- Google Force -->
+              <div class="setting-group">
+                <div class="setting-header">
+                  <label for="googleForce">
+                    <strong>Vynútiť Google API</strong>
+                    <span class="setting-current" id="currentGoogleForce">—</span>
+                  </label>
+                  <button type="button" class="btn-default" data-setting="google_force" data-default="0">Predvolené</button>
+                </div>
+                <div class="setting-description">
+                  Ak zapnuté, Wi-Fi lokalizácie vždy volajú Google API namiesto cache.
+                </div>
+                <div class="setting-input-group">
+                  <div class="toggle-switch">
+                    <input type="checkbox" id="googleForce" name="google_force">
+                    <label for="googleForce" class="toggle-label">
+                      <span class="toggle-inner"></span>
+                      <span class="toggle-switch-text"></span>
+                    </label>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
 
-          <!-- Smart Refetch - Počet dní -->
-          <div class="setting-group">
-            <div class="setting-header">
-              <label for="smartRefetchDays">
-                <strong>Smart Refetch - kontrolované obdobie</strong>
-                <span class="setting-current" id="currentSmartRefetchDays">—</span>
-              </label>
-              <button type="button" class="btn-default" data-setting="smart_refetch_days" data-default="7">
-                Predvolené
-              </button>
+          <!-- ===== SEKCIA: SYSTÉM ===== -->
+          <div class="settings-section" data-section="system">
+            <div class="settings-section-header" data-toggle="system">
+              <svg class="section-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="3"/>
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+              </svg>
+              <span>Systém</span>
+              <svg class="section-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="6 9 12 15 18 9"/>
+              </svg>
             </div>
-            <div class="setting-description">
-              Koľko dní dozadu sa kontroluje či nepribudli nové záznamy. Väčšia hodnota = dlhšie spracovanie.
-            </div>
-            <div class="setting-input-group">
-              <input type="number" id="smartRefetchDays" name="smart_refetch_days"
-                     min="1" max="30" step="1" placeholder="7">
-              <span class="setting-unit">dní</span>
-              <span class="setting-range">(1 – 30 dní)</span>
-            </div>
-          </div>
+            <div class="settings-section-content">
+              <!-- Úroveň logovania -->
+              <div class="setting-group">
+                <div class="setting-header">
+                  <label for="logLevel">
+                    <strong>Úroveň logovania</strong>
+                    <span class="setting-current" id="currentLogLevel">—</span>
+                  </label>
+                  <button type="button" class="btn-default" data-setting="log_level" data-default="info">Predvolené</button>
+                </div>
+                <div class="setting-description">
+                  Error = len chyby, Info = bežné udalosti, Debug = podrobné logovanie.
+                </div>
+                <div class="setting-input-group">
+                  <select id="logLevel" name="log_level" class="setting-select">
+                    <option value="error">Error - len chyby</option>
+                    <option value="info">Info - bežné udalosti</option>
+                    <option value="debug">Debug - podrobné logovanie</option>
+                  </select>
+                </div>
+              </div>
 
-          <!-- Prezerač logov -->
-          <div class="setting-group">
-            <div class="setting-header">
-              <label>
-                <strong>Systémové logy</strong>
-              </label>
-            </div>
-            <div class="setting-description">
-              Prezerajte a analyzujte systémové logy, štatistiky API volaní a udalosti perimetrov.
-            </div>
-            <div class="setting-input-group">
-              <button type="button" id="openLogViewer" class="btn-secondary">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
-                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-                  <polyline points="14 2 14 8 20 8"/>
-                  <line x1="16" y1="13" x2="8" y2="13"/>
-                  <line x1="16" y1="17" x2="8" y2="17"/>
-                  <polyline points="10 9 9 9 8 9"/>
-                </svg>
-                Otvoriť prezerač logov
-              </button>
+              <!-- Prezerač logov -->
+              <div class="setting-group">
+                <div class="setting-header">
+                  <label><strong>Systémové logy</strong></label>
+                </div>
+                <div class="setting-description">
+                  Prezerajte a analyzujte systémové logy a štatistiky.
+                </div>
+                <div class="setting-input-group">
+                  <button type="button" id="openLogViewer" class="btn-secondary">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                      <polyline points="14 2 14 8 20 8"/>
+                      <line x1="16" y1="13" x2="8" y2="13"/>
+                      <line x1="16" y1="17" x2="8" y2="17"/>
+                      <polyline points="10 9 9 9 8 9"/>
+                    </svg>
+                    Otvoriť prezerač logov
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
 
