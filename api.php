@@ -1120,6 +1120,45 @@ if ($action === 'invalidate_mac' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
+// Get MAC address history (last 20 records)
+if ($action === 'get_mac_history') {
+    try {
+        $mac = qparam('mac');
+        if (!$mac) {
+            respond(['ok' => false, 'error' => 'MAC address is required'], 400);
+        }
+
+        $pdo = db();
+        $stmt = $pdo->prepare('
+            SELECT id, timestamp, latitude, longitude, source
+            FROM tracker_data
+            WHERE raw_wifi_macs = ?
+            ORDER BY timestamp DESC
+            LIMIT 20
+        ');
+        $stmt->execute([$mac]);
+        $records = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        $history = [];
+        foreach ($records as $r) {
+            $history[] = [
+                'id' => (int)$r['id'],
+                'timestamp' => utc_to_local($r['timestamp']),
+                'lat' => $r['latitude'] ? (float)$r['latitude'] : null,
+                'lng' => $r['longitude'] ? (float)$r['longitude'] : null,
+                'source' => $r['source']
+            ];
+        }
+
+        respond([
+            'ok' => true,
+            'data' => $history
+        ]);
+    } catch (Throwable $e) {
+        respond(['ok' => false, 'error' => 'Failed to get MAC history: ' . $e->getMessage()], 500);
+    }
+}
+
 // ========== LOG VIEWER ==========
 
 if ($action === 'get_logs') {

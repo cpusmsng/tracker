@@ -1531,8 +1531,13 @@ async function loadHistory(dateStr) {
       lastPositionMarker = L.marker([p.latitude, p.longitude], { icon })
         .bindTooltip(new Date(p.timestamp).toLocaleString('sk-SK'), { permanent:false, opacity:1 })
         .addTo(map);
+
+      // Add click handler to highlight corresponding table row
+      lastPositionMarker.on('click', () => {
+        highlightTableRowByCoords(p.latitude, p.longitude);
+      });
     } else {
-      const marker = L.circleMarker([p.latitude, p.longitude], { 
+      const marker = L.circleMarker([p.latitude, p.longitude], {
         radius:4,
         fillColor: '#3388ff',
         color: '#fff',
@@ -1541,7 +1546,13 @@ async function loadHistory(dateStr) {
       })
        .bindTooltip(new Date(p.timestamp).toLocaleString('sk-SK'), { permanent:false, opacity:1 })
        .addTo(trackLayer);
-      
+
+      // Add click handler to highlight corresponding table row
+      marker.on('click', () => {
+        highlightTableRowByCoords(p.latitude, p.longitude);
+        highlightMarker(marker);
+      });
+
       circleMarkers.push({ marker, lat: p.latitude, lng: p.longitude });
     }
   });
@@ -1761,6 +1772,53 @@ function renderTable(rows) {
   });
 }
 
+// --------- Map Marker Click Handlers ---------
+function highlightTableRowByCoords(lat, lng) {
+  const table = $('#positionsTable');
+  if (!table) return;
+
+  // Remove previous highlights
+  table.querySelectorAll('tbody tr').forEach(row => {
+    row.classList.remove('highlighted');
+  });
+
+  // Find and highlight matching row
+  table.querySelectorAll('tbody tr').forEach(row => {
+    const rowLat = parseFloat(row.getAttribute('data-lat'));
+    const rowLng = parseFloat(row.getAttribute('data-lng'));
+    if (Math.abs(rowLat - lat) < 0.000001 && Math.abs(rowLng - lng) < 0.000001) {
+      row.classList.add('highlighted');
+      // Scroll row into view
+      row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  });
+}
+
+function highlightMarker(selectedMarker) {
+  // Reset all markers to default style
+  circleMarkers.forEach(cm => {
+    cm.marker.setStyle({
+      radius: 4,
+      fillColor: '#3388ff',
+      color: '#fff',
+      weight: 1,
+      fillOpacity: 0.8
+    });
+  });
+
+  // Highlight selected marker
+  selectedMarker.setStyle({
+    radius: 8,
+    fillColor: '#ff6b00',
+    color: '#fff',
+    weight: 2,
+    fillOpacity: 1
+  });
+
+  // Open tooltip
+  selectedMarker.openTooltip();
+}
+
 // --------- Position Edit Modal ---------
 let positionEditMap = null;
 let positionEditCurrentMarker = null;
@@ -1818,6 +1876,8 @@ function updatePositionEditNewMarker(lat, lng) {
   }).addTo(positionEditMap);
 }
 
+let positionEditHistoryLayer = null;
+
 async function openPositionEditModal(positionId) {
   try {
     const result = await apiGet(`${API}?action=get_position_detail&id=${positionId}`);
@@ -1837,13 +1897,19 @@ async function openPositionEditModal(positionId) {
     $('#editPositionTimestamp').textContent = timestamp.toLocaleString('sk-SK');
     $('#editPositionSource').textContent = currentEditPosition.source || '—';
 
+    // MAC address and history
     if (currentEditPosition.mac_address) {
       $('#editMacRow').style.display = 'flex';
       $('#editPositionMac').textContent = currentEditPosition.mac_address;
       $('#invalidateMac').style.display = 'inline-flex';
+      $('#macHistorySection').style.display = 'block';
+      // Load MAC history
+      loadMacHistory(currentEditPosition.mac_address);
     } else {
       $('#editMacRow').style.display = 'none';
       $('#invalidateMac').style.display = 'none';
+      $('#macHistorySection').style.display = 'none';
+      $('#macHistoryBody').innerHTML = '';
     }
 
     $('#editCurrentLat').value = currentEditPosition.lat;
@@ -1858,9 +1924,15 @@ async function openPositionEditModal(positionId) {
       if (positionEditMap && currentEditPosition.lat && currentEditPosition.lng) {
         positionEditMap.setView([currentEditPosition.lat, currentEditPosition.lng], 16);
 
+        // Clear previous layers
         if (positionEditCurrentMarker) {
           positionEditMap.removeLayer(positionEditCurrentMarker);
         }
+        if (positionEditHistoryLayer) {
+          positionEditMap.removeLayer(positionEditHistoryLayer);
+          positionEditHistoryLayer = null;
+        }
+
         positionEditCurrentMarker = L.marker([currentEditPosition.lat, currentEditPosition.lng], {
           icon: L.divIcon({
             className: 'custom-marker',
@@ -1874,6 +1946,95 @@ async function openPositionEditModal(positionId) {
 
   } catch (err) {
     alert(`Chyba pri načítavaní záznamu: ${err.message}`);
+  }
+}
+
+async function loadMacHistory(mac) {
+  const tbody = $('#macHistoryBody');
+  tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;">Načítavam...</td></tr>';
+
+  try {
+    const result = await apiGet(`${API}?action=get_mac_history&mac=${encodeURIComponent(mac)}`);
+
+    if (!result.ok || !result.data || result.data.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;color:var(--muted-text);">Žiadna história</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = result.data.map(h => {
+      const d = new Date(h.timestamp);
+      const dateStr = d.toLocaleDateString('sk-SK');
+      const timeStr = d.toLocaleTimeString('sk-SK', { hour: '2-digit', minute: '2-digit' });
+      const coords = h.lat && h.lng ? `${h.lat.toFixed(5)}, ${h.lng.toFixed(5)}` : '—';
+      const dateValue = d.toISOString().split('T')[0]; // YYYY-MM-DD for fetching
+      return `<tr data-date="${dateValue}" data-lat="${h.lat || ''}" data-lng="${h.lng || ''}">
+        <td>${dateStr}</td>
+        <td>${timeStr}</td>
+        <td>${coords}</td>
+      </tr>`;
+    }).join('');
+
+    // Add click handlers for history rows
+    tbody.querySelectorAll('tr').forEach(tr => {
+      tr.addEventListener('click', () => {
+        const date = tr.getAttribute('data-date');
+        if (date) {
+          // Remove active class from all rows
+          tbody.querySelectorAll('tr').forEach(r => r.classList.remove('active'));
+          tr.classList.add('active');
+          // Load day movements on mini map
+          loadHistoryDayOnMap(date);
+        }
+      });
+    });
+  } catch (err) {
+    tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;color:#ef4444;">Chyba načítania</td></tr>';
+  }
+}
+
+async function loadHistoryDayOnMap(date) {
+  if (!positionEditMap) return;
+
+  // Clear previous history layer
+  if (positionEditHistoryLayer) {
+    positionEditMap.removeLayer(positionEditHistoryLayer);
+  }
+  positionEditHistoryLayer = L.layerGroup().addTo(positionEditMap);
+
+  try {
+    const data = await apiGet(`${API}?action=get_history&date=${encodeURIComponent(date)}`);
+    if (!Array.isArray(data) || data.length === 0) return;
+
+    const coords = data.filter(p => p.latitude && p.longitude).map(p => [p.latitude, p.longitude]);
+
+    if (coords.length === 0) return;
+
+    // Draw polyline in red
+    const polyline = L.polyline(coords, { color: '#ef4444', weight: 3, opacity: 0.7 });
+    positionEditHistoryLayer.addLayer(polyline);
+
+    // Add markers for each point
+    data.forEach((p, i) => {
+      if (!p.latitude || !p.longitude) return;
+      const marker = L.circleMarker([p.latitude, p.longitude], {
+        radius: 5,
+        color: '#ef4444',
+        fillColor: '#ef4444',
+        fillOpacity: 0.8,
+        weight: 2
+      });
+      const time = new Date(p.timestamp).toLocaleTimeString('sk-SK', { hour: '2-digit', minute: '2-digit' });
+      marker.bindTooltip(`${time} - ${p.source}`);
+      positionEditHistoryLayer.addLayer(marker);
+    });
+
+    // Fit bounds to show all points
+    if (coords.length > 0) {
+      const bounds = L.latLngBounds(coords);
+      positionEditMap.fitBounds(bounds, { padding: [20, 20] });
+    }
+  } catch (err) {
+    console.error('Failed to load history day:', err);
   }
 }
 

@@ -2554,3 +2554,60 @@ body.authenticated .container{
   font-size:12px;
   margin-bottom:8px;
 }
+
+/* ========== MAC HISTORY TABLE ========== */
+.mac-history-container{
+  max-height:250px;
+  overflow-y:auto;
+  border:1px solid var(--border);
+  border-radius:8px;
+}
+
+.mac-history-table{
+  width:100%;
+  border-collapse:collapse;
+  font-size:13px;
+}
+
+.mac-history-table th,
+.mac-history-table td{
+  padding:8px 12px;
+  text-align:left;
+  border-bottom:1px solid var(--border);
+}
+
+.mac-history-table th{
+  background:var(--muted-bg);
+  font-weight:600;
+  position:sticky;
+  top:0;
+  z-index:1;
+}
+
+.mac-history-table tbody tr{
+  cursor:pointer;
+  transition:background 0.15s;
+}
+
+.mac-history-table tbody tr:hover{
+  background:var(--muted-bg);
+}
+
+.mac-history-table tbody tr.active{
+  background:var(--primary);
+  color:white;
+}
+
+.mac-history-table tbody tr:last-child td{
+  border-bottom:none;
+}
+
+/* Position table row highlight */
+#positionsTable .pos-table tbody tr.highlighted{
+  background:var(--primary) !important;
+  color:white;
+}
+
+#positionsTable .pos-table tbody tr.highlighted td{
+  color:white;
+}
