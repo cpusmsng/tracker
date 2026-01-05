@@ -99,6 +99,22 @@ function utc_to_local(string $utcTimestamp): string {
     return $dt->format(DateTime::ATOM);
 }
 
+// Helper function for distance calculation (Haversine formula)
+function haversineDistance(float $lat1, float $lng1, float $lat2, float $lng2): float {
+    $earthRadius = 6371000; // meters
+    $lat1Rad = deg2rad($lat1);
+    $lat2Rad = deg2rad($lat2);
+    $deltaLat = deg2rad($lat2 - $lat1);
+    $deltaLng = deg2rad($lng2 - $lng1);
+
+    $a = sin($deltaLat / 2) * sin($deltaLat / 2) +
+         cos($lat1Rad) * cos($lat2Rad) *
+         sin($deltaLng / 2) * sin($deltaLng / 2);
+    $c = 2 * atan2(sqrt($a), sqrt(1 - $a));
+
+    return $earthRadius * $c;
+}
+
 // Helper function to get log file path - same logic as fetch_data.php
 function get_log_file_path(): string {
     $envPath = getenv('LOG_FILE');
@@ -768,7 +784,10 @@ if ($action === 'get_settings') {
             'unique_bucket_minutes' => (int)(getenv('UNIQUE_BUCKET_MINUTES') ?: 30),
             'mac_cache_max_age_days' => (int)(getenv('MAC_CACHE_MAX_AGE_DAYS') ?: 3600),
             'google_force' => getenv('GOOGLE_FORCE') ?: '0',
-            'log_level' => strtolower(getenv('LOG_LEVEL') ?: 'info')
+            'log_level' => strtolower(getenv('LOG_LEVEL') ?: 'info'),
+            'fetch_frequency_minutes' => (int)(getenv('FETCH_FREQUENCY_MINUTES') ?: 5),
+            'smart_refetch_frequency_minutes' => (int)(getenv('SMART_REFETCH_FREQUENCY_MINUTES') ?: 30),
+            'smart_refetch_days' => (int)(getenv('SMART_REFETCH_DAYS') ?: 7)
         ];
 
         respond([
@@ -792,6 +811,9 @@ if ($action === 'save_settings' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         $macCacheMaxAgeDays = isset($j['mac_cache_max_age_days']) ? (int)$j['mac_cache_max_age_days'] : null;
         $googleForce = isset($j['google_force']) ? (string)$j['google_force'] : null;
         $logLevel = isset($j['log_level']) ? strtolower(trim((string)$j['log_level'])) : null;
+        $fetchFrequencyMinutes = isset($j['fetch_frequency_minutes']) ? (int)$j['fetch_frequency_minutes'] : null;
+        $smartRefetchFrequencyMinutes = isset($j['smart_refetch_frequency_minutes']) ? (int)$j['smart_refetch_frequency_minutes'] : null;
+        $smartRefetchDays = isset($j['smart_refetch_days']) ? (int)$j['smart_refetch_days'] : null;
 
         // Validácia hraničných hodnôt
         if ($hysteresisMeters !== null && ($hysteresisMeters < 10 || $hysteresisMeters > 500)) {
@@ -815,6 +837,15 @@ if ($action === 'save_settings' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($logLevel !== null && !in_array($logLevel, ['error', 'info', 'debug'], true)) {
             respond(['ok' => false, 'error' => 'log_level must be "error", "info", or "debug"'], 400);
         }
+        if ($fetchFrequencyMinutes !== null && ($fetchFrequencyMinutes < 1 || $fetchFrequencyMinutes > 60)) {
+            respond(['ok' => false, 'error' => 'fetch_frequency_minutes must be between 1 and 60'], 400);
+        }
+        if ($smartRefetchFrequencyMinutes !== null && ($smartRefetchFrequencyMinutes < 5 || $smartRefetchFrequencyMinutes > 1440)) {
+            respond(['ok' => false, 'error' => 'smart_refetch_frequency_minutes must be between 5 and 1440'], 400);
+        }
+        if ($smartRefetchDays !== null && ($smartRefetchDays < 1 || $smartRefetchDays > 30)) {
+            respond(['ok' => false, 'error' => 'smart_refetch_days must be between 1 and 30'], 400);
+        }
 
         // Načítaj aktuálny .env súbor
         $envPath = __DIR__ . '/.env';
@@ -835,7 +866,10 @@ if ($action === 'save_settings' && $_SERVER['REQUEST_METHOD'] === 'POST') {
             'unique_bucket_minutes' => 'UNIQUE_BUCKET_MINUTES',
             'mac_cache_max_age_days' => 'MAC_CACHE_MAX_AGE_DAYS',
             'google_force' => 'GOOGLE_FORCE',
-            'log_level' => 'LOG_LEVEL'
+            'log_level' => 'LOG_LEVEL',
+            'fetch_frequency_minutes' => 'FETCH_FREQUENCY_MINUTES',
+            'smart_refetch_frequency_minutes' => 'SMART_REFETCH_FREQUENCY_MINUTES',
+            'smart_refetch_days' => 'SMART_REFETCH_DAYS'
         ];
 
         $newSettings = [];
@@ -918,7 +952,9 @@ if ($action === 'reset_settings' && $_SERVER['REQUEST_METHOD'] === 'POST') {
             'UNIQUE_BUCKET_MINUTES' => '30',
             'MAC_CACHE_MAX_AGE_DAYS' => '3600',
             'GOOGLE_FORCE' => '0',
-            'LOG_LEVEL' => 'info'
+            'LOG_LEVEL' => 'info',
+            'SMART_REFETCH_FREQUENCY_MINUTES' => '30',
+            'SMART_REFETCH_DAYS' => '7'
         ];
 
         // Aktualizuj riadky v .env
@@ -966,6 +1002,619 @@ if ($action === 'reset_settings' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         ]);
     } catch (Throwable $e) {
         respond(['ok' => false, 'error' => 'Failed to reset settings: ' . $e->getMessage()], 500);
+    }
+}
+
+// ========== POSITION EDITING ==========
+
+// Get position detail for editing
+if ($action === 'get_position_detail') {
+    try {
+        $id = (int)qparam('id');
+        if (!$id) {
+            respond(['ok' => false, 'error' => 'Position ID is required'], 400);
+        }
+
+        $pdo = db();
+        $stmt = $pdo->prepare('SELECT id, timestamp, latitude, longitude, source, raw_wifi_macs, primary_mac FROM tracker_data WHERE CAST(id AS INTEGER) = ?');
+        $stmt->execute([$id]);
+        $position = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if (!$position) {
+            respond(['ok' => false, 'error' => 'Position not found'], 404);
+        }
+
+        // Map to expected field names for frontend
+        $result = [
+            'id' => (int)$position['id'],
+            'timestamp' => utc_to_local($position['timestamp']),
+            'lat' => (float)$position['latitude'],
+            'lng' => (float)$position['longitude'],
+            'source' => $position['source'],
+            'all_macs' => $position['raw_wifi_macs'],
+            'primary_mac' => $position['primary_mac']
+        ];
+
+        respond([
+            'ok' => true,
+            'data' => $result
+        ]);
+    } catch (Throwable $e) {
+        respond(['ok' => false, 'error' => 'Failed to get position detail: ' . $e->getMessage()], 500);
+    }
+}
+
+// Update position coordinates
+if ($action === 'update_position' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    try {
+        $j = json_body();
+
+        $id = isset($j['id']) ? (int)$j['id'] : null;
+        $newLat = isset($j['lat']) ? (float)$j['lat'] : null;
+        $newLng = isset($j['lng']) ? (float)$j['lng'] : null;
+
+        if (!$id) {
+            respond(['ok' => false, 'error' => 'Position ID is required'], 400);
+        }
+        if ($newLat === null || $newLng === null) {
+            respond(['ok' => false, 'error' => 'New coordinates (lat, lng) are required'], 400);
+        }
+
+        // Validate coordinate ranges
+        if ($newLat < -90 || $newLat > 90) {
+            respond(['ok' => false, 'error' => 'Latitude must be between -90 and 90'], 400);
+        }
+        if ($newLng < -180 || $newLng > 180) {
+            respond(['ok' => false, 'error' => 'Longitude must be between -180 and 180'], 400);
+        }
+
+        $pdo = db();
+
+        // First get the current position to check it exists
+        $stmt = $pdo->prepare('SELECT id, raw_wifi_macs, source FROM tracker_data WHERE CAST(id AS INTEGER) = ?');
+        $stmt->execute([$id]);
+        $position = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if (!$position) {
+            respond(['ok' => false, 'error' => 'Position not found'], 404);
+        }
+
+        // Update the position
+        $stmt = $pdo->prepare('UPDATE tracker_data SET latitude = ?, longitude = ? WHERE CAST(id AS INTEGER) = ?');
+        $stmt->execute([$newLat, $newLng, $id]);
+
+        // If this was a WiFi position, also update the mac_locations cache
+        $rawMacs = $position['raw_wifi_macs'];
+        if ($rawMacs && strpos($position['source'], 'wifi') !== false) {
+            // Update all MACs from this position
+            $macs = array_filter(array_map('trim', explode(',', $rawMacs)));
+            foreach ($macs as $mac) {
+                $stmt = $pdo->prepare('UPDATE mac_locations SET latitude = ?, longitude = ?, last_queried = datetime(\'now\') WHERE mac_address = ?');
+                $stmt->execute([$newLat, $newLng, $mac]);
+            }
+        }
+
+        respond([
+            'ok' => true,
+            'message' => 'Position updated successfully'
+        ]);
+    } catch (Throwable $e) {
+        respond(['ok' => false, 'error' => 'Failed to update position: ' . $e->getMessage()], 500);
+    }
+}
+
+// Invalidate MAC address cache (remove coordinates for a MAC)
+if ($action === 'invalidate_mac' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    try {
+        $j = json_body();
+
+        $mac = isset($j['mac']) ? trim((string)$j['mac']) : null;
+        $positionId = isset($j['position_id']) ? (int)$j['position_id'] : null;
+
+        if (!$mac) {
+            respond(['ok' => false, 'error' => 'MAC address is required'], 400);
+        }
+
+        $pdo = db();
+
+        // Mark the MAC as negative in the cache (no location)
+        $stmt = $pdo->prepare('UPDATE mac_locations SET lat = NULL, lng = NULL, negative = 1, updated_at = datetime(\'now\') WHERE mac = ?');
+        $stmt->execute([$mac]);
+
+        // If mac_locations didn't have this MAC, insert it as negative
+        if ($stmt->rowCount() === 0) {
+            $stmt = $pdo->prepare('INSERT OR REPLACE INTO mac_locations (mac, lat, lng, negative, created_at, updated_at) VALUES (?, NULL, NULL, 1, datetime(\'now\'), datetime(\'now\'))');
+            $stmt->execute([$mac]);
+        }
+
+        // Clear coordinates from all tracker_data entries with this MAC
+        $stmt = $pdo->prepare('UPDATE tracker_data SET latitude = NULL, longitude = NULL WHERE raw_wifi_macs = ?');
+        $stmt->execute([$mac]);
+        $affectedPositions = $stmt->rowCount();
+
+        respond([
+            'ok' => true,
+            'message' => "MAC cache invalidated. Affected positions: $affectedPositions"
+        ]);
+    } catch (Throwable $e) {
+        respond(['ok' => false, 'error' => 'Failed to invalidate MAC: ' . $e->getMessage()], 500);
+    }
+}
+
+// Get MAC address history (last 20 records where this MAC was used)
+if ($action === 'get_mac_history') {
+    try {
+        $mac = qparam('mac');
+        if (!$mac) {
+            respond(['ok' => false, 'error' => 'MAC address is required'], 400);
+        }
+
+        $pdo = db();
+        // Search by primary_mac (exact) OR raw_wifi_macs (LIKE) for backward compatibility
+        $stmt = $pdo->prepare('
+            SELECT id, timestamp, latitude, longitude, source, primary_mac, raw_wifi_macs
+            FROM tracker_data
+            WHERE primary_mac = ? OR raw_wifi_macs LIKE ?
+            ORDER BY timestamp DESC
+            LIMIT 20
+        ');
+        $stmt->execute([$mac, '%' . $mac . '%']);
+        $records = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        $history = [];
+        foreach ($records as $r) {
+            $history[] = [
+                'id' => (int)$r['id'],
+                'timestamp' => utc_to_local($r['timestamp']),
+                'lat' => $r['latitude'] ? (float)$r['latitude'] : null,
+                'lng' => $r['longitude'] ? (float)$r['longitude'] : null,
+                'source' => $r['source'],
+                'primary_mac' => $r['primary_mac']
+            ];
+        }
+
+        respond([
+            'ok' => true,
+            'data' => $history
+        ]);
+    } catch (Throwable $e) {
+        respond(['ok' => false, 'error' => 'Failed to get MAC history: ' . $e->getMessage()], 500);
+    }
+}
+
+// ========== MAC MANAGEMENT ==========
+
+// Get all MAC locations with filtering
+if ($action === 'get_mac_locations') {
+    try {
+        $pdo = db();
+
+        $type = qparam('type') ?: 'no-coords'; // no-coords, with-coords, all
+        $search = qparam('search');
+        $dateFrom = qparam('date_from');
+        $dateTo = qparam('date_to');
+        $sortBy = qparam('sort') ?: 'date';
+        $sortDir = qparam('dir') ?: 'desc';
+
+        $where = [];
+        $params = [];
+
+        if ($type === 'no-coords') {
+            $where[] = '(latitude IS NULL OR longitude IS NULL)';
+        } elseif ($type === 'with-coords') {
+            $where[] = '(latitude IS NOT NULL AND longitude IS NOT NULL)';
+        }
+
+        if ($search) {
+            $where[] = 'mac_address LIKE ?';
+            $params[] = '%' . $search . '%';
+        }
+
+        if ($dateFrom) {
+            $where[] = 'last_queried >= ?';
+            $params[] = $dateFrom;
+        }
+
+        if ($dateTo) {
+            $where[] = 'last_queried <= ?';
+            $params[] = $dateTo . ' 23:59:59';
+        }
+
+        $whereClause = count($where) > 0 ? 'WHERE ' . implode(' AND ', $where) : '';
+
+        $validSorts = ['mac' => 'mac_address', 'lat' => 'latitude', 'lng' => 'longitude', 'date' => 'last_queried'];
+        $orderCol = $validSorts[$sortBy] ?? 'last_queried';
+        $orderDir = strtoupper($sortDir) === 'ASC' ? 'ASC' : 'DESC';
+
+        $sql = "SELECT mac_address, latitude, longitude, last_queried FROM mac_locations $whereClause ORDER BY $orderCol $orderDir LIMIT 500";
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute($params);
+        $records = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        $data = [];
+        foreach ($records as $r) {
+            $data[] = [
+                'mac' => $r['mac_address'],
+                'lat' => $r['latitude'] !== null ? (float)$r['latitude'] : null,
+                'lng' => $r['longitude'] !== null ? (float)$r['longitude'] : null,
+                'last_queried' => $r['last_queried'] ? utc_to_local($r['last_queried']) : null
+            ];
+        }
+
+        respond(['ok' => true, 'data' => $data]);
+    } catch (Throwable $e) {
+        respond(['ok' => false, 'error' => 'Failed to get MAC locations: ' . $e->getMessage()], 500);
+    }
+}
+
+// Update MAC location coordinates
+if ($action === 'update_mac_coordinates' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    try {
+        $j = json_body();
+        $mac = isset($j['mac']) ? trim((string)$j['mac']) : null;
+        $lat = isset($j['lat']) ? (float)$j['lat'] : null;
+        $lng = isset($j['lng']) ? (float)$j['lng'] : null;
+
+        if (!$mac) {
+            respond(['ok' => false, 'error' => 'MAC address is required'], 400);
+        }
+
+        $pdo = db();
+        $stmt = $pdo->prepare('UPDATE mac_locations SET latitude = ?, longitude = ?, last_queried = datetime("now") WHERE mac_address = ?');
+        $stmt->execute([$lat, $lng, $mac]);
+
+        if ($stmt->rowCount() === 0) {
+            // Insert if not exists
+            $stmt = $pdo->prepare('INSERT INTO mac_locations (mac_address, latitude, longitude, last_queried) VALUES (?, ?, ?, datetime("now"))');
+            $stmt->execute([$mac, $lat, $lng]);
+        }
+
+        respond(['ok' => true, 'message' => 'MAC coordinates updated']);
+    } catch (Throwable $e) {
+        respond(['ok' => false, 'error' => 'Failed to update MAC coordinates: ' . $e->getMessage()], 500);
+    }
+}
+
+// Batch refetch days for positions with specific primary_mac
+if ($action === 'batch_refetch_days' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    try {
+        $j = json_body();
+        $dates = isset($j['dates']) ? (array)$j['dates'] : [];
+        $mac = isset($j['mac']) ? trim((string)$j['mac']) : null;
+
+        if (empty($dates) && !$mac) {
+            respond(['ok' => false, 'error' => 'Either dates array or MAC address is required'], 400);
+        }
+
+        $pdo = db();
+        $refetchedDays = [];
+
+        // If MAC is provided, get all days where this MAC was the primary
+        if ($mac && empty($dates)) {
+            $stmt = $pdo->prepare("SELECT DISTINCT DATE(timestamp) as day FROM tracker_data WHERE primary_mac = ?");
+            $stmt->execute([$mac]);
+            while ($r = $stmt->fetch()) {
+                $dates[] = $r['day'];
+            }
+        }
+
+        // Delete positions for these days and queue refetch
+        foreach ($dates as $date) {
+            if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) continue;
+
+            // Delete positions for this day
+            $stmt = $pdo->prepare("DELETE FROM tracker_data WHERE DATE(timestamp) = ?");
+            $stmt->execute([$date]);
+            $deleted = $stmt->rowCount();
+
+            // Insert into refetch queue (if table exists)
+            try {
+                $stmt = $pdo->prepare("INSERT OR REPLACE INTO refetch_state (date, status, reason) VALUES (?, 'pending', 'manual_mac_invalidation')");
+                $stmt->execute([$date]);
+            } catch (Throwable $e) {
+                // refetch_state table might not exist, ignore
+            }
+
+            $refetchedDays[] = ['date' => $date, 'deleted' => $deleted];
+        }
+
+        respond([
+            'ok' => true,
+            'message' => 'Days queued for refetch',
+            'days' => $refetchedDays
+        ]);
+    } catch (Throwable $e) {
+        respond(['ok' => false, 'error' => 'Failed to batch refetch: ' . $e->getMessage()], 500);
+    }
+}
+
+// Retry Google Geolocation API for selected MACs
+if ($action === 'retry_google_macs' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    try {
+        $j = json_body();
+        $macs = isset($j['macs']) ? (array)$j['macs'] : [];
+
+        if (empty($macs)) {
+            respond(['ok' => false, 'error' => 'No MAC addresses provided'], 400);
+        }
+
+        $googleApiKey = getenv('GOOGLE_API_KEY') ?: '';
+        if (!$googleApiKey) {
+            respond(['ok' => false, 'error' => 'Google API key not configured'], 500);
+        }
+
+        $pdo = db();
+        $results = [];
+        $successCount = 0;
+        $failedCount = 0;
+
+        // For each selected MAC, find tracker_data records and get all MACs from that position
+        foreach ($macs as $targetMac) {
+            $targetMac = trim((string)$targetMac);
+            if (!$targetMac) continue;
+
+            // Find a position that contains this MAC (either as primary_mac or in raw_wifi_macs)
+            $stmt = $pdo->prepare("
+                SELECT raw_wifi_macs, timestamp
+                FROM tracker_data
+                WHERE source LIKE 'wifi%'
+                  AND (primary_mac = ? OR raw_wifi_macs LIKE ?)
+                ORDER BY timestamp DESC
+                LIMIT 1
+            ");
+            $stmt->execute([$targetMac, '%' . $targetMac . '%']);
+            $row = $stmt->fetch();
+
+            if (!$row || empty($row['raw_wifi_macs'])) {
+                $results[] = ['mac' => $targetMac, 'status' => 'no_data', 'message' => 'No WiFi data found for this MAC'];
+                $failedCount++;
+                continue;
+            }
+
+            // Parse all MACs from this position
+            $allMacs = array_filter(array_map('trim', explode(',', $row['raw_wifi_macs'])));
+            if (count($allMacs) < 1) {
+                $results[] = ['mac' => $targetMac, 'status' => 'no_data', 'message' => 'No valid MACs found'];
+                $failedCount++;
+                continue;
+            }
+
+            // Build WiFi access points array for Google API
+            // Since we don't have RSSI stored, use a reasonable default (-70 dBm)
+            $wifiAccessPoints = [];
+            foreach ($allMacs as $mac) {
+                $mac = strtoupper(preg_replace('/[^0-9A-F]/i', '', $mac));
+                if (strlen($mac) !== 12) continue;
+                $formattedMac = implode(':', str_split($mac, 2));
+                $wifiAccessPoints[] = [
+                    'macAddress' => $formattedMac,
+                    'signalStrength' => -70 // Default RSSI since we don't store it
+                ];
+            }
+
+            if (count($wifiAccessPoints) < 1) {
+                $results[] = ['mac' => $targetMac, 'status' => 'invalid_macs', 'message' => 'No valid MAC addresses to query'];
+                $failedCount++;
+                continue;
+            }
+
+            // Call Google Geolocation API
+            $url = 'https://www.googleapis.com/geolocation/v1/geolocate?key=' . rawurlencode($googleApiKey);
+            $payload = json_encode([
+                'considerIp' => false,
+                'wifiAccessPoints' => array_slice($wifiAccessPoints, 0, 6) // Max 6 APs
+            ], JSON_UNESCAPED_SLASHES);
+
+            $ch = curl_init($url);
+            curl_setopt_array($ch, [
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_POST => true,
+                CURLOPT_POSTFIELDS => $payload,
+                CURLOPT_HTTPHEADER => ['Content-Type: application/json'],
+                CURLOPT_TIMEOUT => 15,
+                CURLOPT_CONNECTTIMEOUT => 8,
+            ]);
+            $response = curl_exec($ch);
+            $httpCode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            curl_close($ch);
+
+            if ($response === false || $httpCode !== 200) {
+                $error = $response ? json_decode($response, true) : null;
+                $errorMsg = isset($error['error']['message']) ? $error['error']['message'] : 'HTTP ' . $httpCode;
+                $results[] = ['mac' => $targetMac, 'status' => 'api_error', 'message' => $errorMsg];
+                $failedCount++;
+                continue;
+            }
+
+            $data = json_decode($response, true);
+            if (!isset($data['location']['lat']) || !isset($data['location']['lng'])) {
+                $results[] = ['mac' => $targetMac, 'status' => 'no_location', 'message' => 'Google API returned no location'];
+                $failedCount++;
+                continue;
+            }
+
+            $lat = (float)$data['location']['lat'];
+            $lng = (float)$data['location']['lng'];
+            $accuracy = isset($data['accuracy']) ? (float)$data['accuracy'] : null;
+
+            // Update mac_locations for ALL MACs that were used in this query
+            foreach ($wifiAccessPoints as $ap) {
+                $macAddr = $ap['macAddress'];
+                $stmt = $pdo->prepare("
+                    INSERT INTO mac_locations (mac_address, latitude, longitude, last_queried)
+                    VALUES (?, ?, ?, datetime('now'))
+                    ON CONFLICT(mac_address) DO UPDATE SET
+                        latitude = excluded.latitude,
+                        longitude = excluded.longitude,
+                        last_queried = excluded.last_queried
+                ");
+                $stmt->execute([$macAddr, $lat, $lng]);
+            }
+
+            $results[] = [
+                'mac' => $targetMac,
+                'status' => 'success',
+                'lat' => $lat,
+                'lng' => $lng,
+                'accuracy' => $accuracy,
+                'macs_updated' => count($wifiAccessPoints)
+            ];
+            $successCount++;
+        }
+
+        respond([
+            'ok' => true,
+            'results' => $results,
+            'summary' => [
+                'total' => count($macs),
+                'success' => $successCount,
+                'failed' => $failedCount
+            ]
+        ]);
+    } catch (Throwable $e) {
+        respond(['ok' => false, 'error' => 'Failed to retry Google API: ' . $e->getMessage()], 500);
+    }
+}
+
+// Test Google API and compare with cache coordinates
+if ($action === 'test_google_api' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    try {
+        $j = json_body();
+        $positionId = isset($j['position_id']) ? (int)$j['position_id'] : null;
+
+        if (!$positionId) {
+            respond(['ok' => false, 'error' => 'Position ID is required'], 400);
+        }
+
+        $googleApiKey = getenv('GOOGLE_API_KEY') ?: '';
+        if (!$googleApiKey) {
+            respond(['ok' => false, 'error' => 'Google API key not configured'], 500);
+        }
+
+        $pdo = db();
+
+        // Get position data
+        $stmt = $pdo->prepare("SELECT * FROM tracker_data WHERE id = ?");
+        $stmt->execute([$positionId]);
+        $position = $stmt->fetch();
+
+        if (!$position) {
+            respond(['ok' => false, 'error' => 'Position not found'], 404);
+        }
+
+        if (empty($position['raw_wifi_macs'])) {
+            respond(['ok' => false, 'error' => 'No WiFi MAC data for this position'], 400);
+        }
+
+        // Current (cache) coordinates
+        $cacheLat = (float)$position['latitude'];
+        $cacheLng = (float)$position['longitude'];
+
+        // Parse all MACs from the position
+        $allMacs = array_filter(array_map('trim', explode(',', $position['raw_wifi_macs'])));
+
+        // Build WiFi access points array for Google API
+        $wifiAccessPoints = [];
+        foreach ($allMacs as $mac) {
+            $mac = strtoupper(preg_replace('/[^0-9A-F]/i', '', $mac));
+            if (strlen($mac) !== 12) continue;
+            $formattedMac = implode(':', str_split($mac, 2));
+            $wifiAccessPoints[] = [
+                'macAddress' => $formattedMac,
+                'signalStrength' => -70
+            ];
+        }
+
+        if (count($wifiAccessPoints) < 1) {
+            respond(['ok' => false, 'error' => 'No valid MAC addresses to query'], 400);
+        }
+
+        // Call Google Geolocation API
+        $url = 'https://www.googleapis.com/geolocation/v1/geolocate?key=' . rawurlencode($googleApiKey);
+        $payload = json_encode([
+            'considerIp' => false,
+            'wifiAccessPoints' => array_slice($wifiAccessPoints, 0, 6)
+        ], JSON_UNESCAPED_SLASHES);
+
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_POST => true,
+            CURLOPT_POSTFIELDS => $payload,
+            CURLOPT_HTTPHEADER => ['Content-Type: application/json'],
+            CURLOPT_TIMEOUT => 15,
+            CURLOPT_CONNECTTIMEOUT => 8,
+        ]);
+        $response = curl_exec($ch);
+        $httpCode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+
+        if ($response === false || $httpCode !== 200) {
+            $error = $response ? json_decode($response, true) : null;
+            $errorMsg = isset($error['error']['message']) ? $error['error']['message'] : 'HTTP ' . $httpCode;
+            respond(['ok' => false, 'error' => 'Google API error: ' . $errorMsg], 500);
+        }
+
+        $data = json_decode($response, true);
+        if (!isset($data['location']['lat']) || !isset($data['location']['lng'])) {
+            respond(['ok' => false, 'error' => 'Google API returned no location'], 500);
+        }
+
+        $googleLat = (float)$data['location']['lat'];
+        $googleLng = (float)$data['location']['lng'];
+        $accuracy = isset($data['accuracy']) ? (float)$data['accuracy'] : null;
+
+        // Calculate distance between cache and Google coordinates
+        $distance = haversineDistance($cacheLat, $cacheLng, $googleLat, $googleLng);
+
+        respond([
+            'ok' => true,
+            'cache' => [
+                'lat' => $cacheLat,
+                'lng' => $cacheLng
+            ],
+            'google' => [
+                'lat' => $googleLat,
+                'lng' => $googleLng,
+                'accuracy' => $accuracy
+            ],
+            'distance_meters' => round($distance, 1),
+            'macs_used' => count($wifiAccessPoints)
+        ]);
+    } catch (Throwable $e) {
+        respond(['ok' => false, 'error' => 'Failed to test Google API: ' . $e->getMessage()], 500);
+    }
+}
+
+// Delete MAC coordinates (set to NULL)
+if ($action === 'delete_mac_coordinates' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    try {
+        $j = json_body();
+        $macs = isset($j['macs']) ? (array)$j['macs'] : [];
+
+        if (empty($macs)) {
+            respond(['ok' => false, 'error' => 'No MAC addresses provided'], 400);
+        }
+
+        $pdo = db();
+        $deleted = 0;
+
+        foreach ($macs as $mac) {
+            $mac = trim((string)$mac);
+            if (!$mac) continue;
+
+            $stmt = $pdo->prepare("UPDATE mac_locations SET latitude = NULL, longitude = NULL, last_queried = datetime('now') WHERE mac_address = ?");
+            $stmt->execute([$mac]);
+            $deleted += $stmt->rowCount();
+        }
+
+        respond([
+            'ok' => true,
+            'message' => "Súradnice boli zmazané pre $deleted MAC adries",
+            'deleted' => $deleted
+        ]);
+    } catch (Throwable $e) {
+        respond(['ok' => false, 'error' => 'Failed to delete MAC coordinates: ' . $e->getMessage()], 500);
     }
 }
 

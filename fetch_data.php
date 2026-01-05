@@ -266,13 +266,15 @@ function get_last_position(PDO $pdo, ?string $beforeDate = null): ?array {
 }
 
 function insert_position_with_hysteresis(
-    PDO $pdo, 
-    string $iso, 
-    float $lat, 
-    float $lng, 
-    string $source, 
-    int $hysteresisMeters, 
-    ?array &$lastInsertedPos
+    PDO $pdo,
+    string $iso,
+    float $lat,
+    float $lng,
+    string $source,
+    int $hysteresisMeters,
+    ?array &$lastInsertedPos,
+    ?string $rawMacs = null,
+    ?string $primaryMac = null
 ): array {
     
     $lastPos = $lastInsertedPos;
@@ -312,12 +314,12 @@ function insert_position_with_hysteresis(
     $ts = $dt->format('Y-m-d H:i:s');
     
     try {
-        $stmt = $pdo->prepare("INSERT INTO tracker_data (timestamp, latitude, longitude, source) VALUES (:t,:la,:lo,:s)");
-        $stmt->execute([':t'=>$ts, ':la'=>$lat, ':lo'=>$lng, ':s'=>$source]);
-        
+        $stmt = $pdo->prepare("INSERT INTO tracker_data (timestamp, latitude, longitude, source, raw_wifi_macs, primary_mac) VALUES (:t,:la,:lo,:s,:macs,:pmac)");
+        $stmt->execute([':t'=>$ts, ':la'=>$lat, ':lo'=>$lng, ':s'=>$source, ':macs'=>$rawMacs, ':pmac'=>$primaryMac]);
+
         $lastInsertedPos = ['lat' => $lat, 'lng' => $lng, 'source' => $source];
-        
-        debug_log("    INSERT SUCCESS: $source @ ($lat, $lng)");
+
+        debug_log("    INSERT SUCCESS: $source @ ($lat, $lng)" . ($primaryMac ? " [Primary: $primaryMac]" : "") . ($rawMacs ? " [All MACs: $rawMacs]" : ""));
         return ['inserted' => true, 'reason' => 'ok', 'distance' => $dist !== null ? round($dist, 1) : null];
     } catch (Throwable $e) {
         $errorMsg = $e->getMessage();
@@ -1059,12 +1061,53 @@ if ($lockFp && flock($lockFp, LOCK_EX | LOCK_NB)) {
     exit(0);
 }
 
+// ============== FREQUENCY CHECK ==============
+// Check if enough time has passed since last run (skip for refetch mode)
+$cliArgs = parse_cli_args($argv);
+$isRefetchMode = isset($cliArgs['refetch_date']);
+
+if (!$isRefetchMode) {
+    $fetchFrequencyMinutes = (int)(getenv('FETCH_FREQUENCY_MINUTES') ?: 5);
+    $lastRunFile = __DIR__ . '/data/.fetch_last_run';
+
+    // Ensure data directory exists
+    if (!is_dir(__DIR__ . '/data')) {
+        @mkdir(__DIR__ . '/data', 0755, true);
+    }
+
+    $now = time();
+    $lastRunTime = 0;
+
+    if (is_file($lastRunFile)) {
+        $lastRunTime = (int)file_get_contents($lastRunFile);
+    }
+
+    $elapsedMinutes = ($now - $lastRunTime) / 60;
+
+    if ($elapsedMinutes < $fetchFrequencyMinutes) {
+        debug_log(sprintf(
+            'FREQUENCY CHECK: Only %.1f minutes elapsed since last run (required: %d min), skipping',
+            $elapsedMinutes,
+            $fetchFrequencyMinutes
+        ));
+        exit(0);
+    }
+
+    // Update last run time
+    file_put_contents($lastRunFile, (string)$now);
+    debug_log(sprintf(
+        'FREQUENCY CHECK: %.1f minutes elapsed since last run (required: %d min), proceeding',
+        $elapsedMinutes,
+        $fetchFrequencyMinutes
+    ));
+}
+// ============================================
+
 try {
     // .env is already loaded at the top of the file via load_env_early()
+    // $cliArgs already parsed above for frequency check
 
-    $cliArgs = parse_cli_args($argv);
-    
-    if (isset($cliArgs['refetch_date'])) {
+    if ($isRefetchMode) {
         $REFETCH_MODE = true;
         $REFETCH_DATE = $cliArgs['refetch_date'];
         info_log("REFETCH MODE: Enabled for date $REFETCH_DATE");
@@ -1477,7 +1520,9 @@ try {
         
         if ($positiveCache !== null) {
             debug_log("  -> USING CACHE: MAC=".$positiveCache['mac']);
-            $result = insert_position_with_hysteresis($pdo, $iso, $positiveCache['lat'], $positiveCache['lng'], 'wifi-cache', $HYSTERESIS_METERS, $lastInsertedPos);
+            $allMacs = implode(',', array_map(fn($ap) => $ap['mac'], $wifiForTs));
+            $primaryMac = $positiveCache['mac'];
+            $result = insert_position_with_hysteresis($pdo, $iso, $positiveCache['lat'], $positiveCache['lng'], 'wifi-cache', $HYSTERESIS_METERS, $lastInsertedPos, $allMacs, $primaryMac);
             if ($result['inserted']) {
                 $inserted++; $cacheHits++;
                 $checkPerimetersAfterInsert($positiveCache['lat'], $positiveCache['lng'], $iso);
@@ -1504,7 +1549,8 @@ try {
         $geo = google_geolocate($GKEY, $unknownAps, $WIFI_MIN_APS, $iso, $MAX_APS, $RSSI_FLOOR);
         if ($geo) {
             [$lat,$lng,$acc] = $geo;
-            $result = insert_position_with_hysteresis($pdo, $iso, $lat, $lng, 'wifi-google', $HYSTERESIS_METERS, $lastInsertedPos);
+            $allMacs = implode(',', array_map(fn($ap) => $ap['mac'], $wifiForTs));
+            $result = insert_position_with_hysteresis($pdo, $iso, $lat, $lng, 'wifi-google', $HYSTERESIS_METERS, $lastInsertedPos, $allMacs);
             if ($result['inserted']) {
                 $inserted++;
                 $checkPerimetersAfterInsert($lat, $lng, $iso);

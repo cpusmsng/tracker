@@ -33,7 +33,7 @@ const LOCK_FILE = __DIR__ . '/smart_refetch.lock';
 const FETCH_LOCK_FILE = __DIR__ . '/fetch_data.lock';
 
 // ================================================================
-// KONFIGURÁCIA
+// KONFIGURÁCIA - defaults
 // ================================================================
 $CHECK_DAYS = 7;                  // Koľko dní dozadu kontrolovať (+ dnešok ak INCLUDE_TODAY=true)
 $MIN_RECORDS_PER_DAY = 10;        // Minimálny počet záznamov pre deň aby bol "OK"
@@ -43,10 +43,11 @@ $INCLUDE_TODAY = true;            // DÔLEŽITÉ: Kontroluj aj dnešok (pre dete
 $MAX_REFETCH_PER_RUN = 5;         // Maximum počet refetch na jedno spustenie
 $DEBUG_MODE = false;              // Načíta sa z .env
 
-// Parse argumenty
+// Parse CLI argumenty (môžu prepísať .env nastavenia)
+$CLI_DAYS_OVERRIDE = null;
 foreach ($argv as $arg) {
     if (preg_match('/^--days=(\d+)$/', $arg, $m)) {
-        $CHECK_DAYS = (int)$m[1];
+        $CLI_DAYS_OVERRIDE = (int)$m[1];
     }
     if ($arg === '--dry-run') {
         $DRY_RUN = true;
@@ -77,7 +78,7 @@ function debug_log(string $msg): void {
 }
 
 function load_env(): void {
-    global $DEBUG_MODE;
+    global $DEBUG_MODE, $CHECK_DAYS, $CLI_DAYS_OVERRIDE;
     $env = __DIR__ . '/.env';
     if (is_file($env) && is_readable($env)) {
         foreach (file($env, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) as $line) {
@@ -87,11 +88,19 @@ function load_env(): void {
             }
         }
     }
-    
+
     // Načítaj DEBUG_MODE z .env
     $debugEnv = getenv('DEBUG_MODE');
     if ($debugEnv !== false && in_array(strtolower($debugEnv), ['true', '1', 'yes'])) {
         $DEBUG_MODE = true;
+    }
+
+    // Načítaj SMART_REFETCH_DAYS z .env (ak nie je CLI override)
+    $envDays = getenv('SMART_REFETCH_DAYS');
+    if ($envDays !== false && $envDays !== '' && $CLI_DAYS_OVERRIDE === null) {
+        $CHECK_DAYS = (int)$envDays;
+    } else if ($CLI_DAYS_OVERRIDE !== null) {
+        $CHECK_DAYS = $CLI_DAYS_OVERRIDE;
     }
 }
 
