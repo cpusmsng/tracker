@@ -698,6 +698,8 @@ body.authenticated .container{
   max-width:600px;width:90%;max-height:90vh;
   overflow-y:auto;box-shadow:0 8px 24px rgba(0,0,0,0.2);
   animation:slideUp 0.3s ease;
+  -webkit-overflow-scrolling:touch; /* Smooth scrolling on iOS */
+  overscroll-behavior:contain; /* Prevent scroll chaining */
 }
 
 @keyframes slideUp{
@@ -2211,13 +2213,26 @@ body.authenticated .container{
     width:100%;justify-content:center;
   }
 
-  /* Overlay content */
+  /* Overlay content - mobile browser address bar fix */
+  .overlay{
+    /* Use dvh for dynamic viewport height on mobile */
+    height:100dvh;
+    height:100vh; /* fallback for older browsers */
+    padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  }
+
   .overlay-content{
-    width:95%;max-height:95vh;
+    width:95%;
+    max-height:85dvh;
+    max-height:85vh; /* fallback */
+    margin-bottom:env(safe-area-inset-bottom, 20px);
   }
 
   .overlay-header{
     padding:16px 20px;
+    position:sticky;
+    top:0;
+    z-index:10;
   }
 
   .overlay-header h2{
@@ -2226,6 +2241,7 @@ body.authenticated .container{
 
   .overlay-body{
     padding:16px;
+    padding-bottom:32px; /* Extra space for bottom button visibility */
   }
 
   /* Table horizontal scroll on mobile */
@@ -2323,15 +2339,20 @@ body.authenticated .container{
     height:40vh;
   }
 
-  /* Overlay adjustments */
+  /* Overlay adjustments - smaller screens with address bar */
   .overlay-content{
     width:98%;
-    max-height:98vh;
+    max-height:80dvh;
+    max-height:80vh; /* fallback */
     border-radius:8px;
+    margin-bottom:env(safe-area-inset-bottom, 24px);
   }
 
   .overlay-header{
     padding:12px 16px;
+    position:sticky;
+    top:0;
+    z-index:10;
   }
 
   .overlay-header h2{
@@ -2340,6 +2361,12 @@ body.authenticated .container{
 
   .overlay-body{
     padding:12px;
+    padding-bottom:40px; /* More space for bottom buttons on small screens */
+  }
+
+  /* Ensure form buttons are visible */
+  .form-actions{
+    margin-bottom:16px;
   }
 
   /* Settings */
