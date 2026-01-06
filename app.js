@@ -48,6 +48,12 @@ let ssoEnabled = false;
 let isRedirecting = false; // Prevents content flash during redirect
 const DEBUG_MODE = new URLSearchParams(window.location.search).has('debug');
 
+// URL parameters for deep linking (from email alerts)
+const urlParams = new URLSearchParams(window.location.search);
+const URL_LAT = urlParams.get('lat') ? parseFloat(urlParams.get('lat')) : null;
+const URL_LNG = urlParams.get('lng') ? parseFloat(urlParams.get('lng')) : null;
+const URL_DATE = urlParams.get('date'); // Format: YYYY-MM-DD
+
 // Show authenticated content - call ONLY after successful auth
 function showAuthenticatedContent() {
   document.body.classList.add('authenticated');
@@ -400,7 +406,59 @@ async function initializeApp() {
   initSubdomainSwitcher();
   addUIHandlers();
   await loadAvailableDates();
+
+  // Handle URL date parameter (from email alerts)
+  if (URL_DATE && /^\d{4}-\d{2}-\d{2}$/.test(URL_DATE)) {
+    const [year, month, day] = URL_DATE.split('-').map(Number);
+    currentDate = new Date(year, month - 1, day);
+  }
+
   await refresh();
+
+  // Handle URL lat/lng parameters - zoom to specified location
+  if (URL_LAT !== null && URL_LNG !== null && !isNaN(URL_LAT) && !isNaN(URL_LNG)) {
+    // Zoom to the specified location
+    map.setView([URL_LAT, URL_LNG], 17);
+
+    // Add a temporary highlight marker
+    const highlightIcon = L.divIcon({
+      className: '',
+      html: `
+        <div style="
+          width: 24px;
+          height: 24px;
+          background: #ef4444;
+          border-radius: 50%;
+          border: 4px solid white;
+          box-shadow: 0 0 12px rgba(239, 68, 68, 0.8);
+          animation: pulse-highlight 2s ease-in-out infinite;
+        "></div>
+        <style>
+          @keyframes pulse-highlight {
+            0%, 100% { transform: scale(1); box-shadow: 0 0 12px rgba(239, 68, 68, 0.8); }
+            50% { transform: scale(1.2); box-shadow: 0 0 20px rgba(239, 68, 68, 1); }
+          }
+        </style>
+      `,
+      iconSize: [32, 32],
+      iconAnchor: [16, 16]
+    });
+
+    const highlightMarker = L.marker([URL_LAT, URL_LNG], { icon: highlightIcon })
+      .bindTooltip('Poloha z upozornenia', { permanent: false, opacity: 1 })
+      .addTo(map);
+
+    // Remove the highlight marker after 30 seconds
+    setTimeout(() => {
+      highlightMarker.remove();
+    }, 30000);
+
+    // Clean URL parameters after handling (optional - keeps URL clean)
+    if (window.history.replaceState) {
+      const cleanUrl = window.location.pathname;
+      window.history.replaceState({}, document.title, cleanUrl);
+    }
+  }
 
   // Update battery a last online každých 30 sekúnd pre real-time info
   setInterval(() => {

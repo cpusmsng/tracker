@@ -651,11 +651,18 @@ function send_perimeter_alert_emails(array $breach): int {
         $dt = new DateTimeImmutable($breach['timestamp'], new DateTimeZone('UTC'));
         $dt = $dt->setTimezone(new DateTimeZone('Europe/Bratislava'));
         $formattedTime = $dt->format('d.m.Y H:i:s');
+        $dateStr = $dt->format('Y-m-d');
     } catch (Throwable $e) {
         $formattedTime = $breach['timestamp'];
+        $dateStr = date('Y-m-d');
     }
 
-    $mapsUrl = "https://www.google.com/maps?q={$breach['lat']},{$breach['lng']}";
+    // Use tracker app URL if configured, otherwise fall back to Google Maps
+    if (defined('TRACKER_APP_URL') && TRACKER_APP_URL !== '') {
+        $mapsUrl = TRACKER_APP_URL . "?lat={$breach['lat']}&lng={$breach['lng']}&date={$dateStr}";
+    } else {
+        $mapsUrl = "https://www.google.com/maps?q={$breach['lat']},{$breach['lng']}";
+    }
 
     $htmlBody = "
     <!DOCTYPE html>
@@ -825,11 +832,18 @@ function send_refetch_summary_email(array $breaches, string $refetchDate): int {
             $dt = new DateTimeImmutable($breach['timestamp'], new DateTimeZone('UTC'));
             $dt = $dt->setTimezone(new DateTimeZone('Europe/Bratislava'));
             $formattedTime = $dt->format('H:i:s');
+            $dateStr = $dt->format('Y-m-d');
         } catch (Throwable $e) {
             $formattedTime = $breach['timestamp'];
+            $dateStr = date('Y-m-d');
         }
 
-        $mapsUrl = "https://www.google.com/maps?q={$breach['lat']},{$breach['lng']}";
+        // Use tracker app URL if configured, otherwise fall back to Google Maps
+        if (defined('TRACKER_APP_URL') && TRACKER_APP_URL !== '') {
+            $mapsUrl = TRACKER_APP_URL . "?lat={$breach['lat']}&lng={$breach['lng']}&date={$dateStr}";
+        } else {
+            $mapsUrl = "https://www.google.com/maps?q={$breach['lat']},{$breach['lng']}";
+        }
 
         $tableRows .= "
         <tr>
