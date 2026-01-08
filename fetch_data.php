@@ -19,6 +19,9 @@ function load_env_early(string $path): void {
 }
 load_env_early(__DIR__.'/.env');
 
+// Application URL for email links (falls back to Google Maps if not set)
+define('TRACKER_APP_URL', getenv('TRACKER_APP_URL') ?: '');
+
 // Log file path - from env, or Docker default, or local fallback
 $LOG_FILE = getenv('LOG_FILE') ?: (is_dir('/var/log/tracker') ? '/var/log/tracker/fetch.log' : __DIR__ . '/fetch.log');
 const FETCH_LOCK_FILE = __DIR__ . '/fetch_data.lock';
