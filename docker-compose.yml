@@ -58,6 +58,7 @@ services:
       - EMAIL_API_KEY=${EMAIL_API_KEY:-}
       - EMAIL_FROM=${EMAIL_FROM:-tracker@example.com}
       - EMAIL_FROM_NAME=${EMAIL_FROM_NAME:-Family Tracker}
+      - TRACKER_APP_URL=${TRACKER_APP_URL:-}
 
       # N8N Integration (optional - legacy)
       - N8N_API_KEY=${N8N_API_KEY:-}

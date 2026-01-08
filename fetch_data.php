@@ -14,10 +14,14 @@ function load_env_early(string $path): void {
     foreach (file($path, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) as $line) {
         if ($line === '' || $line[0] === '#' || strpos($line,'=')===false) continue;
         [$k,$v] = array_map('trim', explode('=', $line, 2));
+        $v = trim($v, " \t\n\r\0\x0B\"'"); // Strip quotes
         if ($k !== '') putenv("$k=$v");
     }
 }
 load_env_early(__DIR__.'/.env');
+
+// Application URL for email links (falls back to Google Maps if not set)
+define('TRACKER_APP_URL', getenv('TRACKER_APP_URL') ?: '');
 
 // Log file path - from env, or Docker default, or local fallback
 $LOG_FILE = getenv('LOG_FILE') ?: (is_dir('/var/log/tracker') ? '/var/log/tracker/fetch.log' : __DIR__ . '/fetch.log');
@@ -651,11 +655,18 @@ function send_perimeter_alert_emails(array $breach): int {
         $dt = new DateTimeImmutable($breach['timestamp'], new DateTimeZone('UTC'));
         $dt = $dt->setTimezone(new DateTimeZone('Europe/Bratislava'));
         $formattedTime = $dt->format('d.m.Y H:i:s');
+        $dateStr = $dt->format('Y-m-d');
     } catch (Throwable $e) {
         $formattedTime = $breach['timestamp'];
+        $dateStr = date('Y-m-d');
     }
 
-    $mapsUrl = "https://www.google.com/maps?q={$breach['lat']},{$breach['lng']}";
+    // Use tracker app URL if configured, otherwise fall back to Google Maps
+    if (defined('TRACKER_APP_URL') && TRACKER_APP_URL !== '') {
+        $mapsUrl = TRACKER_APP_URL . "?lat={$breach['lat']}&lng={$breach['lng']}&date={$dateStr}";
+    } else {
+        $mapsUrl = "https://www.google.com/maps?q={$breach['lat']},{$breach['lng']}";
+    }
 
     $htmlBody = "
     <!DOCTYPE html>
@@ -825,11 +836,18 @@ function send_refetch_summary_email(array $breaches, string $refetchDate): int {
             $dt = new DateTimeImmutable($breach['timestamp'], new DateTimeZone('UTC'));
             $dt = $dt->setTimezone(new DateTimeZone('Europe/Bratislava'));
             $formattedTime = $dt->format('H:i:s');
+            $dateStr = $dt->format('Y-m-d');
         } catch (Throwable $e) {
             $formattedTime = $breach['timestamp'];
+            $dateStr = date('Y-m-d');
         }
 
-        $mapsUrl = "https://www.google.com/maps?q={$breach['lat']},{$breach['lng']}";
+        // Use tracker app URL if configured, otherwise fall back to Google Maps
+        if (defined('TRACKER_APP_URL') && TRACKER_APP_URL !== '') {
+            $mapsUrl = TRACKER_APP_URL . "?lat={$breach['lat']}&lng={$breach['lng']}&date={$dateStr}";
+        } else {
+            $mapsUrl = "https://www.google.com/maps?q={$breach['lat']},{$breach['lng']}";
+        }
 
         $tableRows .= "
         <tr>

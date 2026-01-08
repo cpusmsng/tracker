@@ -74,5 +74,8 @@ define('TRUST_DOCKER_NETWORK',      strtolower(getenv('TRUST_DOCKER_NETWORK') ?:
 define('INTERNAL_API_KEY',          getenv('INTERNAL_API_KEY')          ?: '');
 define('SUBDOMAIN_NAME',            getenv('SUBDOMAIN_NAME')            ?: 'tracker');
 
+// Application URL (for email links)
+define('TRACKER_APP_URL',           getenv('TRACKER_APP_URL')           ?: '');
+
 // (voliteľné) ďalšie technické nastavenia
 define('TRACKER_DB_PATH', __DIR__ . '/tracker_database.sqlite');
