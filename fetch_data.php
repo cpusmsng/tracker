@@ -848,10 +848,13 @@ function send_refetch_summary_email(array $breaches, string $refetchDate): int {
         }
 
         // Use tracker app URL if configured, otherwise fall back to Google Maps
+        info_log("SUMMARY EMAIL - TRACKER_APP_URL: '" . (defined('TRACKER_APP_URL') ? TRACKER_APP_URL : 'NOT DEFINED') . "'");
         if (defined('TRACKER_APP_URL') && TRACKER_APP_URL !== '') {
             $mapsUrl = TRACKER_APP_URL . "?lat={$breach['lat']}&lng={$breach['lng']}&date={$dateStr}";
+            info_log("SUMMARY EMAIL - Using tracker URL: $mapsUrl");
         } else {
             $mapsUrl = "https://www.google.com/maps?q={$breach['lat']},{$breach['lng']}";
+            info_log("SUMMARY EMAIL - Using Google Maps (fallback)");
         }
 
         $tableRows .= "
