@@ -14,6 +14,7 @@ function load_env_early(string $path): void {
     foreach (file($path, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) as $line) {
         if ($line === '' || $line[0] === '#' || strpos($line,'=')===false) continue;
         [$k,$v] = array_map('trim', explode('=', $line, 2));
+        $v = trim($v, " \t\n\r\0\x0B\"'"); // Strip quotes
         if ($k !== '') putenv("$k=$v");
     }
 }
