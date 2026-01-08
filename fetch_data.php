@@ -661,11 +661,16 @@ function send_perimeter_alert_emails(array $breach): int {
         $dateStr = date('Y-m-d');
     }
 
+    // DEBUG: Log TRACKER_APP_URL value
+    debug_log("TRACKER_APP_URL value: '" . (defined('TRACKER_APP_URL') ? TRACKER_APP_URL : 'NOT DEFINED') . "'");
+
     // Use tracker app URL if configured, otherwise fall back to Google Maps
     if (defined('TRACKER_APP_URL') && TRACKER_APP_URL !== '') {
         $mapsUrl = TRACKER_APP_URL . "?lat={$breach['lat']}&lng={$breach['lng']}&date={$dateStr}";
+        debug_log("Using tracker URL: $mapsUrl");
     } else {
         $mapsUrl = "https://www.google.com/maps?q={$breach['lat']},{$breach['lng']}";
+        debug_log("Using Google Maps URL (fallback): $mapsUrl");
     }
 
     $htmlBody = "
