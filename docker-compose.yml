@@ -78,6 +78,8 @@ services:
       - SSO_ENABLED=${SSO_ENABLED:-false}
 
     volumes:
+      # Mount .env file for cron jobs (they don't inherit Docker env vars)
+      - ./.env:/var/www/html/.env
       # Persistent data storage
       - tracker-data:/var/www/html/data
       # Logs (optional - for debugging)
