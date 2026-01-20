@@ -86,9 +86,9 @@ LOGIN_URL=${LOGIN_URL}
 SSO_ENABLED=${SSO_ENABLED}
 EOF
 
-# Set proper permissions
+# Set proper permissions (644 to allow host user to read when bind-mounted)
 chown www-data:www-data /var/www/html/.env
-chmod 600 /var/www/html/.env
+chmod 644 /var/www/html/.env
 
 # Ensure data directory has correct permissions
 chown -R www-data:www-data /var/www/html/data /var/log/tracker
