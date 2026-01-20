@@ -787,7 +787,9 @@ if ($action === 'get_settings') {
             'log_level' => strtolower(getenv('LOG_LEVEL') ?: 'info'),
             'fetch_frequency_minutes' => (int)(getenv('FETCH_FREQUENCY_MINUTES') ?: 5),
             'smart_refetch_frequency_minutes' => (int)(getenv('SMART_REFETCH_FREQUENCY_MINUTES') ?: 30),
-            'smart_refetch_days' => (int)(getenv('SMART_REFETCH_DAYS') ?: 7)
+            'smart_refetch_days' => (int)(getenv('SMART_REFETCH_DAYS') ?: 7),
+            'battery_alert_enabled' => in_array(strtolower(getenv('BATTERY_ALERT_ENABLED') ?: 'false'), ['true', '1', 'yes']),
+            'battery_alert_email' => getenv('BATTERY_ALERT_EMAIL') ?: ''
         ];
 
         respond([
@@ -814,6 +816,8 @@ if ($action === 'save_settings' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         $fetchFrequencyMinutes = isset($j['fetch_frequency_minutes']) ? (int)$j['fetch_frequency_minutes'] : null;
         $smartRefetchFrequencyMinutes = isset($j['smart_refetch_frequency_minutes']) ? (int)$j['smart_refetch_frequency_minutes'] : null;
         $smartRefetchDays = isset($j['smart_refetch_days']) ? (int)$j['smart_refetch_days'] : null;
+        $batteryAlertEnabled = isset($j['battery_alert_enabled']) ? ($j['battery_alert_enabled'] ? 'true' : 'false') : null;
+        $batteryAlertEmail = isset($j['battery_alert_email']) ? trim((string)$j['battery_alert_email']) : null;
 
         // Validácia hraničných hodnôt
         if ($hysteresisMeters !== null && ($hysteresisMeters < 10 || $hysteresisMeters > 500)) {
@@ -846,6 +850,9 @@ if ($action === 'save_settings' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($smartRefetchDays !== null && ($smartRefetchDays < 1 || $smartRefetchDays > 30)) {
             respond(['ok' => false, 'error' => 'smart_refetch_days must be between 1 and 30'], 400);
         }
+        if ($batteryAlertEmail !== null && $batteryAlertEmail !== '' && !filter_var($batteryAlertEmail, FILTER_VALIDATE_EMAIL)) {
+            respond(['ok' => false, 'error' => 'battery_alert_email must be a valid email address'], 400);
+        }
 
         // Načítaj aktuálny .env súbor
         $envPath = __DIR__ . '/.env';
@@ -869,7 +876,9 @@ if ($action === 'save_settings' && $_SERVER['REQUEST_METHOD'] === 'POST') {
             'log_level' => 'LOG_LEVEL',
             'fetch_frequency_minutes' => 'FETCH_FREQUENCY_MINUTES',
             'smart_refetch_frequency_minutes' => 'SMART_REFETCH_FREQUENCY_MINUTES',
-            'smart_refetch_days' => 'SMART_REFETCH_DAYS'
+            'smart_refetch_days' => 'SMART_REFETCH_DAYS',
+            'battery_alert_enabled' => 'BATTERY_ALERT_ENABLED',
+            'battery_alert_email' => 'BATTERY_ALERT_EMAIL'
         ];
 
         $newSettings = [];

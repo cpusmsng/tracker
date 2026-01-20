@@ -60,6 +60,10 @@ services:
       - EMAIL_FROM_NAME=${EMAIL_FROM_NAME:-Family Tracker}
       - TRACKER_APP_URL=${TRACKER_APP_URL:-}
 
+      # Battery Alert Settings
+      - BATTERY_ALERT_ENABLED=${BATTERY_ALERT_ENABLED:-false}
+      - BATTERY_ALERT_EMAIL=${BATTERY_ALERT_EMAIL:-}
+
       # N8N Integration (optional - legacy)
       - N8N_API_KEY=${N8N_API_KEY:-}
 
