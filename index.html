@@ -511,7 +511,7 @@
               <!-- Battery Alert Enable -->
               <div class="setting-group">
                 <div class="setting-header">
-                  <label for="batteryAlertEnabled">
+                  <label>
                     <strong>Upozornenie na nízku batériu</strong>
                     <span class="setting-current" id="currentBatteryAlertEnabled">—</span>
                   </label>
@@ -520,11 +520,13 @@
                   Povoliť odosielanie emailových notifikácií pri nízkej úrovni batérie trackera.
                 </div>
                 <div class="setting-input-group">
-                  <label class="toggle-switch">
+                  <div class="toggle-switch">
                     <input type="checkbox" id="batteryAlertEnabled" name="battery_alert_enabled">
-                    <span class="toggle-slider"></span>
-                  </label>
-                  <span class="setting-label-inline">Zapnuté</span>
+                    <label for="batteryAlertEnabled" class="toggle-label">
+                      <span class="toggle-inner"></span>
+                      <span class="toggle-switch-text"></span>
+                    </label>
+                  </div>
                 </div>
               </div>
 
