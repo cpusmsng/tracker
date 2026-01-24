@@ -1270,6 +1270,8 @@ async function loadCurrentSettings() {
       $('#fetchFrequencyMinutes').value = data.fetch_frequency_minutes || 5;
       $('#smartRefetchFrequencyMinutes').value = data.smart_refetch_frequency_minutes || 30;
       $('#smartRefetchDays').value = data.smart_refetch_days || 7;
+      $('#batteryAlertEnabled').checked = data.battery_alert_enabled || false;
+      $('#batteryAlertEmail').value = data.battery_alert_email || '';
 
       // Aktualizuj "aktuálne hodnoty" labels
       $('#currentHysteresisMeters').textContent = `(${data.hysteresis_meters || 50} m)`;
@@ -1283,6 +1285,8 @@ async function loadCurrentSettings() {
       $('#currentFetchFrequencyMinutes').textContent = `(${data.fetch_frequency_minutes || 5} min)`;
       $('#currentSmartRefetchFrequencyMinutes').textContent = `(${data.smart_refetch_frequency_minutes || 30} min)`;
       $('#currentSmartRefetchDays').textContent = `(${data.smart_refetch_days || 7} dní)`;
+      $('#currentBatteryAlertEnabled').textContent = data.battery_alert_enabled ? '(Zapnuté)' : '(Vypnuté)';
+      $('#currentBatteryAlertEmail').textContent = data.battery_alert_email ? `(${data.battery_alert_email})` : '(—)';
 
       // Initialize theme toggle in settings
       initTheme();
@@ -1310,7 +1314,9 @@ async function saveSettings() {
       log_level: $('#logLevel').value || 'info',
       fetch_frequency_minutes: parseInt($('#fetchFrequencyMinutes').value) || 5,
       smart_refetch_frequency_minutes: parseInt($('#smartRefetchFrequencyMinutes').value) || 30,
-      smart_refetch_days: parseInt($('#smartRefetchDays').value) || 7
+      smart_refetch_days: parseInt($('#smartRefetchDays').value) || 7,
+      battery_alert_enabled: $('#batteryAlertEnabled').checked,
+      battery_alert_email: $('#batteryAlertEmail').value.trim()
     };
 
     // Validácia hraničných hodnôt
@@ -1346,6 +1352,15 @@ async function saveSettings() {
       alert('Kontrolované obdobie musí byť medzi 1 a 30 dňami');
       return;
     }
+    // Validate email if battery alert is enabled
+    if (settings.battery_alert_enabled && !settings.battery_alert_email) {
+      alert('Pre aktiváciu notifikácií o batérii je potrebné zadať emailovú adresu');
+      return;
+    }
+    if (settings.battery_alert_email && !settings.battery_alert_email.match(/^[^\s@]+@[^\s@]+\.[^\s@]+$/)) {
+      alert('Zadajte platnú emailovú adresu');
+      return;
+    }
 
     // Ulož cez API
     const result = await apiPost('save_settings', settings);
@@ -1372,7 +1387,9 @@ function resetSettingToDefault(settingName, defaultValue) {
     'log_level': 'logLevel',
     'fetch_frequency_minutes': 'fetchFrequencyMinutes',
     'smart_refetch_frequency_minutes': 'smartRefetchFrequencyMinutes',
-    'smart_refetch_days': 'smartRefetchDays'
+    'smart_refetch_days': 'smartRefetchDays',
+    'battery_alert_enabled': 'batteryAlertEnabled',
+    'battery_alert_email': 'batteryAlertEmail'
   };
 
   const fieldId = fieldMap[settingName];

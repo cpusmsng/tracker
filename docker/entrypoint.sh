@@ -8,82 +8,27 @@ echo "========================================"
 # Create necessary directories
 mkdir -p /var/log/tracker /var/log/supervisor /var/www/html/data
 
-# Set default values for environment variables
-export SQLITE_PATH="${SQLITE_PATH:-/var/www/html/data/tracker_database.sqlite}"
-export ACCESS_PIN_HASH="${ACCESS_PIN_HASH:-03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4}"
-export SENSECAP_CHANNEL_INDEX="${SENSECAP_CHANNEL_INDEX:-1}"
-export SENSECAP_LIMIT="${SENSECAP_LIMIT:-50}"
-export MEAS_WIFI_MAC="${MEAS_WIFI_MAC:-5001}"
-export MEAS_BT_IBEACON_MAC="${MEAS_BT_IBEACON_MAC:-5002}"
-export MEAS_GNSS_LON="${MEAS_GNSS_LON:-4197}"
-export MEAS_GNSS_LAT="${MEAS_GNSS_LAT:-4198}"
-export HYSTERESIS_METERS="${HYSTERESIS_METERS:-50}"
-export HYSTERESIS_MINUTES="${HYSTERESIS_MINUTES:-30}"
-export UNIQUE_PRECISION="${UNIQUE_PRECISION:-6}"
-export UNIQUE_BUCKET_MINUTES="${UNIQUE_BUCKET_MINUTES:-30}"
-export MAC_CACHE_MAX_AGE_DAYS="${MAC_CACHE_MAX_AGE_DAYS:-3600}"
-export GOOGLE_FORCE="${GOOGLE_FORCE:-0}"
-export EMAIL_FROM="${EMAIL_FROM:-tracker@example.com}"
-export LOG_LEVEL="${LOG_LEVEL:-info}"
-export LOG_FILE="${LOG_FILE:-/var/log/tracker/fetch.log}"
-export AUTH_API_URL="${AUTH_API_URL:-http://family-office:3001}"
-export LOGIN_URL="${LOGIN_URL:-https://bagron.eu/login}"
-export SSO_ENABLED="${SSO_ENABLED:-false}"
+# Check if .env file exists (should be bind-mounted from host)
+if [ ! -f "/var/www/html/.env" ]; then
+    echo "========================================"
+    echo "ERROR: .env file not found!"
+    echo ""
+    echo "The .env file should be bind-mounted from the host."
+    echo "Please create .env from .env.example:"
+    echo "  cp .env.example .env"
+    echo "  nano .env  # Edit with your settings"
+    echo ""
+    echo "Then restart the container."
+    echo "========================================"
+    exit 1
+fi
 
-# Generate .env file from environment variables
-cat > /var/www/html/.env << EOF
-# SenseCAP API Configuration
-SENSECAP_ACCESS_ID=${SENSECAP_ACCESS_ID:-}
-SENSECAP_ACCESS_KEY=${SENSECAP_ACCESS_KEY:-}
-SENSECAP_DEVICE_EUI=${SENSECAP_DEVICE_EUI:-}
-SENSECAP_CHANNEL_INDEX=${SENSECAP_CHANNEL_INDEX}
-SENSECAP_LIMIT=${SENSECAP_LIMIT}
-
-# Measurement IDs
-MEAS_WIFI_MAC=${MEAS_WIFI_MAC}
-MEAS_BT_IBEACON_MAC=${MEAS_BT_IBEACON_MAC}
-MEAS_GNSS_LON=${MEAS_GNSS_LON}
-MEAS_GNSS_LAT=${MEAS_GNSS_LAT}
-
-# Hysteresis Settings
-HYSTERESIS_METERS=${HYSTERESIS_METERS}
-HYSTERESIS_MINUTES=${HYSTERESIS_MINUTES}
-UNIQUE_PRECISION=${UNIQUE_PRECISION}
-UNIQUE_BUCKET_MINUTES=${UNIQUE_BUCKET_MINUTES}
-MAC_CACHE_MAX_AGE_DAYS=${MAC_CACHE_MAX_AGE_DAYS}
-
-# Google Geolocation API
-GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
-GOOGLE_FORCE=${GOOGLE_FORCE}
-
-# Security
-ACCESS_PIN_HASH=${ACCESS_PIN_HASH}
-
-# Database
-SQLITE_PATH=${SQLITE_PATH}
-
-# Email Service
-EMAIL_SERVICE_URL=${EMAIL_SERVICE_URL:-}
-EMAIL_API_KEY=${EMAIL_API_KEY:-}
-EMAIL_FROM=${EMAIL_FROM}
-EMAIL_FROM_NAME=${EMAIL_FROM_NAME:-Family Tracker}
-
-# N8N Integration (optional)
-N8N_API_KEY=${N8N_API_KEY:-}
-
-# Logging
-LOG_LEVEL=${LOG_LEVEL}
-LOG_FILE=${LOG_FILE}
-
-# SSO Authentication
-AUTH_API_URL=${AUTH_API_URL}
-LOGIN_URL=${LOGIN_URL}
-SSO_ENABLED=${SSO_ENABLED}
-EOF
-
-# Set proper permissions
+# Set proper permissions on .env (readable by www-data)
 chown www-data:www-data /var/www/html/.env
-chmod 600 /var/www/html/.env
+chmod 644 /var/www/html/.env
+
+# Set default values for environment variables (used for validation/defaults)
+export SQLITE_PATH="${SQLITE_PATH:-/var/www/html/data/tracker_database.sqlite}"
 
 # Ensure data directory has correct permissions
 chown -R www-data:www-data /var/www/html/data /var/log/tracker
@@ -180,16 +125,6 @@ if [ ! -f "${SQLITE_PATH}" ]; then
         echo 'Database initialized successfully.';
     "
     echo ""
-fi
-
-# Validate required environment variables
-if [ -z "${SENSECAP_ACCESS_ID}" ] || [ -z "${SENSECAP_ACCESS_KEY}" ] || [ -z "${SENSECAP_DEVICE_EUI}" ]; then
-    echo "WARNING: SenseCAP credentials not configured. Data fetching will not work."
-    echo "Please set: SENSECAP_ACCESS_ID, SENSECAP_ACCESS_KEY, SENSECAP_DEVICE_EUI"
-fi
-
-if [ -z "${GOOGLE_API_KEY}" ]; then
-    echo "WARNING: Google API key not configured. Wi-Fi geolocation will not work."
 fi
 
 # Touch log files

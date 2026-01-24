@@ -23,6 +23,10 @@ load_env_early(__DIR__.'/.env');
 // Application URL for email links (falls back to Google Maps if not set)
 define('TRACKER_APP_URL', getenv('TRACKER_APP_URL') ?: '');
 
+// Battery alert configuration
+define('BATTERY_ALERT_ENABLED', in_array(strtolower(getenv('BATTERY_ALERT_ENABLED') ?: 'false'), ['true', '1', 'yes']));
+define('BATTERY_ALERT_EMAIL', getenv('BATTERY_ALERT_EMAIL') ?: '');
+
 // Log file path - from env, or Docker default, or local fallback
 $LOG_FILE = getenv('LOG_FILE') ?: (is_dir('/var/log/tracker') ? '/var/log/tracker/fetch.log' : __DIR__ . '/fetch.log');
 const FETCH_LOCK_FILE = __DIR__ . '/fetch_data.lock';
@@ -985,6 +989,171 @@ function record_perimeter_alert(PDO $pdo, array $breach, bool $emailSent): void 
     }
 }
 
+// ============== BATTERY ALERT ==============
+
+/**
+ * Send battery low alert email
+ * Returns true if email was sent successfully
+ */
+function send_battery_alert_email(PDO $pdo): bool {
+    if (!BATTERY_ALERT_ENABLED || !BATTERY_ALERT_EMAIL) {
+        debug_log("BATTERY ALERT: Skipped - not enabled or no email configured");
+        return false;
+    }
+
+    $emailServiceUrl = getenv('EMAIL_SERVICE_URL') ?: 'http://email-service:3004/send';
+    if (!str_ends_with($emailServiceUrl, '/send')) {
+        $emailServiceUrl = rtrim($emailServiceUrl, '/') . '/send';
+    }
+    $apiKey = getenv('EMAIL_API_KEY') ?: '';
+    $fromEmail = getenv('EMAIL_FROM') ?: 'tracker@bagron.eu';
+    $fromName = getenv('EMAIL_FROM_NAME') ?: 'Family Tracker';
+
+    $subject = "Family Tracker: Nízka batéria trackera";
+
+    $formattedTime = (new DateTimeImmutable())->setTimezone(new DateTimeZone('Europe/Bratislava'))->format('d.m.Y H:i:s');
+
+    // Build tracker URL if available
+    $trackerUrl = TRACKER_APP_URL ?: '';
+    $trackerButton = $trackerUrl
+        ? "<a href='$trackerUrl' class='btn'>Otvoriť tracker</a>"
+        : '';
+
+    $htmlBody = "
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset='utf-8'>
+        <style>
+            body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+            .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+            .header { background: #f59e0b; color: white; padding: 20px; border-radius: 8px 8px 0 0; }
+            .content { background: #f8fafc; padding: 20px; border: 1px solid #e5e5e5; border-top: none; border-radius: 0 0 8px 8px; }
+            .info-row { margin: 10px 0; }
+            .label { font-weight: bold; color: #555; }
+            .btn { display: inline-block; padding: 12px 24px; background: #0ea5e9; color: white; text-decoration: none; border-radius: 6px; margin-top: 15px; }
+            .footer { margin-top: 20px; font-size: 12px; color: #888; }
+            .warning-icon { font-size: 48px; margin-bottom: 10px; }
+        </style>
+    </head>
+    <body>
+        <div class='container'>
+            <div class='header'>
+                <div class='warning-icon'>&#9888;</div>
+                <h2 style='margin:0;'>Nízka batéria trackera</h2>
+                <p style='margin:5px 0 0;opacity:0.9;'>Family Tracker</p>
+            </div>
+            <div class='content'>
+                <div class='info-row'>
+                    <span class='label'>Stav:</span> Batéria trackera je takmer vybitá
+                </div>
+                <div class='info-row'>
+                    <span class='label'>Čas:</span> $formattedTime
+                </div>
+                <p style='margin-top: 15px; color: #b45309;'>
+                    <strong>Odporúčanie:</strong> Čo najskôr nabite tracker, aby ste neprerušili sledovanie polohy.
+                </p>
+                $trackerButton
+                <div class='footer'>
+                    Táto správa bola automaticky vygenerovaná systémom Family Tracker.
+                </div>
+            </div>
+        </div>
+    </body>
+    </html>";
+
+    $payloadData = [
+        'to_email' => BATTERY_ALERT_EMAIL,
+        'subject' => $subject,
+        'html_body' => $htmlBody,
+        'from_email' => $fromEmail,
+        'from_name' => $fromName
+    ];
+    if (!empty($apiKey)) {
+        $payloadData['api_key'] = $apiKey;
+    }
+    $payload = json_encode($payloadData, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+
+    info_log("BATTERY ALERT: Sending email to " . BATTERY_ALERT_EMAIL);
+
+    $ch = curl_init($emailServiceUrl);
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_POST => true,
+        CURLOPT_POSTFIELDS => $payload,
+        CURLOPT_HTTPHEADER => ['Content-Type: application/json'],
+        CURLOPT_TIMEOUT => 15,
+        CURLOPT_CONNECTTIMEOUT => 10
+    ]);
+
+    $response = curl_exec($ch);
+    $httpCode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $curlError = curl_error($ch);
+    curl_close($ch);
+
+    if ($curlError) {
+        info_log("BATTERY ALERT ERROR: curl error - $curlError");
+        return false;
+    }
+
+    if ($httpCode >= 200 && $httpCode < 300) {
+        info_log("BATTERY ALERT SUCCESS: Email sent to " . BATTERY_ALERT_EMAIL);
+
+        // Record that we sent an alert to avoid spam
+        try {
+            $pdo->exec("
+                CREATE TABLE IF NOT EXISTS battery_alert_log (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    sent_at TEXT NOT NULL,
+                    email TEXT NOT NULL
+                )
+            ");
+            $stmt = $pdo->prepare("INSERT INTO battery_alert_log (sent_at, email) VALUES (:sent, :email)");
+            $stmt->execute([
+                ':sent' => (new DateTimeImmutable())->format('Y-m-d H:i:s'),
+                ':email' => BATTERY_ALERT_EMAIL
+            ]);
+        } catch (Throwable $e) {
+            debug_log("BATTERY ALERT: Failed to log alert - " . $e->getMessage());
+        }
+
+        return true;
+    } else {
+        info_log("BATTERY ALERT ERROR: http=$httpCode response=" . substr($response, 0, 200));
+        return false;
+    }
+}
+
+/**
+ * Check if we should send a battery alert (not sent in last 24 hours)
+ */
+function should_send_battery_alert(PDO $pdo): bool {
+    try {
+        // Create table if not exists
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS battery_alert_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                sent_at TEXT NOT NULL,
+                email TEXT NOT NULL
+            )
+        ");
+
+        // Check last alert time
+        $cutoff = (new DateTimeImmutable())->sub(new DateInterval('PT24H'))->format('Y-m-d H:i:s');
+        $stmt = $pdo->prepare("SELECT COUNT(*) as cnt FROM battery_alert_log WHERE sent_at > :cutoff");
+        $stmt->execute([':cutoff' => $cutoff]);
+        $result = $stmt->fetch();
+
+        $shouldSend = ($result['cnt'] ?? 0) == 0;
+        debug_log("BATTERY ALERT CHECK: last 24h alerts = " . ($result['cnt'] ?? 0) . ", should_send = " . ($shouldSend ? 'YES' : 'NO'));
+
+        return $shouldSend;
+    } catch (Throwable $e) {
+        debug_log("BATTERY ALERT CHECK ERROR: " . $e->getMessage());
+        return true; // Send if we can't check
+    }
+}
+
 function load_ibeacon_map(PDO $pdo): array {
     $map = [];
     try {
@@ -1640,6 +1809,19 @@ try {
             $onlineText = $deviceStatus['online_status'] === 1 ? 'ONLINE' : ($deviceStatus['online_status'] === 0 ? 'OFFLINE' : 'unknown');
             
             info_log("DEVICE STATUS SAVED: battery=$batteryText latest_message_time=$latestMsgTime online=$onlineText");
+
+            // Check if battery is low and send alert if enabled (only in normal mode, not refetch)
+            if (!$REFETCH_MODE && $deviceStatus['battery_status'] === 0) {
+                info_log("BATTERY STATUS: LOW - checking if alert should be sent");
+                if (should_send_battery_alert($pdo)) {
+                    $alertSent = send_battery_alert_email($pdo);
+                    if ($alertSent) {
+                        info_log("BATTERY ALERT: Email sent successfully");
+                    }
+                } else {
+                    info_log("BATTERY ALERT: Skipped - alert already sent in last 24 hours");
+                }
+            }
         } catch (Throwable $e) {
             debug_log("DEVICE STATUS ERROR: " . $e->getMessage());
         }

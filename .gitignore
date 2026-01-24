@@ -1,0 +1,31 @@
+# Environment configuration (contains secrets)
+.env
+
+# Database files
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+
+# Log files
+*.log
+
+# Backup files
+backups/
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# PHP dependencies (if using composer)
+vendor/
+
+# Docker volumes data (when using bind mounts)
+data/

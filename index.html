@@ -258,6 +258,7 @@
             <button type="button" class="settings-tab" data-tab="data-collection">Zber dát</button>
             <button type="button" class="settings-tab" data-tab="position-filtering">Filtrovanie</button>
             <button type="button" class="settings-tab" data-tab="geolocation">Geolokácia</button>
+            <button type="button" class="settings-tab" data-tab="notifications">Notifikácie</button>
             <button type="button" class="settings-tab" data-tab="system">Systém</button>
             <button type="button" class="settings-tab" data-tab="mac-management">MAC adresy</button>
           </div>
@@ -499,6 +500,49 @@
                       <span class="toggle-switch-text"></span>
                     </label>
                   </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- ===== SEKCIA: NOTIFIKÁCIE ===== -->
+          <div class="settings-section" data-section="notifications">
+            <div class="settings-section-content">
+              <!-- Battery Alert Enable -->
+              <div class="setting-group">
+                <div class="setting-header">
+                  <label>
+                    <strong>Upozornenie na nízku batériu</strong>
+                    <span class="setting-current" id="currentBatteryAlertEnabled">—</span>
+                  </label>
+                </div>
+                <div class="setting-description">
+                  Povoliť odosielanie emailových notifikácií pri nízkej úrovni batérie trackera.
+                </div>
+                <div class="setting-input-group">
+                  <div class="toggle-switch">
+                    <input type="checkbox" id="batteryAlertEnabled" name="battery_alert_enabled">
+                    <label for="batteryAlertEnabled" class="toggle-label">
+                      <span class="toggle-inner"></span>
+                      <span class="toggle-switch-text"></span>
+                    </label>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Battery Alert Email -->
+              <div class="setting-group">
+                <div class="setting-header">
+                  <label for="batteryAlertEmail">
+                    <strong>Email pre notifikácie o batérii</strong>
+                    <span class="setting-current" id="currentBatteryAlertEmail">—</span>
+                  </label>
+                </div>
+                <div class="setting-description">
+                  Emailová adresa, na ktorú sa budú odosielať upozornenia o nízkej batérii.
+                </div>
+                <div class="setting-input-group">
+                  <input type="email" id="batteryAlertEmail" name="battery_alert_email" placeholder="email@example.com">
                 </div>
               </div>
             </div>
