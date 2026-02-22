@@ -105,35 +105,40 @@ flowchart TB
 
 ## Data Flow
 
-### Position Data Collection
+### Position Data Collection (Multi-Device)
 
 ```mermaid
 sequenceDiagram
     participant Cron
     participant Fetch as fetch_data.php
+    participant DB as SQLite
     participant SenseCAP as SenseCAP API
     participant Google as Google API
-    participant DB as SQLite
     participant Email as Email Service
 
     Cron->>Fetch: Every 5 minutes
-    Fetch->>SenseCAP: GET telemetry data
-    SenseCAP-->>Fetch: GNSS, Wi-Fi, BT data
+    Fetch->>DB: Load active devices
+    DB-->>Fetch: Device list (EUI, id, name)
 
-    alt Has GNSS coordinates
-        Fetch->>DB: Insert position (source: gnss)
-    else Has Wi-Fi MACs
-        Fetch->>Google: POST geolocate
-        Google-->>Fetch: lat/lng
-        Fetch->>DB: Insert position (source: wifi-google)
-    else Has iBeacon MAC match
-        Fetch->>DB: Insert position (source: ibeacon)
-    end
+    loop For each active device
+        Fetch->>SenseCAP: GET telemetry data (device EUI)
+        SenseCAP-->>Fetch: GNSS, Wi-Fi, BT data
 
-    Fetch->>DB: Check perimeter breaches
-    alt Breach detected
-        Fetch->>Email: Send alert
-        Fetch->>DB: Record alert
+        alt Has GNSS coordinates
+            Fetch->>DB: Insert position (device_id, source: gnss)
+        else Has Wi-Fi MACs
+            Fetch->>Google: POST geolocate
+            Google-->>Fetch: lat/lng
+            Fetch->>DB: Insert position (device_id, source: wifi-google)
+        else Has iBeacon MAC match
+            Fetch->>DB: Insert position (device_id, source: ibeacon)
+        end
+
+        Fetch->>DB: Check perimeter breaches
+        alt Breach detected
+            Fetch->>Email: Send alert
+            Fetch->>DB: Record alert
+        end
     end
 ```
 
@@ -170,12 +175,27 @@ sequenceDiagram
 
 ```mermaid
 erDiagram
+    devices {
+        int id PK
+        text name
+        text device_eui UK
+        text color
+        text icon
+        int is_active
+        int notifications_enabled
+        text notification_email
+        text notification_webhook
+        text created_at
+        text updated_at
+    }
+
     tracker_data {
         int id PK
         text timestamp
         real latitude
         real longitude
         text source
+        int device_id FK
     }
 
     device_status {
@@ -210,6 +230,7 @@ erDiagram
         text notification_email
         int is_active
         text color
+        int device_id FK
         text created_at
         text updated_at
     }
@@ -231,16 +252,32 @@ erDiagram
         real longitude
         text sent_at
         int email_sent
+        int device_id FK
     }
 
     perimeter_state {
         int perimeter_id PK
         int is_inside
         text last_checked
+        int device_id FK
+    }
+
+    device_perimeters {
+        int id PK
+        int device_id FK
+        text name
+        real latitude
+        real longitude
+        real radius_meters
+        int alert_on_enter
+        int alert_on_exit
+        int is_active
+        text created_at
     }
 
     refetch_state {
         text date PK
+        int device_id PK
         text last_check_time
         text last_known_timestamp
         int last_known_count
@@ -249,6 +286,10 @@ erDiagram
         text notes
     }
 
+    devices ||--o{ tracker_data : tracks
+    devices ||--o{ device_perimeters : defines
+    devices ||--o{ perimeters : monitors
+    devices ||--o{ refetch_state : refetches
     perimeters ||--o{ perimeter_emails : has
     perimeters ||--o{ perimeter_alerts : generates
     perimeters ||--o| perimeter_state : tracks
@@ -256,8 +297,25 @@ erDiagram
 
 ### Table Descriptions
 
+#### `devices`
+Registry of tracked devices. Each device has its own EUI, color, and settings.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | INTEGER | Auto-increment primary key |
+| `name` | TEXT | Human-readable device name |
+| `device_eui` | TEXT | SenseCAP Device EUI (unique) |
+| `color` | TEXT | Display color on map (hex) |
+| `icon` | TEXT | Icon type (default: "default") |
+| `is_active` | INTEGER | Device enabled for tracking (0/1) |
+| `notifications_enabled` | INTEGER | Enable notifications (0/1) |
+| `notification_email` | TEXT | Email for device notifications |
+| `notification_webhook` | TEXT | Webhook URL for notifications |
+| `created_at` | TEXT | Creation timestamp |
+| `updated_at` | TEXT | Last modification timestamp |
+
 #### `tracker_data`
-Stores all position records from the tracking device.
+Stores all position records from tracking devices.
 
 | Column | Type | Description |
 |--------|------|-------------|
@@ -266,6 +324,7 @@ Stores all position records from the tracking device.
 | `latitude` | REAL | Latitude coordinate |
 | `longitude` | REAL | Longitude coordinate |
 | `source` | TEXT | Position source: `gnss`, `wifi-google`, `wifi-cache`, `ibeacon` |
+| `device_id` | INTEGER | Foreign key to devices (default: 1) |
 
 #### `device_status`
 Caches device status information from SenseCAP API.
@@ -312,6 +371,7 @@ Geographic zone definitions with alert configuration.
 | `notification_email` | TEXT | Legacy: single email (deprecated) |
 | `is_active` | INTEGER | Zone enabled (0/1) |
 | `color` | TEXT | Display color (hex) |
+| `device_id` | INTEGER | Foreign key to devices (optional) |
 | `created_at` | TEXT | Creation timestamp |
 | `updated_at` | TEXT | Last modification timestamp |
 
@@ -338,6 +398,7 @@ History of all perimeter breach alerts.
 | `longitude` | REAL | Position at breach |
 | `sent_at` | TEXT | Alert timestamp |
 | `email_sent` | INTEGER | Email successfully sent (0/1) |
+| `device_id` | INTEGER | Foreign key to devices (optional) |
 
 #### `perimeter_state`
 Tracks current inside/outside state for each perimeter.
@@ -347,13 +408,31 @@ Tracks current inside/outside state for each perimeter.
 | `perimeter_id` | INTEGER | Foreign key to perimeters |
 | `is_inside` | INTEGER | Currently inside (0/1) |
 | `last_checked` | TEXT | Last check timestamp |
+| `device_id` | INTEGER | Foreign key to devices (optional) |
 
-#### `refetch_state`
-Tracks smart refetch status for detecting data gaps.
+#### `device_perimeters`
+Circular geofence zones assigned to specific devices.
 
 | Column | Type | Description |
 |--------|------|-------------|
-| `date` | TEXT | Date (YYYY-MM-DD, primary key) |
+| `id` | INTEGER | Auto-increment primary key |
+| `device_id` | INTEGER | Foreign key to devices |
+| `name` | TEXT | Zone name (e.g., "Home", "School") |
+| `latitude` | REAL | Center latitude |
+| `longitude` | REAL | Center longitude |
+| `radius_meters` | REAL | Radius in meters (default: 500) |
+| `alert_on_enter` | INTEGER | Send alert on entry (0/1) |
+| `alert_on_exit` | INTEGER | Send alert on exit (0/1) |
+| `is_active` | INTEGER | Zone enabled (0/1) |
+| `created_at` | TEXT | Creation timestamp |
+
+#### `refetch_state`
+Tracks smart refetch status for detecting data gaps (per device).
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `date` | TEXT | Date (YYYY-MM-DD, composite PK) |
+| `device_id` | INTEGER | Foreign key to devices (composite PK) |
 | `last_check_time` | TEXT | When last analyzed |
 | `last_known_timestamp` | TEXT | Last position timestamp for date |
 | `last_known_count` | INTEGER | Position count when last checked |

@@ -242,11 +242,17 @@ function fetch_device_running_status(string $devEui, string $aid, string $akey):
     ];
 }
 
-function last_db_ts(PDO $pdo): ?DateTimeImmutable {
-    $r = $pdo->query("SELECT MAX(timestamp) AS mx FROM tracker_data")->fetch();
+function last_db_ts(PDO $pdo, ?int $deviceId = null): ?DateTimeImmutable {
+    if ($deviceId !== null) {
+        $stmt = $pdo->prepare("SELECT MAX(timestamp) AS mx FROM tracker_data WHERE device_id = :did");
+        $stmt->execute([':did' => $deviceId]);
+        $r = $stmt->fetch();
+    } else {
+        $r = $pdo->query("SELECT MAX(timestamp) AS mx FROM tracker_data")->fetch();
+    }
     if (!$r || !$r['mx']) return null;
     $dt = new DateTimeImmutable((string)$r['mx'], new DateTimeZone('UTC'));
-    debug_log("LAST_DB_TS: ".$dt->format('Y-m-d\TH:i:s.u\Z')." UTC");
+    debug_log("LAST_DB_TS: ".$dt->format('Y-m-d\TH:i:s.u\Z')." UTC" . ($deviceId ? " (device=$deviceId)" : ""));
     return $dt;
 }
 
@@ -261,10 +267,18 @@ function haversine(float $lat1, float $lon1, float $lat2, float $lon2): float {
     return $R * $c;
 }
 
-function get_last_position(PDO $pdo, ?string $beforeDate = null): ?array {
-    if ($beforeDate) {
+function get_last_position(PDO $pdo, ?string $beforeDate = null, ?int $deviceId = null): ?array {
+    if ($beforeDate && $deviceId !== null) {
+        $stmt = $pdo->prepare("SELECT latitude, longitude, source FROM tracker_data WHERE timestamp < :d AND device_id = :did ORDER BY timestamp DESC LIMIT 1");
+        $stmt->execute([':d' => $beforeDate, ':did' => $deviceId]);
+        $r = $stmt->fetch();
+    } else if ($beforeDate) {
         $stmt = $pdo->prepare("SELECT latitude, longitude, source FROM tracker_data WHERE timestamp < :d ORDER BY timestamp DESC LIMIT 1");
         $stmt->execute([':d' => $beforeDate]);
+        $r = $stmt->fetch();
+    } else if ($deviceId !== null) {
+        $stmt = $pdo->prepare("SELECT latitude, longitude, source FROM tracker_data WHERE device_id = :did ORDER BY timestamp DESC LIMIT 1");
+        $stmt->execute([':did' => $deviceId]);
         $r = $stmt->fetch();
     } else {
         $r = $pdo->query("SELECT latitude, longitude, source FROM tracker_data ORDER BY timestamp DESC LIMIT 1")->fetch();
@@ -282,7 +296,8 @@ function insert_position_with_hysteresis(
     int $hysteresisMeters,
     ?array &$lastInsertedPos,
     ?string $rawMacs = null,
-    ?string $primaryMac = null
+    ?string $primaryMac = null,
+    ?int $deviceId = null
 ): array {
     
     $lastPos = $lastInsertedPos;
@@ -322,8 +337,8 @@ function insert_position_with_hysteresis(
     $ts = $dt->format('Y-m-d H:i:s');
     
     try {
-        $stmt = $pdo->prepare("INSERT INTO tracker_data (timestamp, latitude, longitude, source, raw_wifi_macs, primary_mac) VALUES (:t,:la,:lo,:s,:macs,:pmac)");
-        $stmt->execute([':t'=>$ts, ':la'=>$lat, ':lo'=>$lng, ':s'=>$source, ':macs'=>$rawMacs, ':pmac'=>$primaryMac]);
+        $stmt = $pdo->prepare("INSERT INTO tracker_data (timestamp, latitude, longitude, source, raw_wifi_macs, primary_mac, device_id) VALUES (:t,:la,:lo,:s,:macs,:pmac,:did)");
+        $stmt->execute([':t'=>$ts, ':la'=>$lat, ':lo'=>$lng, ':s'=>$source, ':macs'=>$rawMacs, ':pmac'=>$primaryMac, ':did'=>$deviceId]);
 
         $lastInsertedPos = ['lat' => $lat, 'lng' => $lng, 'source' => $source];
 
@@ -1203,16 +1218,19 @@ function load_mac_cache(PDO $pdo, int $maxAgeDays): array {
     return $cache;
 }
 
-function clean_refetch_day(PDO $pdo, DateTimeImmutable $dayStart, DateTimeImmutable $dayEnd): int {
+function clean_refetch_day(PDO $pdo, DateTimeImmutable $dayStart, DateTimeImmutable $dayEnd, ?int $deviceId = null): int {
     try {
-        $stmt = $pdo->prepare("
-            DELETE FROM tracker_data 
-            WHERE timestamp BETWEEN :start AND :end
-        ");
-        $stmt->execute([
+        $sql = "DELETE FROM tracker_data WHERE timestamp BETWEEN :start AND :end";
+        $params = [
             ':start' => $dayStart->format('Y-m-d H:i:s'),
             ':end' => $dayEnd->format('Y-m-d H:i:s')
-        ]);
+        ];
+        if ($deviceId !== null) {
+            $sql .= " AND device_id = :did";
+            $params[':did'] = $deviceId;
+        }
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute($params);
         $deletedCount = $stmt->rowCount();
         info_log("CLEAN REFETCH: Deleted $deletedCount existing records for date range");
         return $deletedCount;
@@ -1312,10 +1330,9 @@ try {
 
     $AID  = getenv('SENSECAP_ACCESS_ID') ?: '';
     $AKEY = getenv('SENSECAP_ACCESS_KEY') ?: '';
-    $EUI  = getenv('SENSECAP_DEVICE_EUI') ?: '';
     $GKEY = getenv('GOOGLE_API_KEY') ?: '';
 
-    // Measurement IDs (môžu byť prekonfigurované cez .env)
+    // Measurement IDs
     $MEAS_GNSS_LON        = (int)(getenv('MEAS_GNSS_LON')        ?: 4197);
     $MEAS_GNSS_LAT        = (int)(getenv('MEAS_GNSS_LAT')        ?: 4198);
     $MEAS_WIFI_MAC        = (int)(getenv('MEAS_WIFI_MAC')        ?: 5001);
@@ -1330,12 +1347,50 @@ try {
 
     debug_log("CONFIG: WIFI_MIN_APS=$WIFI_MIN_APS MAX_APS=$MAX_APS RSSI_FLOOR={$RSSI_FLOOR}dBm HYSTERESIS={$HYSTERESIS_METERS}m MAC_CACHE_AGE={$MAC_CACHE_MAX_AGE}d");
 
-    if (!$AID || !$AKEY || !$EUI) { 
-        info_log('ERROR: Missing SenseCAP credentials'); 
-        exit(0); 
+    if (!$AID || !$AKEY) {
+        info_log('ERROR: Missing SenseCAP API credentials (ACCESS_ID/ACCESS_KEY)');
+        exit(0);
     }
 
     $pdo = db();
+
+    // Multi-device support: Load active devices from DB, fallback to .env EUI
+    $activeDevices = [];
+    try {
+        $tables = [];
+        $tq = $pdo->query("SELECT name FROM sqlite_master WHERE type='table' AND name='devices'");
+        while ($tr = $tq->fetch()) $tables[] = $tr['name'];
+
+        if (in_array('devices', $tables)) {
+            $dq = $pdo->query("SELECT id, name, device_eui FROM devices WHERE is_active = 1 ORDER BY id ASC");
+            while ($dr = $dq->fetch()) {
+                $activeDevices[] = ['id' => (int)$dr['id'], 'name' => $dr['name'], 'eui' => $dr['device_eui']];
+            }
+        }
+    } catch (Throwable $e) {
+        debug_log("DEVICES: Could not load from DB: " . $e->getMessage());
+    }
+
+    // Fallback: use .env EUI if no devices in DB
+    if (empty($activeDevices)) {
+        $envEui = getenv('SENSECAP_DEVICE_EUI') ?: '';
+        if ($envEui === '') {
+            info_log('ERROR: No active devices in DB and no SENSECAP_DEVICE_EUI in .env');
+            exit(0);
+        }
+        $activeDevices[] = ['id' => null, 'name' => 'Default', 'eui' => $envEui];
+        info_log("DEVICES: Using .env EUI fallback: $envEui");
+    } else {
+        info_log("DEVICES: Found " . count($activeDevices) . " active device(s): " . implode(', ', array_map(fn($d) => "{$d['name']} ({$d['eui']})", $activeDevices)));
+    }
+
+    // Process each device
+    $totalInsertedAll = 0;
+    foreach ($activeDevices as $deviceInfo) {
+    $EUI = $deviceInfo['eui'];
+    $DEVICE_ID = $deviceInfo['id'];
+    $DEVICE_NAME = $deviceInfo['name'];
+    info_log("=== PROCESSING DEVICE: $DEVICE_NAME (EUI=$EUI, ID=" . ($DEVICE_ID ?? 'null') . ") ===");
     
     $lastDb = null;
     $refetchDayStart = null;
@@ -1361,8 +1416,8 @@ try {
             
             info_log("REFETCH: using high limits (gnss=$GNSS_LIMIT wifi/bt=$SENSECAP_LIMIT)");
 
-            // CLEAN REFETCH: Zmaž existujúce záznamy pre tento deň
-            $deletedCount = clean_refetch_day($pdo, $refetchDayStart, $refetchDayEnd);
+            // CLEAN REFETCH: Delete existing records for this day and device
+            $deletedCount = clean_refetch_day($pdo, $refetchDayStart, $refetchDayEnd, $DEVICE_ID);
             if ($deletedCount > 0) {
                 info_log("REFETCH: Successfully deleted $deletedCount old records");
             }
@@ -1372,10 +1427,16 @@ try {
             exit(1);
         }
     } else {
-        $lastDb = last_db_ts($pdo);
-        
+        $lastDb = last_db_ts($pdo, $DEVICE_ID);
+
         if ($lastDb) {
-            $lastRow = $pdo->query("SELECT latitude, longitude FROM tracker_data ORDER BY timestamp DESC LIMIT 1")->fetch();
+            if ($DEVICE_ID !== null) {
+                $stmtLast = $pdo->prepare("SELECT latitude, longitude FROM tracker_data WHERE device_id = :did ORDER BY timestamp DESC LIMIT 1");
+                $stmtLast->execute([':did' => $DEVICE_ID]);
+                $lastRow = $stmtLast->fetch();
+            } else {
+                $lastRow = $pdo->query("SELECT latitude, longitude FROM tracker_data ORDER BY timestamp DESC LIMIT 1")->fetch();
+            }
             info_log(sprintf(
                 'Last known: %s @ (%.6f, %.6f)',
                 $lastDb->format('Y-m-d H:i:s'),
@@ -1529,12 +1590,12 @@ try {
     };
 
     if ($REFETCH_MODE && $refetchDayStart) {
-        $lastInsertedPos = get_last_position($pdo, $refetchDayStart->format('Y-m-d H:i:s'));
+        $lastInsertedPos = get_last_position($pdo, $refetchDayStart->format('Y-m-d H:i:s'), $DEVICE_ID);
         if ($lastInsertedPos) {
             debug_log("REFETCH: Last position before refetch day: ({$lastInsertedPos['lat']}, {$lastInsertedPos['lng']})");
         }
     } else {
-        $lastInsertedPos = get_last_position($pdo);
+        $lastInsertedPos = get_last_position($pdo, null, $DEVICE_ID);
     }
 
     // FIX: Initialize perimeter states from last known position AFTER $lastInsertedPos is set
@@ -1590,7 +1651,7 @@ try {
         if (isset($gnssBuckets[$iso])) {
             $lat = $gnssBuckets[$iso]['lat']; $lng = $gnssBuckets[$iso]['lng'];
             debug_log("  -> GNSS available: lat=$lat lng=$lng");
-            $result = insert_position_with_hysteresis($pdo, $iso, $lat, $lng, 'gnss', $HYSTERESIS_METERS, $lastInsertedPos);
+            $result = insert_position_with_hysteresis($pdo, $iso, $lat, $lng, 'gnss', $HYSTERESIS_METERS, $lastInsertedPos, null, null, $DEVICE_ID);
             if ($result['inserted']) {
                 $inserted++;
                 $checkPerimetersAfterInsert($lat, $lng, $iso);
@@ -1605,29 +1666,29 @@ try {
         // Priorita 2: BT iBeacon match
         $btForTs = null;
         foreach ($btBuckets as $b) {
-            if ($b['iso'] === $iso) { 
-                $btForTs = $b['beacons']; 
-                break; 
+            if ($b['iso'] === $iso) {
+                $btForTs = $b['beacons'];
+                break;
             }
         }
-        
+
         if ($btForTs && count($btForTs) > 0) {
             debug_log("  -> BT: ".count($btForTs)." beacons available");
-            
+
             $matchedLatLng = null;
             $matchedMac = null;
             foreach ($btForTs as $beacon) {
                 $mac = $beacon['mac'];
-                if (isset($ibeaconMap[$mac])) { 
-                    $matchedLatLng = $ibeaconMap[$mac]; 
+                if (isset($ibeaconMap[$mac])) {
+                    $matchedLatLng = $ibeaconMap[$mac];
                     $matchedMac = $mac;
-                    break; 
+                    break;
                 }
             }
-            
+
             if ($matchedLatLng) {
                 debug_log("  -> IBEACON MATCH (BT): MAC=$matchedMac");
-                $result = insert_position_with_hysteresis($pdo, $iso, $matchedLatLng[0], $matchedLatLng[1], 'ibeacon', $HYSTERESIS_METERS, $lastInsertedPos);
+                $result = insert_position_with_hysteresis($pdo, $iso, $matchedLatLng[0], $matchedLatLng[1], 'ibeacon', $HYSTERESIS_METERS, $lastInsertedPos, null, null, $DEVICE_ID);
                 if ($result['inserted']) {
                     $inserted++; $ibeaconHits++;
                     $checkPerimetersAfterInsert($matchedLatLng[0], $matchedLatLng[1], $iso);
@@ -1669,7 +1730,7 @@ try {
         
         if ($matchedLatLng) {
             debug_log("  -> IBEACON MATCH (Wi-Fi fallback)");
-            $result = insert_position_with_hysteresis($pdo, $iso, $matchedLatLng[0], $matchedLatLng[1], 'ibeacon', $HYSTERESIS_METERS, $lastInsertedPos);
+            $result = insert_position_with_hysteresis($pdo, $iso, $matchedLatLng[0], $matchedLatLng[1], 'ibeacon', $HYSTERESIS_METERS, $lastInsertedPos, null, null, $DEVICE_ID);
             if ($result['inserted']) {
                 $inserted++; $ibeaconHits++;
                 $checkPerimetersAfterInsert($matchedLatLng[0], $matchedLatLng[1], $iso);
@@ -1712,7 +1773,7 @@ try {
             debug_log("  -> USING CACHE: MAC=".$positiveCache['mac']);
             $allMacs = implode(',', array_map(fn($ap) => $ap['mac'], $wifiForTs));
             $primaryMac = $positiveCache['mac'];
-            $result = insert_position_with_hysteresis($pdo, $iso, $positiveCache['lat'], $positiveCache['lng'], 'wifi-cache', $HYSTERESIS_METERS, $lastInsertedPos, $allMacs, $primaryMac);
+            $result = insert_position_with_hysteresis($pdo, $iso, $positiveCache['lat'], $positiveCache['lng'], 'wifi-cache', $HYSTERESIS_METERS, $lastInsertedPos, $allMacs, $primaryMac, $DEVICE_ID);
             if ($result['inserted']) {
                 $inserted++; $cacheHits++;
                 $checkPerimetersAfterInsert($positiveCache['lat'], $positiveCache['lng'], $iso);
@@ -1740,7 +1801,7 @@ try {
         if ($geo) {
             [$lat,$lng,$acc] = $geo;
             $allMacs = implode(',', array_map(fn($ap) => $ap['mac'], $wifiForTs));
-            $result = insert_position_with_hysteresis($pdo, $iso, $lat, $lng, 'wifi-google', $HYSTERESIS_METERS, $lastInsertedPos, $allMacs);
+            $result = insert_position_with_hysteresis($pdo, $iso, $lat, $lng, 'wifi-google', $HYSTERESIS_METERS, $lastInsertedPos, $allMacs, null, $DEVICE_ID);
             if ($result['inserted']) {
                 $inserted++;
                 $checkPerimetersAfterInsert($lat, $lng, $iso);
@@ -1831,8 +1892,9 @@ try {
 
     $mode = $REFETCH_MODE ? "REFETCH($REFETCH_DATE)" : "NORMAL";
     info_log(sprintf(
-        'SUMMARY [%s]: fetched=%d (gnss_lon=%d gnss_lat=%d wifi=%d bt=%d) | buckets: gnss=%d wifi=%d bt=%d | inserted=%d skipped=%d (hysteresis=%d db_errors=%d) | google_calls=%d ibeacon_hits=%d cache_hits=%d cached_fails=%d | perimeter_alerts=%d emails_sent=%d',
+        'SUMMARY [%s] [%s]: fetched=%d (gnss_lon=%d gnss_lat=%d wifi=%d bt=%d) | buckets: gnss=%d wifi=%d bt=%d | inserted=%d skipped=%d (hysteresis=%d db_errors=%d) | google_calls=%d ibeacon_hits=%d cache_hits=%d cached_fails=%d | perimeter_alerts=%d emails_sent=%d',
         $mode,
+        $DEVICE_NAME,
         count($gnssLon) + count($gnssLat) + count($wifiRaw) + count($btRaw),
         count($gnssLon),
         count($gnssLat),
@@ -1853,6 +1915,8 @@ try {
         $emailsSent
     ));
 
+    $totalInsertedAll += $inserted;
+
     // Send summary email if in refetch mode and there are breaches
     if ($REFETCH_MODE && !empty($REFETCH_BREACHES)) {
         info_log("REFETCH SUMMARY: Sending summary email for " . count($REFETCH_BREACHES) . " breach(es)");
@@ -1860,7 +1924,11 @@ try {
         info_log("REFETCH SUMMARY: Sent $summaryEmailsSent summary email(s)");
     }
 
-    info_log('=== FETCH END ===');
+    info_log("=== DEVICE $DEVICE_NAME DONE ===");
+
+    } // end foreach activeDevices
+
+    info_log("=== FETCH END (total inserted across all devices: $totalInsertedAll) ===");
 
 } catch (Throwable $e) {
     info_log('FATAL: '.$e->getMessage().' at '.$e->getFile().':'.$e->getLine());

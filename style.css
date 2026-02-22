@@ -2653,3 +2653,377 @@ body.authenticated .container{
 #positionsTable .pos-table tbody tr.highlighted td{
   color:white;
 }
+
+/* ========== MULTI-DEVICE: Device Bar ========== */
+.device-bar{
+  background:var(--card-bg);
+  border-bottom:1px solid var(--border);
+  padding:6px 12px;
+}
+.device-bar.hidden{
+  display:none;
+}
+.device-bar-inner{
+  display:flex;
+  align-items:center;
+  gap:12px;
+  flex-wrap:wrap;
+}
+.device-view-toggle{
+  display:flex;
+  gap:2px;
+  background:var(--muted-bg);
+  border-radius:8px;
+  padding:2px;
+}
+.device-view-btn{
+  padding:5px 14px;
+  border:none;
+  background:transparent;
+  color:var(--muted-text);
+  font-size:13px;
+  cursor:pointer;
+  border-radius:6px;
+  transition:all 0.2s;
+}
+.device-view-btn.active{
+  background:var(--primary);
+  color:#fff;
+}
+.device-view-btn:hover:not(.active){
+  background:var(--border);
+  color:var(--text);
+}
+.device-selector{
+  padding:5px 10px;
+  border:1px solid var(--border);
+  border-radius:6px;
+  background:var(--card-bg);
+  color:var(--text);
+  font-size:13px;
+}
+
+/* ========== MULTI-DEVICE: Legend Items ========== */
+.device-legend-item{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:6px;
+}
+.device-toggle-label{
+  display:flex;
+  align-items:center;
+  gap:6px;
+  cursor:pointer;
+  font-size:12px;
+}
+.device-toggle-label input[type="checkbox"]{
+  width:14px;
+  height:14px;
+  margin:0;
+}
+.device-last-seen{
+  font-size:11px;
+  color:var(--muted-text);
+  white-space:nowrap;
+}
+
+/* ========== MULTI-DEVICE: Device Cards ========== */
+.device-card{
+  background:var(--card-bg);
+  border:1px solid var(--border);
+  border-radius:10px;
+  padding:14px;
+  margin-bottom:10px;
+}
+.device-card-header{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  flex-wrap:wrap;
+  margin-bottom:8px;
+}
+.device-color-indicator{
+  width:14px;
+  height:14px;
+  border-radius:50%;
+  flex-shrink:0;
+  border:1px solid var(--border);
+}
+.device-card-name{
+  font-weight:600;
+  font-size:15px;
+  color:var(--text);
+}
+.device-card-eui{
+  font-size:12px;
+  color:var(--muted-text);
+  font-family:monospace;
+}
+.device-card-status{
+  font-size:11px;
+  padding:2px 8px;
+  border-radius:10px;
+  font-weight:600;
+  margin-left:auto;
+}
+.device-card-status.active{
+  background:#dcfce7;
+  color:#166534;
+}
+.device-card-status.inactive{
+  background:#fef2f2;
+  color:#991b1b;
+}
+[data-theme="dark"] .device-card-status.active{
+  background:#14532d;
+  color:#86efac;
+}
+[data-theme="dark"] .device-card-status.inactive{
+  background:#450a0a;
+  color:#fca5a5;
+}
+.device-card-info{
+  display:flex;
+  gap:16px;
+  font-size:13px;
+  color:var(--muted-text);
+  margin-bottom:10px;
+}
+.device-card-actions{
+  display:flex;
+  gap:8px;
+  flex-wrap:wrap;
+}
+
+/* ========== MULTI-DEVICE: Small Buttons ========== */
+.btn-sm{
+  padding:5px 12px;
+  font-size:12px;
+  border:1px solid var(--border);
+  border-radius:6px;
+  cursor:pointer;
+  background:var(--btn-bg);
+  color:var(--text);
+  transition:all 0.15s;
+}
+.btn-sm:hover{
+  background:var(--muted-bg);
+}
+.btn-sm.btn-edit{
+  border-color:var(--primary);
+  color:var(--primary);
+}
+.btn-sm.btn-edit:hover{
+  background:var(--primary);
+  color:#fff;
+}
+.btn-sm.btn-toggle{
+  border-color:#f59e0b;
+  color:#f59e0b;
+}
+.btn-sm.btn-toggle:hover{
+  background:#f59e0b;
+  color:#fff;
+}
+.btn-sm.btn-danger{
+  border-color:#ef4444;
+  color:#ef4444;
+}
+.btn-sm.btn-danger:hover{
+  background:#ef4444;
+  color:#fff;
+}
+
+/* ========== MULTI-DEVICE: Comparison Panel ========== */
+.comparison-panel{
+  background:var(--card-bg);
+  border:1px solid var(--border);
+  border-radius:10px;
+  padding:16px;
+  margin:10px 0;
+}
+.comparison-panel.hidden{
+  display:none;
+}
+.comparison-header{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  margin-bottom:12px;
+}
+.comparison-header h3{
+  margin:0;
+  font-size:16px;
+  color:var(--text);
+}
+.comparison-controls{
+  display:flex;
+  flex-direction:column;
+  gap:12px;
+}
+.comparison-dates{
+  display:flex;
+  gap:12px;
+  flex-wrap:wrap;
+}
+.comparison-dates label{
+  display:flex;
+  align-items:center;
+  gap:6px;
+  font-size:13px;
+  color:var(--text);
+}
+.comparison-dates input[type="date"]{
+  padding:5px 8px;
+  border:1px solid var(--border);
+  border-radius:6px;
+  background:var(--card-bg);
+  color:var(--text);
+  font-size:13px;
+}
+.comparison-devices{
+  display:flex;
+  flex-wrap:wrap;
+  gap:10px;
+}
+.comparison-device-toggle{
+  display:flex;
+  align-items:center;
+  gap:6px;
+  font-size:13px;
+  cursor:pointer;
+  color:var(--text);
+}
+.comparison-device-toggle input[type="checkbox"]{
+  width:14px;
+  height:14px;
+}
+
+/* ========== MULTI-DEVICE: Perimeter Cards ========== */
+.perimeter-card{
+  background:var(--muted-bg);
+  border:1px solid var(--border);
+  border-radius:8px;
+  padding:12px;
+  margin-bottom:8px;
+}
+.perimeter-card-header{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  flex-wrap:wrap;
+  margin-bottom:6px;
+}
+.perimeter-radius{
+  font-size:12px;
+  color:var(--muted-text);
+  background:var(--card-bg);
+  padding:1px 8px;
+  border-radius:10px;
+  border:1px solid var(--border);
+}
+.perimeter-card-info{
+  display:flex;
+  gap:16px;
+  font-size:12px;
+  color:var(--muted-text);
+  margin-bottom:8px;
+}
+
+/* ========== MULTI-DEVICE: Overlay Wide Variant ========== */
+.overlay-wide{
+  max-width:600px;
+}
+
+/* ========== MULTI-DEVICE: Empty State ========== */
+.empty-state{
+  text-align:center;
+  color:var(--muted-text);
+  padding:24px 16px;
+  font-size:14px;
+}
+
+/* ========== MULTI-DEVICE: Close Button ========== */
+.btn-close{
+  background:none;
+  border:none;
+  font-size:24px;
+  cursor:pointer;
+  color:var(--muted-text);
+  padding:0 4px;
+  line-height:1;
+}
+.btn-close:hover{
+  color:var(--text);
+}
+
+/* ========== MULTI-DEVICE: Checkbox Label ========== */
+.checkbox-label{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  cursor:pointer;
+  font-size:14px;
+  color:var(--text);
+}
+.checkbox-label input[type="checkbox"]{
+  width:16px;
+  height:16px;
+}
+
+/* ========== MULTI-DEVICE: Overlay Close Button ========== */
+.overlay-close-btn{
+  background:none;
+  border:none;
+  font-size:28px;
+  cursor:pointer;
+  color:var(--muted-text);
+  padding:0;
+  line-height:1;
+}
+.overlay-close-btn:hover{
+  color:var(--text);
+}
+
+/* ========== MULTI-DEVICE: Responsive ========== */
+@media(max-width:768px){
+  .device-bar-inner{
+    flex-direction:column;
+    align-items:stretch;
+    gap:8px;
+  }
+  .device-view-toggle{
+    justify-content:center;
+  }
+  .device-card-header{
+    flex-direction:column;
+    align-items:flex-start;
+  }
+  .device-card-status{
+    margin-left:0;
+  }
+  .comparison-dates{
+    flex-direction:column;
+  }
+  .overlay-wide{
+    max-width:95vw;
+  }
+}
+
+@media(max-width:480px){
+  .device-view-btn{
+    padding:4px 10px;
+    font-size:12px;
+  }
+  .device-card{
+    padding:10px;
+  }
+  .device-card-actions{
+    flex-direction:column;
+  }
+  .device-card-actions .btn-sm{
+    width:100%;
+    text-align:center;
+  }
+}

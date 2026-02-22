@@ -192,43 +192,86 @@ try {
 }
 
 // ================================================================
-// 2. ANALÝZA - Získaj štatistiky pre posledných X dní (+ dnešok)
+// 1b. LOAD ACTIVE DEVICES
 // ================================================================
-debug_log("Analyzing last $CHECK_DAYS days" . ($INCLUDE_TODAY ? ' + today' : '') . "...");
+$activeDevices = [];
+try {
+    $tables = [];
+    $tq = $pdo->query("SELECT name FROM sqlite_master WHERE type='table' AND name='devices'");
+    while ($tr = $tq->fetch()) $tables[] = $tr['name'];
+
+    if (in_array('devices', $tables)) {
+        $dq = $pdo->query("SELECT id, name, device_eui FROM devices WHERE is_active = 1 ORDER BY id ASC");
+        while ($dr = $dq->fetch()) {
+            $activeDevices[] = ['id' => (int)$dr['id'], 'name' => $dr['name'], 'eui' => $dr['device_eui']];
+        }
+    }
+} catch (Throwable $e) {
+    debug_log("DEVICES: Could not load from DB: " . $e->getMessage());
+}
+
+// Fallback: single device mode (no device_id filter)
+if (empty($activeDevices)) {
+    $activeDevices[] = ['id' => null, 'name' => 'Default', 'eui' => ''];
+    info_log("DEVICES: No devices table or no active devices, running in legacy mode");
+} else {
+    info_log("DEVICES: Found " . count($activeDevices) . " active device(s)");
+}
+
+// ================================================================
+// 2. ANALÝZA - Per-device analysis for last X days
+// ================================================================
+$today = new DateTimeImmutable('now', new DateTimeZone('Europe/Bratislava'));
+$startOffset = $INCLUDE_TODAY ? 0 : 1;
+
+$all_problematic_days = [];
+$all_stats_count = 0;
+
+foreach ($activeDevices as $deviceInfo) {
+$DEVICE_ID = $deviceInfo['id'];
+$DEVICE_NAME = $deviceInfo['name'];
+
+debug_log("Analyzing device '$DEVICE_NAME' (id=" . ($DEVICE_ID ?? 'null') . "): last $CHECK_DAYS days" . ($INCLUDE_TODAY ? ' + today' : '') . "...");
 
 $stats = [];
-$today = new DateTimeImmutable('now', new DateTimeZone('Europe/Bratislava'));
-
-// Začni od dnešoka ak je INCLUDE_TODAY true
-$startOffset = $INCLUDE_TODAY ? 0 : 1;
 
 for ($i = $startOffset; $i < $CHECK_DAYS + $startOffset; $i++) {
     $date = $today->sub(new DateInterval("P{$i}D"));
     $dateStr = $date->format('Y-m-d');
-    
-    // UTC rozsah pre daný lokálny deň
+
     $startLocal = new DateTimeImmutable($dateStr . ' 00:00:00', new DateTimeZone('Europe/Bratislava'));
     $endLocal = new DateTimeImmutable($dateStr . ' 23:59:59', new DateTimeZone('Europe/Bratislava'));
     $startUtc = $startLocal->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d H:i:s');
     $endUtc = $endLocal->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d H:i:s');
-    
-    // Počet záznamov a timestamps
-    $stmt = $pdo->prepare("
-        SELECT 
-            COUNT(*) as record_count,
-            MIN(timestamp) as first_record,
-            MAX(timestamp) as last_record
-        FROM tracker_data
-        WHERE timestamp BETWEEN :start AND :end
-    ");
-    $stmt->execute([':start' => $startUtc, ':end' => $endUtc]);
+
+    // Count records per device
+    if ($DEVICE_ID !== null) {
+        $stmt = $pdo->prepare("
+            SELECT COUNT(*) as record_count, MIN(timestamp) as first_record, MAX(timestamp) as last_record
+            FROM tracker_data
+            WHERE timestamp BETWEEN :start AND :end AND device_id = :did
+        ");
+        $stmt->execute([':start' => $startUtc, ':end' => $endUtc, ':did' => $DEVICE_ID]);
+    } else {
+        $stmt = $pdo->prepare("
+            SELECT COUNT(*) as record_count, MIN(timestamp) as first_record, MAX(timestamp) as last_record
+            FROM tracker_data
+            WHERE timestamp BETWEEN :start AND :end
+        ");
+        $stmt->execute([':start' => $startUtc, ':end' => $endUtc]);
+    }
     $row = $stmt->fetch();
-    
-    // Získaj predchádzajúci stav z refetch_state
-    $stmt = $pdo->prepare("SELECT * FROM refetch_state WHERE date = :date");
-    $stmt->execute([':date' => $dateStr]);
+
+    // Get previous state from refetch_state (device-aware)
+    if ($DEVICE_ID !== null) {
+        $stmt = $pdo->prepare("SELECT * FROM refetch_state WHERE date = :date AND device_id = :did");
+        $stmt->execute([':date' => $dateStr, ':did' => $DEVICE_ID]);
+    } else {
+        $stmt = $pdo->prepare("SELECT * FROM refetch_state WHERE date = :date");
+        $stmt->execute([':date' => $dateStr]);
+    }
     $previousState = $stmt->fetch();
-    
+
     $stats[$dateStr] = [
         'date' => $dateStr,
         'record_count' => (int)$row['record_count'],
@@ -306,48 +349,82 @@ foreach ($stats as $dateStr => $stat) {
         ];
     }
     
-    // Aktualizuj refetch_state (aj keď nie je problém)
-    // Toto je dôležité pre budúce porovnanie!
-    $stmt = $pdo->prepare("
-        INSERT OR REPLACE INTO refetch_state 
-        (date, last_check_time, last_known_timestamp, last_known_count, needs_refetch, notes)
-        VALUES (:date, :check_time, :timestamp, :count, :needs, :notes)
-    ");
-    $stmt->execute([
-        ':date' => $dateStr,
-        ':check_time' => (new DateTimeImmutable())->format('Y-m-d H:i:s'),
-        ':timestamp' => $stat['last_record'],
-        ':count' => $stat['record_count'],
-        ':needs' => count($issues) > 0 ? 1 : 0,
-        ':notes' => count($issues) > 0 ? implode(', ', $issues) : null
-    ]);
+    // Update refetch_state (even if no issues - important for future comparison!)
+    if ($DEVICE_ID !== null) {
+        $stmt = $pdo->prepare("
+            INSERT OR REPLACE INTO refetch_state
+            (date, device_id, last_check_time, last_known_timestamp, last_known_count, needs_refetch, notes)
+            VALUES (:date, :did, :check_time, :timestamp, :count, :needs, :notes)
+        ");
+        $stmt->execute([
+            ':date' => $dateStr,
+            ':did' => $DEVICE_ID,
+            ':check_time' => (new DateTimeImmutable())->format('Y-m-d H:i:s'),
+            ':timestamp' => $stat['last_record'],
+            ':count' => $stat['record_count'],
+            ':needs' => count($issues) > 0 ? 1 : 0,
+            ':notes' => count($issues) > 0 ? implode(', ', $issues) : null
+        ]);
+    } else {
+        $stmt = $pdo->prepare("
+            INSERT OR REPLACE INTO refetch_state
+            (date, last_check_time, last_known_timestamp, last_known_count, needs_refetch, notes)
+            VALUES (:date, :check_time, :timestamp, :count, :needs, :notes)
+        ");
+        $stmt->execute([
+            ':date' => $dateStr,
+            ':check_time' => (new DateTimeImmutable())->format('Y-m-d H:i:s'),
+            ':timestamp' => $stat['last_record'],
+            ':count' => $stat['record_count'],
+            ':needs' => count($issues) > 0 ? 1 : 0,
+            ':notes' => count($issues) > 0 ? implode(', ', $issues) : null
+        ]);
+    }
 }
 
-// Zoraď podľa priority (najvyššia priorita first)
+// Sort by priority
 uasort($problematic_days, function($a, $b) {
     return $b['priority'] <=> $a['priority'];
 });
 
-info_log("Found " . count($problematic_days) . " problematic days");
+if (count($problematic_days) > 0) {
+    info_log("Device '$DEVICE_NAME': Found " . count($problematic_days) . " problematic days");
+    foreach ($problematic_days as $day) {
+        info_log(sprintf(
+            "  %s [priority=%d, records=%d, age=%dd]: %s",
+            $day['date'],
+            $day['priority'],
+            $day['record_count'],
+            $day['age_days'],
+            implode(', ', $day['issues'])
+        ));
+        // Add device info to each problematic day
+        $day['device_id'] = $DEVICE_ID;
+        $day['device_name'] = $DEVICE_NAME;
+        $all_problematic_days[] = $day;
+    }
+} else {
+    info_log("Device '$DEVICE_NAME': ✓ No issues detected.");
+}
+
+$all_stats_count += count($stats);
+
+} // end foreach activeDevices
+
+// Sort all problematic days by priority
+usort($all_problematic_days, function($a, $b) {
+    return $b['priority'] <=> $a['priority'];
+});
+
+$problematic_days = $all_problematic_days;
+info_log("Total across all devices: " . count($problematic_days) . " problematic day(s)");
 
 if (count($problematic_days) === 0) {
-    info_log("✓ No issues detected. All days look good.");
+    info_log("✓ No issues detected across all devices.");
     info_log("=== SMART REFETCH V2 END ===");
     flock($lockFp, LOCK_UN);
     fclose($lockFp);
     exit(0);
-}
-
-// Vypíš problémové dni
-foreach ($problematic_days as $day) {
-    info_log(sprintf(
-        "  %s [priority=%d, records=%d, age=%dd]: %s",
-        $day['date'],
-        $day['priority'],
-        $day['record_count'],
-        $day['age_days'],
-        implode(', ', $day['issues'])
-    ));
 }
 
 // ================================================================
@@ -369,53 +446,75 @@ $fail_count = 0;
 $max_refetch = min($MAX_REFETCH_PER_RUN, count($problematic_days));
 info_log("Will refetch top $max_refetch days (out of " . count($problematic_days) . " problematic)");
 
-$days_to_refetch = array_slice($problematic_days, 0, $max_refetch, true);
+// Deduplicate: only refetch each date once (fetch_data.php handles all devices)
+$uniqueDates = [];
+foreach (array_slice($problematic_days, 0, $max_refetch) as $day) {
+    $dateStr = $day['date'];
+    if (!isset($uniqueDates[$dateStr])) {
+        $uniqueDates[$dateStr] = $day;
+    }
+}
 
-foreach ($days_to_refetch as $dateStr => $day) {
-    info_log("Refetching $dateStr (priority={$day['priority']})...");
-    
+foreach ($uniqueDates as $dateStr => $day) {
+    $deviceLabel = isset($day['device_name']) ? " [{$day['device_name']}]" : '';
+    info_log("Refetching $dateStr (priority={$day['priority']})$deviceLabel...");
+
     $scriptPath = __DIR__ . '/fetch_data.php';
     if (!is_file($scriptPath)) {
         info_log("  ✗ ERROR: fetch_data.php not found");
         $fail_count++;
         continue;
     }
-    
+
     $envPhp = getenv('PHP_CLI_PATH');
     if ($envPhp && $envPhp !== '') {
         $phpBin = $envPhp;
     } else {
         $phpBin = 'php';
     }
-    
-    // Spusti fetch_data.php v refetch móde
+
+    // Run fetch_data.php in refetch mode (it will iterate all active devices)
     $cmd = sprintf(
         '%s %s --refetch-date=%s 2>&1',
         escapeshellarg($phpBin),
         escapeshellarg($scriptPath),
         escapeshellarg($dateStr)
     );
-    
+
     $startTime = microtime(true);
     $output = [];
     $returnCode = 0;
     exec($cmd, $output, $returnCode);
     $elapsed = round(microtime(true) - $startTime, 1);
-    
+
     if ($returnCode === 0) {
         info_log("  ✓ Success ({$elapsed}s)");
         $success_count++;
-        
-        // Aktualizuj refetch_state
-        $stmt = $pdo->prepare("
-            UPDATE refetch_state 
-            SET last_refetch_time = :refetch_time, needs_refetch = 0
-            WHERE date = :date
-        ");
-        $stmt->execute([
-            ':refetch_time' => (new DateTimeImmutable())->format('Y-m-d H:i:s'),
-            ':date' => $dateStr
-        ]);
+
+        // Update refetch_state for all devices that had this date problematic
+        $deviceId = $day['device_id'] ?? null;
+        if ($deviceId !== null) {
+            $stmt = $pdo->prepare("
+                UPDATE refetch_state
+                SET last_refetch_time = :refetch_time, needs_refetch = 0
+                WHERE date = :date AND device_id = :did
+            ");
+            $stmt->execute([
+                ':refetch_time' => (new DateTimeImmutable())->format('Y-m-d H:i:s'),
+                ':date' => $dateStr,
+                ':did' => $deviceId
+            ]);
+        } else {
+            $stmt = $pdo->prepare("
+                UPDATE refetch_state
+                SET last_refetch_time = :refetch_time, needs_refetch = 0
+                WHERE date = :date
+            ");
+            $stmt->execute([
+                ':refetch_time' => (new DateTimeImmutable())->format('Y-m-d H:i:s'),
+                ':date' => $dateStr
+            ]);
+        }
     } else {
         info_log("  ✗ Failed with code $returnCode ({$elapsed}s)");
         if ($DEBUG_MODE) {
@@ -426,9 +525,9 @@ foreach ($days_to_refetch as $dateStr => $day) {
     
     $refetch_count++;
     
-    // Pauza medzi refetch (aby sme nepre
-ťažili SenseCAP API)
-    if ($refetch_count < count($days_to_refetch)) {
+    // Pause between refetches (to not overload SenseCAP API)
+    // Pauza medzi refetch
+    if ($refetch_count < count($uniqueDates)) {
         debug_log("  Sleeping 30 seconds before next refetch...");
         sleep(30);
     }

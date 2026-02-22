@@ -137,6 +137,20 @@
           </button>
         </div>
       </div>
+      <button class="menu-item" id="menuDevices">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="5" y="2" width="14" height="20" rx="2" ry="2"/>
+          <line x1="12" y1="18" x2="12.01" y2="18"/>
+        </svg>
+        Zariadenia
+      </button>
+      <button class="menu-item" id="menuDevicePerimeters">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="10"/>
+          <circle cx="12" cy="12" r="4"/>
+        </svg>
+        Perimeter zariadení
+      </button>
       <button class="menu-item" id="menuPerimeters">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <polygon points="12 2 22 8.5 22 15.5 12 22 2 15.5 2 8.5"/>
@@ -156,6 +170,9 @@
         </div> <!-- End hamburger-container -->
       </div> <!-- End topbar-right -->
     </div> <!-- End topbar -->
+
+    <!-- Multi-device bar -->
+    <div id="deviceBar" class="device-bar hidden"></div>
 
     <div class="map-wrap">
       <div id="map" role="region" aria-label="Mapa s trasou a polohami"></div>
@@ -1196,6 +1213,126 @@
             <button type="button" id="cancelPositionEdit" class="btn-secondary">Zrušiť</button>
           </div>
         </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- Device Management Overlay -->
+  <div id="deviceManagementOverlay" class="overlay hidden">
+    <div class="overlay-content overlay-wide">
+      <div class="overlay-header">
+        <h2>Správa zariadení</h2>
+        <button class="overlay-close-btn" onclick="closeDeviceManagement()">&times;</button>
+      </div>
+      <div class="overlay-body">
+        <div id="deviceList"></div>
+        <div class="overlay-actions" style="margin-top:16px;">
+          <button class="btn-primary" onclick="openDeviceForm()">Pridať zariadenie</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Device Form (inline within management overlay) -->
+  <div id="deviceForm" class="overlay hidden">
+    <div class="overlay-content">
+      <div class="overlay-header">
+        <h2 id="deviceFormTitle">Nové zariadenie</h2>
+        <button class="overlay-close-btn" onclick="closeDeviceForm()">&times;</button>
+      </div>
+      <div class="overlay-body">
+        <input type="hidden" id="deviceId">
+        <div class="form-group">
+          <label for="deviceName">Názov zariadenia</label>
+          <input type="text" id="deviceName" placeholder="Napr. Tracker Fido" required>
+        </div>
+        <div class="form-group">
+          <label for="deviceEui">Device EUI</label>
+          <input type="text" id="deviceEui" placeholder="Napr. 2CF7F1C0443.." required>
+        </div>
+        <div class="form-group">
+          <label for="deviceColor">Farba na mape</label>
+          <input type="color" id="deviceColor" value="#3388ff">
+        </div>
+        <div class="form-group">
+          <label class="checkbox-label">
+            <input type="checkbox" id="deviceActive" checked>
+            Aktívne zariadenie
+          </label>
+        </div>
+        <div class="form-group">
+          <label class="checkbox-label">
+            <input type="checkbox" id="deviceNotifEnabled">
+            Notifikácie zapnuté
+          </label>
+        </div>
+        <div class="form-group">
+          <label for="deviceNotifEmail">Email pre notifikácie</label>
+          <input type="email" id="deviceNotifEmail" placeholder="email@example.com">
+        </div>
+        <div class="form-actions">
+          <button class="btn-primary" onclick="saveDevice()">Uložiť</button>
+          <button class="btn-secondary" onclick="closeDeviceForm()">Zrušiť</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Device Perimeter Overlay -->
+  <div id="devicePerimeterOverlay" class="overlay hidden">
+    <div class="overlay-content overlay-wide">
+      <div class="overlay-header">
+        <h2>Perimeter zóny zariadenia</h2>
+        <button class="overlay-close-btn" onclick="closeDevicePerimeterManager()">&times;</button>
+      </div>
+      <div class="overlay-body">
+        <!-- Content injected by JS -->
+      </div>
+    </div>
+  </div>
+
+  <!-- Device Perimeter Form -->
+  <div id="devicePerimeterForm" class="overlay hidden">
+    <div class="overlay-content">
+      <div class="overlay-header">
+        <h2 id="dpFormTitle">Nový perimeter</h2>
+        <button class="overlay-close-btn" onclick="closeDevicePerimeterForm()">&times;</button>
+      </div>
+      <div class="overlay-body">
+        <input type="hidden" id="dpId">
+        <input type="hidden" id="dpDeviceId">
+        <div class="form-group">
+          <label for="dpName">Názov perimetra</label>
+          <input type="text" id="dpName" placeholder="Napr. Domov" required>
+        </div>
+        <div class="form-group">
+          <label for="dpLat">Zemepisná šírka</label>
+          <input type="number" id="dpLat" step="0.000001" placeholder="48.1486" required>
+        </div>
+        <div class="form-group">
+          <label for="dpLng">Zemepisná dĺžka</label>
+          <input type="number" id="dpLng" step="0.000001" placeholder="17.1077" required>
+        </div>
+        <div class="form-group">
+          <label for="dpRadius">Polomer (m)</label>
+          <input type="number" id="dpRadius" min="10" max="50000" value="500">
+        </div>
+        <div class="form-group">
+          <label class="checkbox-label">
+            <input type="checkbox" id="dpAlertEnter">
+            Upozornenie pri vstupe
+          </label>
+        </div>
+        <div class="form-group">
+          <label class="checkbox-label">
+            <input type="checkbox" id="dpAlertExit">
+            Upozornenie pri výstupe
+          </label>
+        </div>
+        <div class="form-actions">
+          <button class="btn-primary" onclick="saveDevicePerimeter()">Uložiť</button>
+          <button class="btn-secondary" onclick="closeDevicePerimeterForm()">Zrušiť</button>
+        </div>
       </div>
     </div>
   </div>

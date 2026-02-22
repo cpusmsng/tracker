@@ -405,6 +405,8 @@ async function initializeApp() {
   initHamburgerMenu();
   initSubdomainSwitcher();
   addUIHandlers();
+  await loadDevices();
+  initDeviceUI();
   await loadAvailableDates();
 
   // Handle URL date parameter (from email alerts)
@@ -509,6 +511,50 @@ async function apiDelete(action, payload) {
   });
   if (!r.ok) throw new Error(`DELETE ${action} -> ${r.status}`);
   return r.json();
+}
+
+// --------- Multi-Device State ---------
+let devices = [];                    // All devices from API
+let activeDeviceId = null;           // Selected device ID (null = all devices)
+let deviceViewMode = 'all';          // 'all' or 'single'
+let deviceLayers = {};               // Map of device_id -> L.layerGroup
+let deviceVisibility = {};           // Map of device_id -> bool (toggle visibility)
+let comparisonMode = false;          // Multi-device comparison
+let comparisonDeviceIds = [];        // Devices selected for comparison
+let comparisonDateFrom = '';
+let comparisonDateTo = '';
+
+async function loadDevices() {
+  try {
+    const res = await apiGet(`${API}?action=get_devices`);
+    if (res.ok && Array.isArray(res.data)) {
+      devices = res.data;
+      // Initialize visibility for all devices
+      devices.forEach(d => {
+        if (deviceVisibility[d.id] === undefined) {
+          deviceVisibility[d.id] = true;
+        }
+      });
+    }
+  } catch (e) {
+    console.error('Failed to load devices:', e);
+    devices = [];
+  }
+  return devices;
+}
+
+function getDeviceById(id) {
+  return devices.find(d => d.id === id) || null;
+}
+
+function getDeviceColor(deviceId) {
+  const dev = getDeviceById(deviceId);
+  return dev ? dev.color : '#3388ff';
+}
+
+function getDeviceName(deviceId) {
+  const dev = getDeviceById(deviceId);
+  return dev ? dev.name : 'Neznáme';
 }
 
 // --------- Map init ---------
@@ -809,6 +855,31 @@ function initHamburgerMenu() {
       menu.classList.add('hidden');
       btn.classList.remove('active');
       openPerimeterOverlay();
+    });
+  }
+
+  // Device management menu item
+  const menuDevices = $('#menuDevices');
+  if (menuDevices) {
+    menuDevices.addEventListener('click', () => {
+      menu.classList.add('hidden');
+      btn.classList.remove('active');
+      openDeviceManagement();
+    });
+  }
+
+  // Device perimeters menu item
+  const menuDevicePerimeters = $('#menuDevicePerimeters');
+  if (menuDevicePerimeters) {
+    menuDevicePerimeters.addEventListener('click', () => {
+      menu.classList.add('hidden');
+      btn.classList.remove('active');
+      // Open perimeter manager for first device, or prompt to select
+      if (devices.length === 1) {
+        openDevicePerimeterManager(devices[0].id);
+      } else if (devices.length > 1) {
+        openDeviceManagement(); // Let user pick device first
+      }
     });
   }
 }
@@ -1487,13 +1558,22 @@ async function loadHistory(dateStr) {
     lastPositionMarker = null;
   }
 
-  const data = await apiGet(`${API}?action=get_history&date=${encodeURIComponent(dateStr)}`);
-  
-  // Načítaj aj posledný bod z predošlého dňa
+  // Build URL with optional device_id filter
+  let histUrl = `${API}?action=get_history&date=${encodeURIComponent(dateStr)}`;
+  if (deviceViewMode === 'single' && activeDeviceId) {
+    histUrl += `&device_id=${activeDeviceId}`;
+  }
+  const data = await apiGet(histUrl);
+
+  // Load previous day's last point
   const prevDate = new Date(dateStr);
   prevDate.setDate(prevDate.getDate() - 1);
   const prevDateStr = fmt(prevDate);
-  const prevData = await apiGet(`${API}?action=get_history&date=${encodeURIComponent(prevDateStr)}`);
+  let prevUrl = `${API}?action=get_history&date=${encodeURIComponent(prevDateStr)}`;
+  if (deviceViewMode === 'single' && activeDeviceId) {
+    prevUrl += `&device_id=${activeDeviceId}`;
+  }
+  const prevData = await apiGet(prevUrl);
   const lastPrevPoint = (prevData && prevData.length > 0) ? prevData[prevData.length - 1] : null;
   
   // OPRAVA: Rozlišuj medzi dneškom a minulým dňom
@@ -1503,7 +1583,9 @@ async function loadHistory(dateStr) {
     
     if (isToday) {
       // Pre dnešok zobraz poslednú známu polohu
-      const lastPosition = await apiGet(`${API}?action=get_last_position`);
+      let lpUrl = `${API}?action=get_last_position`;
+      if (deviceViewMode === 'single' && activeDeviceId) lpUrl += `&device_id=${activeDeviceId}`;
+      const lastPosition = await apiGet(lpUrl);
       
       if (lastPosition && lastPosition.latitude && lastPosition.longitude) {
         // Zobraz poslednú známu polohu na mape
@@ -1578,10 +1660,55 @@ async function loadHistory(dateStr) {
     return;
   }
 
-  // polyline
-  const latlngs = data.map(p => [p.latitude, p.longitude]);
-  const line = L.polyline(latlngs, { color:'#3388ff', weight:3 }).addTo(trackLayer);
-  map.fitBounds(line.getBounds(), { padding:[20,20] });
+  // Polyline - multi-device aware
+  if (deviceViewMode === 'all' && devices.length > 1) {
+    // Group data by device_id
+    const byDevice = {};
+    data.forEach(p => {
+      const did = p.device_id || 'unknown';
+      if (!byDevice[did]) byDevice[did] = [];
+      byDevice[did].push(p);
+    });
+
+    // Clear device layers
+    Object.values(deviceLayers).forEach(l => { l.clearLayers(); map.removeLayer(l); });
+    deviceLayers = {};
+
+    let allBounds = [];
+    Object.keys(byDevice).forEach(did => {
+      const pts = byDevice[did];
+      const color = pts[0].device_color || getDeviceColor(parseInt(did)) || '#3388ff';
+      const name = pts[0].device_name || getDeviceName(parseInt(did));
+      const lls = pts.map(p => [p.latitude, p.longitude]);
+      allBounds.push(...lls);
+
+      const layer = L.layerGroup();
+      const polyline = L.polyline(lls, { color, weight: 3 });
+      polyline.bindTooltip(name, { sticky: true });
+      polyline.addTo(layer);
+
+      // Last point for this device
+      const lastPt = pts[pts.length - 1];
+      L.circleMarker([lastPt.latitude, lastPt.longitude], {
+        radius: 8, color, fillColor: color, fillOpacity: 0.9, weight: 2
+      }).bindTooltip(`${name}: ${toTime(lastPt.timestamp)}`).addTo(layer);
+
+      deviceLayers[did] = layer;
+      if (deviceVisibility[parseInt(did)] !== false) {
+        layer.addTo(map);
+      }
+    });
+
+    if (allBounds.length > 0) {
+      map.fitBounds(allBounds, { padding: [20, 20] });
+    }
+  } else {
+    // Single device or legacy mode
+    const routeColor = (deviceViewMode === 'single' && activeDeviceId) ? getDeviceColor(activeDeviceId) : '#3388ff';
+    const latlngs = data.map(p => [p.latitude, p.longitude]);
+    const line = L.polyline(latlngs, { color: routeColor, weight:3 }).addTo(trackLayer);
+    map.fitBounds(line.getBounds(), { padding:[20,20] });
+  }
 
   // body s tooltipom
   data.forEach((p, idx) => {
@@ -4057,6 +4184,529 @@ function initLogViewer() {
   const nextPageBtn = $('#logNextPage');
   if (nextPageBtn) {
     nextPageBtn.addEventListener('click', goToNextPage);
+  }
+}
+
+// ========== MULTI-DEVICE UI ==========
+
+function initDeviceUI() {
+  if (devices.length <= 1) {
+    // Single device mode - hide device controls
+    const deviceBar = $('#deviceBar');
+    if (deviceBar) deviceBar.classList.add('hidden');
+    return;
+  }
+
+  // Show device bar
+  const deviceBar = $('#deviceBar');
+  if (deviceBar) deviceBar.classList.remove('hidden');
+
+  renderDeviceBar();
+  renderDeviceLegend();
+}
+
+function renderDeviceBar() {
+  const bar = $('#deviceBar');
+  if (!bar) return;
+
+  bar.innerHTML = `
+    <div class="device-bar-inner">
+      <div class="device-view-toggle">
+        <button class="device-view-btn ${deviceViewMode === 'all' ? 'active' : ''}" data-mode="all">Všetky</button>
+        <button class="device-view-btn ${deviceViewMode === 'single' ? 'active' : ''}" data-mode="single">Jedno</button>
+        <button class="device-view-btn ${comparisonMode ? 'active' : ''}" data-mode="compare">Porovnanie</button>
+      </div>
+      ${deviceViewMode === 'single' ? `
+        <select id="deviceSelector" class="device-selector">
+          ${devices.map(d => `<option value="${d.id}" ${activeDeviceId === d.id ? 'selected' : ''}>${d.name}</option>`).join('')}
+        </select>
+      ` : ''}
+    </div>
+  `;
+
+  // Event listeners
+  bar.querySelectorAll('.device-view-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const mode = btn.dataset.mode;
+      if (mode === 'compare') {
+        comparisonMode = !comparisonMode;
+        if (comparisonMode) {
+          deviceViewMode = 'compare';
+          openComparisonPanel();
+        } else {
+          deviceViewMode = 'all';
+          closeComparisonPanel();
+        }
+      } else {
+        comparisonMode = false;
+        deviceViewMode = mode;
+        if (mode === 'single' && !activeDeviceId && devices.length > 0) {
+          activeDeviceId = devices[0].id;
+        }
+        if (mode === 'all') {
+          activeDeviceId = null;
+        }
+      }
+      renderDeviceBar();
+      renderDeviceLegend();
+      refresh();
+    });
+  });
+
+  const sel = bar.querySelector('#deviceSelector');
+  if (sel) {
+    sel.addEventListener('change', () => {
+      activeDeviceId = parseInt(sel.value);
+      refresh();
+    });
+  }
+}
+
+function renderDeviceLegend() {
+  // Update the map legend to show device colors
+  if (!legendControl || !legendControl._container) return;
+
+  const content = legendControl._container.querySelector('.legend-content');
+  if (!content) return;
+
+  let html = '<div class="legend-header">Legenda</div>';
+
+  if (devices.length > 1 && deviceViewMode === 'all') {
+    devices.forEach(d => {
+      const visible = deviceVisibility[d.id] !== false;
+      html += `
+        <div class="leg-item device-legend-item" data-device-id="${d.id}">
+          <label class="device-toggle-label">
+            <input type="checkbox" class="device-visibility-toggle" data-device-id="${d.id}" ${visible ? 'checked' : ''}>
+            <span class="leg-dot" style="background:${d.color};"></span>
+            ${d.name}
+          </label>
+          ${d.last_position ? `<span class="device-last-seen">${toTime(d.last_position.timestamp)}</span>` : ''}
+        </div>
+      `;
+    });
+  } else {
+    html += `<div class="leg-item"><span class="leg-line"></span> Trasa (GNSS / Wi-Fi)</div>`;
+    html += `<div class="leg-item"><span class="leg-dot blinking"></span> Posledná poloha</div>`;
+    html += `<div class="leg-item"><span class="leg-dot red"></span> iBeacon</div>`;
+  }
+
+  content.innerHTML = html;
+
+  // Add toggle handlers
+  content.querySelectorAll('.device-visibility-toggle').forEach(cb => {
+    cb.addEventListener('change', (e) => {
+      const did = parseInt(e.target.dataset.deviceId);
+      deviceVisibility[did] = e.target.checked;
+      updateDeviceLayerVisibility();
+    });
+  });
+}
+
+function updateDeviceLayerVisibility() {
+  Object.keys(deviceLayers).forEach(did => {
+    const layer = deviceLayers[did];
+    const visible = deviceVisibility[parseInt(did)] !== false;
+    if (visible && !map.hasLayer(layer)) {
+      map.addLayer(layer);
+    } else if (!visible && map.hasLayer(layer)) {
+      map.removeLayer(layer);
+    }
+  });
+}
+
+// ========== DEVICE MANAGEMENT (Settings) ==========
+
+function openDeviceManagement() {
+  const overlay = $('#deviceManagementOverlay');
+  if (overlay) {
+    overlay.classList.remove('hidden');
+    loadDeviceManagementList();
+  }
+}
+
+function closeDeviceManagement() {
+  const overlay = $('#deviceManagementOverlay');
+  if (overlay) overlay.classList.add('hidden');
+}
+
+async function loadDeviceManagementList() {
+  await loadDevices();
+  const container = $('#deviceList');
+  if (!container) return;
+
+  if (devices.length === 0) {
+    container.innerHTML = '<p class="empty-state">Žiadne zariadenia</p>';
+    return;
+  }
+
+  container.innerHTML = devices.map(d => `
+    <div class="device-card" data-id="${d.id}">
+      <div class="device-card-header">
+        <span class="device-color-indicator" style="background:${d.color}"></span>
+        <span class="device-card-name">${d.name}</span>
+        <span class="device-card-eui">${d.device_eui}</span>
+        <span class="device-card-status ${d.is_active ? 'active' : 'inactive'}">${d.is_active ? 'Aktívne' : 'Neaktívne'}</span>
+      </div>
+      <div class="device-card-info">
+        ${d.last_position ? `<span>Posledná poloha: ${toTime(d.last_position.timestamp)}</span>` : '<span>Bez dát</span>'}
+        ${d.status ? `<span>Batéria: ${d.status.battery_state === 1 ? 'OK' : d.status.battery_state === 0 ? 'Nízka' : '?'}</span>` : ''}
+      </div>
+      <div class="device-card-actions">
+        <button class="btn-sm btn-edit" onclick="editDevice(${d.id})">Upraviť</button>
+        <button class="btn-sm btn-toggle" onclick="toggleDevice(${d.id}, ${d.is_active ? 0 : 1})">${d.is_active ? 'Deaktivovať' : 'Aktivovať'}</button>
+        <button class="btn-sm btn-danger" onclick="deleteDevice(${d.id}, '${d.name}')">Zmazať</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+function openDeviceForm(device = null) {
+  const form = $('#deviceForm');
+  if (!form) return;
+
+  form.querySelector('#deviceFormTitle').textContent = device ? 'Upraviť zariadenie' : 'Nové zariadenie';
+  form.querySelector('#deviceId').value = device ? device.id : '';
+  form.querySelector('#deviceName').value = device ? device.name : '';
+  form.querySelector('#deviceEui').value = device ? device.device_eui : '';
+  form.querySelector('#deviceColor').value = device ? device.color : '#3388ff';
+  form.querySelector('#deviceActive').checked = device ? device.is_active : true;
+  form.querySelector('#deviceNotifEnabled').checked = device ? device.notifications_enabled : false;
+  form.querySelector('#deviceNotifEmail').value = device ? (device.notification_email || '') : '';
+
+  form.classList.remove('hidden');
+}
+
+function closeDeviceForm() {
+  const form = $('#deviceForm');
+  if (form) form.classList.add('hidden');
+}
+
+async function saveDevice() {
+  const form = $('#deviceForm');
+  if (!form) return;
+
+  const id = form.querySelector('#deviceId').value;
+  const payload = {
+    name: form.querySelector('#deviceName').value.trim(),
+    device_eui: form.querySelector('#deviceEui').value.trim(),
+    color: form.querySelector('#deviceColor').value,
+    is_active: form.querySelector('#deviceActive').checked,
+    notifications_enabled: form.querySelector('#deviceNotifEnabled').checked,
+    notification_email: form.querySelector('#deviceNotifEmail').value.trim()
+  };
+
+  if (id) payload.id = parseInt(id);
+
+  if (!payload.name || !payload.device_eui) {
+    alert('Názov a Device EUI sú povinné');
+    return;
+  }
+
+  try {
+    const res = await apiPost('save_device', payload);
+    if (res.ok) {
+      closeDeviceForm();
+      await loadDeviceManagementList();
+      await loadDevices();
+      renderDeviceBar();
+      renderDeviceLegend();
+    } else {
+      alert(res.error || 'Chyba pri ukladaní');
+    }
+  } catch (e) {
+    alert('Chyba: ' + e.message);
+  }
+}
+
+async function editDevice(id) {
+  const dev = getDeviceById(id);
+  if (dev) openDeviceForm(dev);
+}
+
+async function toggleDevice(id, active) {
+  try {
+    await apiPost('toggle_device', { id, is_active: active });
+    await loadDeviceManagementList();
+    await loadDevices();
+    initDeviceUI();
+  } catch (e) {
+    alert('Chyba: ' + e.message);
+  }
+}
+
+async function deleteDevice(id, name) {
+  if (!confirm(`Naozaj chcete zmazať zariadenie "${name}" a všetky jeho dáta?`)) return;
+  try {
+    const res = await apiGet(`${API}?action=delete_device&id=${id}`);
+    if (res.ok) {
+      await loadDeviceManagementList();
+      await loadDevices();
+      if (activeDeviceId === id) {
+        activeDeviceId = devices.length > 0 ? devices[0].id : null;
+      }
+      initDeviceUI();
+      refresh();
+    } else {
+      alert(res.error || 'Chyba pri mazaní');
+    }
+  } catch (e) {
+    alert('Chyba: ' + e.message);
+  }
+}
+
+// ========== COMPARISON MODE ==========
+
+function openComparisonPanel() {
+  let panel = $('#comparisonPanel');
+  if (!panel) {
+    panel = document.createElement('div');
+    panel.id = 'comparisonPanel';
+    panel.className = 'comparison-panel';
+    document.querySelector('.container').appendChild(panel);
+  }
+
+  const today = fmt(new Date());
+  panel.innerHTML = `
+    <div class="comparison-header">
+      <h3>Porovnanie zariadení</h3>
+      <button class="btn-close" onclick="closeComparisonPanel()">&times;</button>
+    </div>
+    <div class="comparison-controls">
+      <div class="comparison-dates">
+        <label>Od: <input type="date" id="compDateFrom" value="${comparisonDateFrom || today}"></label>
+        <label>Do: <input type="date" id="compDateTo" value="${comparisonDateTo || today}"></label>
+      </div>
+      <div class="comparison-devices">
+        ${devices.map(d => `
+          <label class="comparison-device-toggle">
+            <input type="checkbox" value="${d.id}" ${comparisonDeviceIds.includes(d.id) ? 'checked' : ''}>
+            <span class="leg-dot" style="background:${d.color}"></span>
+            ${d.name}
+          </label>
+        `).join('')}
+      </div>
+      <button class="btn-primary" onclick="runComparison()">Porovnať</button>
+    </div>
+  `;
+  panel.classList.remove('hidden');
+}
+
+function closeComparisonPanel() {
+  comparisonMode = false;
+  deviceViewMode = 'all';
+  const panel = $('#comparisonPanel');
+  if (panel) panel.classList.add('hidden');
+  renderDeviceBar();
+  refresh();
+}
+
+async function runComparison() {
+  const fromInput = $('#compDateFrom');
+  const toInput = $('#compDateTo');
+  if (!fromInput || !toInput) return;
+
+  comparisonDateFrom = fromInput.value;
+  comparisonDateTo = toInput.value;
+  comparisonDeviceIds = [];
+
+  document.querySelectorAll('.comparison-device-toggle input:checked').forEach(cb => {
+    comparisonDeviceIds.push(parseInt(cb.value));
+  });
+
+  if (comparisonDeviceIds.length < 1) {
+    alert('Vyberte aspoň jedno zariadenie');
+    return;
+  }
+
+  // Clear existing layers
+  trackLayer.clearLayers();
+  Object.values(deviceLayers).forEach(l => l.clearLayers());
+
+  const allBounds = [];
+
+  for (const did of comparisonDeviceIds) {
+    const dev = getDeviceById(did);
+    const color = dev ? dev.color : '#3388ff';
+    const name = dev ? dev.name : 'Zariadenie ' + did;
+
+    try {
+      const data = await apiGet(`${API}?action=get_history_range&since=${comparisonDateFrom}T00:00:00&until=${comparisonDateTo}T23:59:59&device_id=${did}`);
+      if (!Array.isArray(data) || data.length === 0) continue;
+
+      const points = data.map(p => [p.latitude, p.longitude]);
+      allBounds.push(...points);
+
+      const polyline = L.polyline(points, { color, weight: 3, opacity: 0.8 });
+      polyline.bindTooltip(name, { sticky: true });
+      polyline.addTo(trackLayer);
+
+      // Last point marker
+      const lastPt = data[data.length - 1];
+      L.circleMarker([lastPt.latitude, lastPt.longitude], {
+        radius: 8, color: color, fillColor: color, fillOpacity: 0.9, weight: 2
+      }).bindTooltip(`${name}: ${toTime(lastPt.timestamp)}`).addTo(trackLayer);
+    } catch (e) {
+      console.error(`Comparison fetch failed for device ${did}:`, e);
+    }
+  }
+
+  if (allBounds.length > 0) {
+    map.fitBounds(allBounds, { padding: [30, 30] });
+  }
+}
+
+// ========== DEVICE PERIMETERS (Circular Geofences) ==========
+
+async function loadDevicePerimeters(deviceId) {
+  try {
+    const url = deviceId ? `${API}?action=get_device_perimeters&device_id=${deviceId}` : `${API}?action=get_device_perimeters`;
+    const res = await apiGet(url);
+    return (res.ok && Array.isArray(res.data)) ? res.data : [];
+  } catch (e) {
+    console.error('Failed to load device perimeters:', e);
+    return [];
+  }
+}
+
+function renderDevicePerimetersOnMap(perimeters) {
+  // Remove existing device perimeter circles
+  if (window._devicePerimeterLayer) {
+    map.removeLayer(window._devicePerimeterLayer);
+  }
+  window._devicePerimeterLayer = L.layerGroup().addTo(map);
+
+  perimeters.forEach(p => {
+    if (!p.is_active) return;
+    const color = p.device_color || '#3388ff';
+    const circle = L.circle([p.latitude, p.longitude], {
+      radius: p.radius_meters,
+      color: color,
+      fillColor: color,
+      fillOpacity: 0.1,
+      weight: 2,
+      dashArray: '5,5'
+    });
+    circle.bindTooltip(`${p.name} (${p.device_name})`);
+    circle.addTo(window._devicePerimeterLayer);
+  });
+}
+
+async function openDevicePerimeterManager(deviceId) {
+  const dev = getDeviceById(deviceId);
+  if (!dev) return;
+
+  const perimeters = await loadDevicePerimeters(deviceId);
+  const overlay = $('#devicePerimeterOverlay');
+  if (!overlay) return;
+
+  overlay.classList.remove('hidden');
+  const body = overlay.querySelector('.overlay-body');
+  body.innerHTML = `
+    <h3>Perimeter zóny - ${dev.name}</h3>
+    <div id="devicePerimeterList">
+      ${perimeters.length === 0 ? '<p class="empty-state">Žiadne perimeter zóny</p>' : perimeters.map(p => `
+        <div class="perimeter-card">
+          <div class="perimeter-card-header">
+            <span class="device-color-indicator" style="background:${dev.color}"></span>
+            <strong>${p.name}</strong>
+            <span class="perimeter-radius">${p.radius_meters}m</span>
+            <span class="device-card-status ${p.is_active ? 'active' : 'inactive'}">${p.is_active ? 'Aktívne' : 'Neaktívne'}</span>
+          </div>
+          <div class="perimeter-card-info">
+            <span>Vstup: ${p.alert_on_enter ? 'Áno' : 'Nie'}</span>
+            <span>Výstup: ${p.alert_on_exit ? 'Áno' : 'Nie'}</span>
+          </div>
+          <div class="device-card-actions">
+            <button class="btn-sm btn-edit" onclick="editDevicePerimeter(${p.id}, ${deviceId})">Upraviť</button>
+            <button class="btn-sm btn-danger" onclick="deleteDevicePerimeter(${p.id}, ${deviceId})">Zmazať</button>
+          </div>
+        </div>
+      `).join('')}
+    </div>
+    <button class="btn-primary" onclick="openDevicePerimeterForm(${deviceId})">Pridať perimeter</button>
+  `;
+}
+
+function closeDevicePerimeterManager() {
+  const overlay = $('#devicePerimeterOverlay');
+  if (overlay) overlay.classList.add('hidden');
+}
+
+function openDevicePerimeterForm(deviceId, perimeter = null) {
+  const form = $('#devicePerimeterForm');
+  if (!form) return;
+
+  form.querySelector('#dpFormTitle').textContent = perimeter ? 'Upraviť perimeter' : 'Nový perimeter';
+  form.querySelector('#dpId').value = perimeter ? perimeter.id : '';
+  form.querySelector('#dpDeviceId').value = deviceId;
+  form.querySelector('#dpName').value = perimeter ? perimeter.name : '';
+  form.querySelector('#dpLat').value = perimeter ? perimeter.latitude : '';
+  form.querySelector('#dpLng').value = perimeter ? perimeter.longitude : '';
+  form.querySelector('#dpRadius').value = perimeter ? perimeter.radius_meters : 500;
+  form.querySelector('#dpAlertEnter').checked = perimeter ? perimeter.alert_on_enter : false;
+  form.querySelector('#dpAlertExit').checked = perimeter ? perimeter.alert_on_exit : false;
+
+  form.classList.remove('hidden');
+}
+
+function closeDevicePerimeterForm() {
+  const form = $('#devicePerimeterForm');
+  if (form) form.classList.add('hidden');
+}
+
+async function saveDevicePerimeter() {
+  const form = $('#devicePerimeterForm');
+  if (!form) return;
+
+  const id = form.querySelector('#dpId').value;
+  const payload = {
+    device_id: parseInt(form.querySelector('#dpDeviceId').value),
+    name: form.querySelector('#dpName').value.trim(),
+    latitude: parseFloat(form.querySelector('#dpLat').value),
+    longitude: parseFloat(form.querySelector('#dpLng').value),
+    radius_meters: parseFloat(form.querySelector('#dpRadius').value),
+    alert_on_enter: form.querySelector('#dpAlertEnter').checked,
+    alert_on_exit: form.querySelector('#dpAlertExit').checked
+  };
+  if (id) payload.id = parseInt(id);
+
+  if (!payload.name || isNaN(payload.latitude) || isNaN(payload.longitude)) {
+    alert('Vyplňte všetky povinné polia');
+    return;
+  }
+
+  try {
+    const res = await apiPost('save_device_perimeter', payload);
+    if (res.ok) {
+      closeDevicePerimeterForm();
+      openDevicePerimeterManager(payload.device_id);
+      // Refresh perimeters on map
+      const allPerimeters = await loadDevicePerimeters();
+      renderDevicePerimetersOnMap(allPerimeters);
+    } else {
+      alert(res.error || 'Chyba pri ukladaní');
+    }
+  } catch (e) {
+    alert('Chyba: ' + e.message);
+  }
+}
+
+async function editDevicePerimeter(perimeterId, deviceId) {
+  const perimeters = await loadDevicePerimeters(deviceId);
+  const p = perimeters.find(x => x.id === perimeterId);
+  if (p) openDevicePerimeterForm(deviceId, p);
+}
+
+async function deleteDevicePerimeter(perimeterId, deviceId) {
+  if (!confirm('Naozaj chcete zmazať tento perimeter?')) return;
+  try {
+    await apiGet(`${API}?action=delete_device_perimeter&id=${perimeterId}`);
+    openDevicePerimeterManager(deviceId);
+    const allPerimeters = await loadDevicePerimeters();
+    renderDevicePerimetersOnMap(allPerimeters);
+  } catch (e) {
+    alert('Chyba: ' + e.message);
   }
 }
 
