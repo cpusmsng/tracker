@@ -76,17 +76,34 @@ $pdo = new PDO('sqlite:' . $dbPath, null, null, [
 ]);
 $pdo->exec('PRAGMA foreign_keys = ON;');
 
-// Check if migration already ran
+// Check if migration already fully completed
 $tables = [];
 $q = $pdo->query("SELECT name FROM sqlite_master WHERE type='table'");
 while ($r = $q->fetch()) {
     $tables[] = $r['name'];
 }
 
-if (in_array('devices', $tables) && !$FORCE) {
-    echo "\nMigration already applied (devices table exists).\n";
+// Check if tracker_data has device_id column (the critical migration step)
+$trackerHasDeviceId = false;
+if (in_array('tracker_data', $tables)) {
+    $q = $pdo->query("PRAGMA table_info(tracker_data)");
+    while ($r = $q->fetch()) {
+        if ($r['name'] === 'device_id') {
+            $trackerHasDeviceId = true;
+            break;
+        }
+    }
+}
+
+if (in_array('devices', $tables) && $trackerHasDeviceId && !$FORCE) {
+    echo "\nMigration already applied (devices table exists and tracker_data has device_id).\n";
     echo "Use --force to run again.\n";
     exit(0);
+}
+
+if (in_array('devices', $tables) && !$trackerHasDeviceId) {
+    echo "\nPartial migration detected: devices table exists but tracker_data lacks device_id.\n";
+    echo "Continuing migration to complete remaining steps...\n";
 }
 
 echo "\nStep 2: Creating devices table...\n";

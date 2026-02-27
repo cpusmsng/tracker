@@ -278,9 +278,9 @@ verify_deployment() {
     local has_device_id
     has_device_id=$(docker exec "${CONTAINER_NAME}" \
         sqlite3 /var/www/html/data/${DB_NAME} \
-        "PRAGMA table_info(tracker_data)" 2>/dev/null | grep -c "device_id" || echo "0")
+        "PRAGMA table_info(tracker_data)" 2>/dev/null | grep -c "device_id" || true)
 
-    if [ "$has_device_id" -ge 1 ]; then
+    if [ "${has_device_id:-0}" -ge 1 ]; then
         log_success "tracker_data has device_id column"
     else
         log_error "tracker_data missing device_id column"
