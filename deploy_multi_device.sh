@@ -153,10 +153,9 @@ run_migration() {
     fi
 
     log_info "Running migration inside container..."
+    local exit_code=0
     docker exec -u www-data "${CONTAINER_NAME}" \
-        php /var/www/html/migrate_multi_device.php ${flags}
-
-    local exit_code=$?
+        php /var/www/html/migrate_multi_device.php ${flags} || exit_code=$?
     if [ $exit_code -ne 0 ]; then
         log_error "Migration failed with exit code $exit_code"
         if [ "$mode" = "live" ] && [ -n "${BACKUP_FILE:-}" ]; then

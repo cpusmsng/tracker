@@ -74,7 +74,11 @@ $pdo = new PDO('sqlite:' . $dbPath, null, null, [
     PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
     PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
 ]);
-$pdo->exec('PRAGMA foreign_keys = ON;');
+// Disable foreign keys during migration — ALTER TABLE ADD COLUMN with REFERENCES
+// can fail when foreign_keys is ON. Will be re-enabled by app at runtime.
+$pdo->exec('PRAGMA foreign_keys = OFF;');
+// Wait up to 10s for locks if Apache is already serving requests
+$pdo->exec('PRAGMA busy_timeout = 10000;');
 
 // Check if migration already fully completed
 $tables = [];
@@ -181,8 +185,15 @@ while ($r = $q->fetch()) {
 
 if (!in_array('device_id', $columns)) {
     if (!$DRY_RUN) {
-        $pdo->exec("ALTER TABLE tracker_data ADD COLUMN device_id INTEGER DEFAULT $defaultDeviceId REFERENCES devices(id)");
-        echo "  Added device_id column with default=$defaultDeviceId\n";
+        try {
+            $pdo->exec("ALTER TABLE tracker_data ADD COLUMN device_id INTEGER DEFAULT $defaultDeviceId REFERENCES devices(id)");
+            echo "  Added device_id column with default=$defaultDeviceId\n";
+        } catch (PDOException $e) {
+            echo "  ERROR on ALTER TABLE: " . $e->getMessage() . "\n";
+            echo "  Trying simpler ALTER TABLE without REFERENCES...\n";
+            $pdo->exec("ALTER TABLE tracker_data ADD COLUMN device_id INTEGER DEFAULT $defaultDeviceId");
+            echo "  Added device_id column (without FK constraint) with default=$defaultDeviceId\n";
+        }
 
         // Update existing rows
         $stmt = $pdo->prepare("UPDATE tracker_data SET device_id = :did WHERE device_id IS NULL");
