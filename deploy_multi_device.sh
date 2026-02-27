@@ -457,8 +457,11 @@ case "${1:-}" in
         check_env_updates
         rebuild_and_restart
 
-        # Migration runs automatically via entrypoint.sh, but verify it
-        sleep 3
+        # Run migration explicitly (entrypoint also runs it, but docker exec
+        # preserves SQLITE_PATH while entrypoint's su may not)
+        CONTAINER_RUNNING=true
+        run_migration "live"
+
         verify_deployment
         print_summary
         ;;

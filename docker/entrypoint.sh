@@ -192,7 +192,8 @@ fi
 if [ -f "${SQLITE_PATH}" ] && [ -f "/var/www/html/migrate_multi_device.php" ]; then
     echo "Checking for multi-device migration..."
     cd /var/www/html
-    if ! su -s /bin/bash www-data -c "/usr/local/bin/php migrate_multi_device.php"; then
+    # Pass SQLITE_PATH explicitly — su resets environment, losing Docker env vars
+    if ! su -s /bin/bash www-data -c "SQLITE_PATH=${SQLITE_PATH} /usr/local/bin/php migrate_multi_device.php"; then
         echo "WARNING: Multi-device migration failed! Check logs above."
         echo "The application may not work correctly until migration completes."
         echo "You can re-run manually: docker exec -u www-data ${HOSTNAME} php migrate_multi_device.php --force"
