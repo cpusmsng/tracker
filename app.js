@@ -523,6 +523,7 @@ let comparisonMode = false;          // Multi-device comparison
 let comparisonDeviceIds = [];        // Devices selected for comparison
 let comparisonDateFrom = '';
 let comparisonDateTo = '';
+let activeTableDeviceId = null;      // Which device's data is shown in the table
 
 async function loadDevices() {
   try {
@@ -868,20 +869,6 @@ function initHamburgerMenu() {
     });
   }
 
-  // Device perimeters menu item
-  const menuDevicePerimeters = $('#menuDevicePerimeters');
-  if (menuDevicePerimeters) {
-    menuDevicePerimeters.addEventListener('click', () => {
-      menu.classList.add('hidden');
-      btn.classList.remove('active');
-      // Open perimeter manager for first device, or prompt to select
-      if (devices.length === 1) {
-        openDevicePerimeterManager(devices[0].id);
-      } else if (devices.length > 1) {
-        openDeviceManagement(); // Let user pick device first
-      }
-    });
-  }
 }
 
 // --------- Site Switcher Widget (SSO) ---------
@@ -1558,11 +1545,8 @@ async function loadHistory(dateStr) {
     lastPositionMarker = null;
   }
 
-  // Build URL with optional device_id filter
+  // Always load all devices' data — map shows visible, table filters per device
   let histUrl = `${API}?action=get_history&date=${encodeURIComponent(dateStr)}`;
-  if (deviceViewMode === 'single' && activeDeviceId) {
-    histUrl += `&device_id=${activeDeviceId}`;
-  }
   const data = await apiGet(histUrl);
 
   // Load previous day's last point
@@ -1570,9 +1554,6 @@ async function loadHistory(dateStr) {
   prevDate.setDate(prevDate.getDate() - 1);
   const prevDateStr = fmt(prevDate);
   let prevUrl = `${API}?action=get_history&date=${encodeURIComponent(prevDateStr)}`;
-  if (deviceViewMode === 'single' && activeDeviceId) {
-    prevUrl += `&device_id=${activeDeviceId}`;
-  }
   const prevData = await apiGet(prevUrl);
   const lastPrevPoint = (prevData && prevData.length > 0) ? prevData[prevData.length - 1] : null;
   
@@ -1584,7 +1565,6 @@ async function loadHistory(dateStr) {
     if (isToday) {
       // Pre dnešok zobraz poslednú známu polohu
       let lpUrl = `${API}?action=get_last_position`;
-      if (deviceViewMode === 'single' && activeDeviceId) lpUrl += `&device_id=${activeDeviceId}`;
       const lastPosition = await apiGet(lpUrl);
       
       if (lastPosition && lastPosition.latitude && lastPosition.longitude) {
@@ -1661,7 +1641,7 @@ async function loadHistory(dateStr) {
   }
 
   // Polyline - multi-device aware
-  if (deviceViewMode === 'all' && devices.length > 1) {
+  if (devices.length > 1) {
     // Group data by device_id
     const byDevice = {};
     data.forEach(p => {
@@ -1769,16 +1749,40 @@ async function loadHistory(dateStr) {
     }
   });
 
+  // Cache data for table filtering by device
+  window._lastHistoryData = data;
+  window._lastHistoryDate = dateStr;
+  window._lastPrevData = prevData;
+
+  // Build table for active table device only
+  buildTableFromData(data, dateStr);
+}
+
+function buildTableFromData(data, dateStr) {
+  // Filter data for the active table device
+  let tableData = data;
+  let tablePrevData = window._lastPrevData || [];
+  if (devices.length > 1 && activeTableDeviceId) {
+    tableData = data.filter(p => p.device_id === activeTableDeviceId);
+    tablePrevData = tablePrevData.filter(p => p.device_id === activeTableDeviceId);
+  }
+  const lastPrevPoint = (tablePrevData && tablePrevData.length > 0) ? tablePrevData[tablePrevData.length - 1] : null;
+
+  if (!tableData || tableData.length === 0) {
+    $('#positionsTable').innerHTML = '<div style="padding: 12px; background: var(--muted-bg); border: 1px solid var(--border); border-radius: 8px; margin: 12px; color: var(--muted-text);">Žiadne dáta pre toto zariadenie v tento deň.</div>';
+    return;
+  }
+
   // tabuľka "od–do" s prvým riadkom z predošlého dňa
   const rows = [];
-  
+
   // Ak existuje posledný bod z predošlého dňa, pridaj ho ako prvý riadok
-  if (lastPrevPoint && data.length > 0) {
-    const firstCur = data[0];
+  if (lastPrevPoint && tableData.length > 0) {
+    const firstCur = tableData[0];
     const durMin = Math.max(0, Math.round((new Date(firstCur.timestamp) - new Date(lastPrevPoint.timestamp)) / 60000));
     rows.push({
       i: 0,
-      id: lastPrevPoint.id, // Add position ID for editing
+      id: lastPrevPoint.id,
       from: lastPrevPoint.timestamp,
       to: firstCur.timestamp,
       durMin: durMin,
@@ -1797,15 +1801,15 @@ async function loadHistory(dateStr) {
       ]
     });
   }
-  
+
   // Ostatné riadky z aktuálneho dňa
-  for (let i=0; i<data.length; i++) {
-    const cur = data[i];
-    const nxt = data[i+1];
+  for (let i=0; i<tableData.length; i++) {
+    const cur = tableData[i];
+    const nxt = tableData[i+1];
     const durMin = nxt ? Math.max(0, Math.round((new Date(nxt.timestamp) - new Date(cur.timestamp)) / 60000)) : 0;
     rows.push({
       i: i+1,
-      id: cur.id, // Add position ID for editing
+      id: cur.id,
       from: cur.timestamp,
       to: nxt ? nxt.timestamp : null,
       durMin: durMin,
@@ -1869,9 +1873,6 @@ function renderTable(rows) {
       });
       toDisplay = 'teraz';
     }
-
-    // Debug: log row data to verify id exists
-    console.log('Row data:', { i: r.i, id: r.id, source: r.source });
 
     const editBtn = r.id ? `
       <button class="edit-position-btn" data-id="${r.id}" title="Upraviť záznam">
@@ -2673,11 +2674,11 @@ function setDateLabel() {
 
 async function refresh() {
   setDateLabel();
+  renderDeviceTabs();
   await loadHistory(fmt(currentDate));
   await loadIBeacons();
   await loadPerimetersOnMainMap();
   await updateBatteryStatus();
-  // updateLastOnline() removed - updateBatteryStatus() now handles this from device status API
 }
 
 function addUIHandlers() {
@@ -4190,117 +4191,135 @@ function initLogViewer() {
 // ========== MULTI-DEVICE UI ==========
 
 function initDeviceUI() {
+  const dropdownContainer = $('#deviceDropdownContainer');
+  const tabsContainer = $('#deviceTabsContainer');
+
   if (devices.length <= 1) {
-    // Single device mode - hide device controls
-    const deviceBar = $('#deviceBar');
-    if (deviceBar) deviceBar.classList.add('hidden');
+    // Single device mode - hide multi-device controls
+    if (dropdownContainer) dropdownContainer.classList.add('hidden');
+    if (tabsContainer) tabsContainer.classList.add('hidden');
+    // Set single device as active for table
+    if (devices.length === 1) {
+      activeTableDeviceId = devices[0].id;
+      deviceVisibility[devices[0].id] = true;
+    }
     return;
   }
 
-  // Show device bar
-  const deviceBar = $('#deviceBar');
-  if (deviceBar) deviceBar.classList.remove('hidden');
+  // Multi-device: show dropdown in header and tabs above table
+  if (dropdownContainer) dropdownContainer.classList.remove('hidden');
+  if (tabsContainer) tabsContainer.classList.remove('hidden');
 
-  renderDeviceBar();
-  renderDeviceLegend();
-}
-
-function renderDeviceBar() {
-  const bar = $('#deviceBar');
-  if (!bar) return;
-
-  bar.innerHTML = `
-    <div class="device-bar-inner">
-      <div class="device-view-toggle">
-        <button class="device-view-btn ${deviceViewMode === 'all' ? 'active' : ''}" data-mode="all">Všetky</button>
-        <button class="device-view-btn ${deviceViewMode === 'single' ? 'active' : ''}" data-mode="single">Jedno</button>
-        <button class="device-view-btn ${comparisonMode ? 'active' : ''}" data-mode="compare">Porovnanie</button>
-      </div>
-      ${deviceViewMode === 'single' ? `
-        <select id="deviceSelector" class="device-selector">
-          ${devices.map(d => `<option value="${d.id}" ${activeDeviceId === d.id ? 'selected' : ''}>${d.name}</option>`).join('')}
-        </select>
-      ` : ''}
-    </div>
-  `;
-
-  // Event listeners
-  bar.querySelectorAll('.device-view-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const mode = btn.dataset.mode;
-      if (mode === 'compare') {
-        comparisonMode = !comparisonMode;
-        if (comparisonMode) {
-          deviceViewMode = 'compare';
-          openComparisonPanel();
-        } else {
-          deviceViewMode = 'all';
-          closeComparisonPanel();
-        }
-      } else {
-        comparisonMode = false;
-        deviceViewMode = mode;
-        if (mode === 'single' && !activeDeviceId && devices.length > 0) {
-          activeDeviceId = devices[0].id;
-        }
-        if (mode === 'all') {
-          activeDeviceId = null;
-        }
-      }
-      renderDeviceBar();
-      renderDeviceLegend();
-      refresh();
-    });
-  });
-
-  const sel = bar.querySelector('#deviceSelector');
-  if (sel) {
-    sel.addEventListener('change', () => {
-      activeDeviceId = parseInt(sel.value);
-      refresh();
-    });
-  }
-}
-
-function renderDeviceLegend() {
-  // Update the map legend to show device colors
-  if (!legendControl || !legendControl._container) return;
-
-  const content = legendControl._container.querySelector('.legend-content');
-  if (!content) return;
-
-  let html = '<div class="legend-header">Legenda</div>';
-
-  if (devices.length > 1 && deviceViewMode === 'all') {
-    devices.forEach(d => {
-      const visible = deviceVisibility[d.id] !== false;
-      html += `
-        <div class="leg-item device-legend-item" data-device-id="${d.id}">
-          <label class="device-toggle-label">
-            <input type="checkbox" class="device-visibility-toggle" data-device-id="${d.id}" ${visible ? 'checked' : ''}>
-            <span class="leg-dot" style="background:${d.color};"></span>
-            ${d.name}
-          </label>
-          ${d.last_position ? `<span class="device-last-seen">${toTime(d.last_position.timestamp)}</span>` : ''}
-        </div>
-      `;
-    });
-  } else {
-    html += `<div class="leg-item"><span class="leg-line"></span> Trasa (GNSS / Wi-Fi)</div>`;
-    html += `<div class="leg-item"><span class="leg-dot blinking"></span> Posledná poloha</div>`;
-    html += `<div class="leg-item"><span class="leg-dot red"></span> iBeacon</div>`;
+  // Set default active table device
+  if (!activeTableDeviceId && devices.length > 0) {
+    activeTableDeviceId = devices[0].id;
   }
 
-  content.innerHTML = html;
+  renderDeviceDropdown();
+  renderDeviceTabs();
+  initDeviceDropdownHandlers();
+}
 
-  // Add toggle handlers
-  content.querySelectorAll('.device-visibility-toggle').forEach(cb => {
+function renderDeviceDropdown() {
+  const menu = $('#deviceDropdownMenu');
+  const label = $('#deviceDropdownLabel');
+  if (!menu) return;
+
+  const visibleCount = devices.filter(d => deviceVisibility[d.id] !== false).length;
+  if (label) label.textContent = visibleCount;
+
+  menu.innerHTML = devices.map(d => {
+    const checked = deviceVisibility[d.id] !== false;
+    return `
+      <label class="device-dropdown-item" data-device-id="${d.id}">
+        <input type="checkbox" class="device-dd-toggle" data-device-id="${d.id}" ${checked ? 'checked' : ''}>
+        <span class="device-dd-dot" style="background:${d.color}"></span>
+        <span class="device-dd-name">${d.name}</span>
+      </label>
+    `;
+  }).join('');
+
+  // Checkbox handlers
+  menu.querySelectorAll('.device-dd-toggle').forEach(cb => {
     cb.addEventListener('change', (e) => {
+      e.stopPropagation();
       const did = parseInt(e.target.dataset.deviceId);
+      // Ensure at least one device stays visible
+      const othersVisible = devices.some(d => d.id !== did && deviceVisibility[d.id] !== false);
+      if (!e.target.checked && !othersVisible) {
+        e.target.checked = true;
+        return;
+      }
       deviceVisibility[did] = e.target.checked;
       updateDeviceLayerVisibility();
+      renderDeviceDropdown();
+      renderDeviceTabs();
+      // If active table device was hidden, switch to first visible
+      if (!deviceVisibility[activeTableDeviceId]) {
+        const firstVisible = devices.find(d => deviceVisibility[d.id] !== false);
+        if (firstVisible) {
+          activeTableDeviceId = firstVisible.id;
+          refilterTableForDevice();
+        }
+      }
     });
   });
+}
+
+function initDeviceDropdownHandlers() {
+  const btn = $('#deviceDropdownBtn');
+  const menu = $('#deviceDropdownMenu');
+  if (!btn || !menu) return;
+
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    menu.classList.toggle('hidden');
+  });
+
+  // Close on outside click
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('.device-dropdown-container')) {
+      menu.classList.add('hidden');
+    }
+  });
+}
+
+function renderDeviceTabs() {
+  const container = $('#deviceTabs');
+  if (!container) return;
+
+  const visibleDevices = devices.filter(d => deviceVisibility[d.id] !== false);
+  if (visibleDevices.length <= 1) {
+    $('#deviceTabsContainer').classList.add('hidden');
+    if (visibleDevices.length === 1) {
+      activeTableDeviceId = visibleDevices[0].id;
+    }
+    return;
+  }
+
+  $('#deviceTabsContainer').classList.remove('hidden');
+
+  container.innerHTML = visibleDevices.map(d => `
+    <button class="device-tab ${d.id === activeTableDeviceId ? 'active' : ''}" data-device-id="${d.id}">
+      <span class="device-tab-dot" style="background:${d.color}"></span>
+      ${d.name}
+    </button>
+  `).join('');
+
+  container.querySelectorAll('.device-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      activeTableDeviceId = parseInt(tab.dataset.deviceId);
+      renderDeviceTabs();
+      refilterTableForDevice();
+    });
+  });
+}
+
+function refilterTableForDevice() {
+  // Re-render table from cached data for the active table device
+  if (window._lastHistoryData && window._lastHistoryDate) {
+    buildTableFromData(window._lastHistoryData, window._lastHistoryDate);
+  }
 }
 
 function updateDeviceLayerVisibility() {
@@ -4409,8 +4428,7 @@ async function saveDevice() {
       closeDeviceForm();
       await loadDeviceManagementList();
       await loadDevices();
-      renderDeviceBar();
-      renderDeviceLegend();
+      initDeviceUI();
     } else {
       alert(res.error || 'Chyba pri ukladaní');
     }
@@ -4497,7 +4515,6 @@ function closeComparisonPanel() {
   deviceViewMode = 'all';
   const panel = $('#comparisonPanel');
   if (panel) panel.classList.add('hidden');
-  renderDeviceBar();
   refresh();
 }
 

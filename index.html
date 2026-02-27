@@ -84,6 +84,23 @@
         <!-- User name (shown when logged in via SSO) -->
         <span id="userNameDisplay" class="user-name-display hidden"></span>
 
+        <!-- Device selector dropdown -->
+        <div id="deviceDropdownContainer" class="device-dropdown-container hidden">
+          <button id="deviceDropdownBtn" class="device-dropdown-btn" aria-label="Vybrať zariadenia">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="5" y="2" width="14" height="20" rx="2" ry="2"/>
+              <line x1="12" y1="18" x2="12.01" y2="18"/>
+            </svg>
+            <span id="deviceDropdownLabel">1</span>
+            <svg class="dropdown-arrow" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="6 9 12 15 18 9"/>
+            </svg>
+          </button>
+          <div id="deviceDropdownMenu" class="device-dropdown-menu hidden">
+            <!-- Filled by JS -->
+          </div>
+        </div>
+
         <!-- Hamburger menu button + dropdown container -->
         <div class="hamburger-container">
           <button id="hamburgerBtn" class="hamburger-btn" aria-label="Otvoriť menu">
@@ -144,13 +161,6 @@
         </svg>
         Zariadenia
       </button>
-      <button class="menu-item" id="menuDevicePerimeters">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <circle cx="12" cy="12" r="10"/>
-          <circle cx="12" cy="12" r="4"/>
-        </svg>
-        Perimeter zariadení
-      </button>
       <button class="menu-item" id="menuPerimeters">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <polygon points="12 2 22 8.5 22 15.5 12 22 2 15.5 2 8.5"/>
@@ -171,14 +181,14 @@
       </div> <!-- End topbar-right -->
     </div> <!-- End topbar -->
 
-    <!-- Multi-device bar -->
-    <div id="deviceBar" class="device-bar hidden"></div>
-
     <div class="map-wrap">
       <div id="map" role="region" aria-label="Mapa s trasou a polohami"></div>
     </div>
 
-    <!-- Tabuľka časových úsekov -->
+    <!-- Device tabs + table -->
+    <div id="deviceTabsContainer" class="device-tabs-container hidden">
+      <div id="deviceTabs" class="device-tabs"></div>
+    </div>
     <div id="positionsTable" aria-live="polite">-</div>
 
     <footer class="site-footer">
