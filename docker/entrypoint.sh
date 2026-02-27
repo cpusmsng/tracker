@@ -70,6 +70,8 @@ if [ ! -f "${SQLITE_PATH}" ]; then
             latitude REAL NOT NULL,
             longitude REAL NOT NULL,
             source TEXT,
+            raw_wifi_macs TEXT,
+            primary_mac TEXT,
             device_id INTEGER DEFAULT 1 REFERENCES devices(id)
         )');
 

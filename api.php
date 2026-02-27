@@ -1972,7 +1972,7 @@ try {
 
 if ($action === 'get_perimeters') {
     try {
-        $q = $pdo->query("SELECT id, name, polygon, alert_on_enter, alert_on_exit, notification_email, is_active, color, created_at, updated_at
+        $q = $pdo->query("SELECT id, name, polygon, alert_on_enter, alert_on_exit, notification_email, is_active, color, device_id, created_at, updated_at
                           FROM perimeters
                           ORDER BY id ASC");
         $out = [];
@@ -2012,6 +2012,7 @@ if ($action === 'get_perimeters') {
                 'emails' => $emails,
                 'is_active' => (bool)$r['is_active'],
                 'color' => $r['color'] ?? '#ff6b6b',
+                'device_id' => $r['device_id'] !== null ? (int)$r['device_id'] : null,
                 'created_at' => $r['created_at'],
                 'updated_at' => $r['updated_at']
             ];
@@ -2034,6 +2035,8 @@ if ($action === 'save_perimeter' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         $emails = $j['emails'] ?? []; // New: array of {email, alert_on_enter, alert_on_exit}
         $isActive = isset($j['is_active']) ? (int)(bool)$j['is_active'] : 1;
         $color = trim((string)($j['color'] ?? '#ff6b6b'));
+        $deviceId = isset($j['device_id']) ? (int)$j['device_id'] : null;
+        if ($deviceId === 0) $deviceId = null;
 
         if ($name === '') {
             respond(['ok' => false, 'error' => 'Názov perimetra je povinný'], 400);
@@ -2066,6 +2069,7 @@ if ($action === 'save_perimeter' && $_SERVER['REQUEST_METHOD'] === 'POST') {
                     notification_email = :email,
                     is_active = :active,
                     color = :color,
+                    device_id = :device_id,
                     updated_at = :updated
                 WHERE id = :id
             ");
@@ -2078,14 +2082,15 @@ if ($action === 'save_perimeter' && $_SERVER['REQUEST_METHOD'] === 'POST') {
                 ':email' => $notificationEmail ?: null,
                 ':active' => $isActive,
                 ':color' => $color,
+                ':device_id' => $deviceId,
                 ':updated' => $now
             ]);
             $perimeterId = $id;
         } else {
             // Insert new
             $stmt = $pdo->prepare("
-                INSERT INTO perimeters (name, polygon, alert_on_enter, alert_on_exit, notification_email, is_active, color, created_at, updated_at)
-                VALUES (:name, :polygon, :enter, :exit, :email, :active, :color, :created, :updated)
+                INSERT INTO perimeters (name, polygon, alert_on_enter, alert_on_exit, notification_email, is_active, color, device_id, created_at, updated_at)
+                VALUES (:name, :polygon, :enter, :exit, :email, :active, :color, :device_id, :created, :updated)
             ");
             $stmt->execute([
                 ':name' => $name,
@@ -2095,6 +2100,7 @@ if ($action === 'save_perimeter' && $_SERVER['REQUEST_METHOD'] === 'POST') {
                 ':email' => $notificationEmail ?: null,
                 ':active' => $isActive,
                 ':color' => $color,
+                ':device_id' => $deviceId,
                 ':created' => $now,
                 ':updated' => $now
             ]);

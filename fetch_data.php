@@ -498,14 +498,24 @@ function point_in_polygon(float $lat, float $lng, array $polygon): bool {
     return $inside;
 }
 
-function load_active_perimeters(PDO $pdo): array {
+function load_active_perimeters(PDO $pdo, ?int $deviceId = null): array {
     $perimeters = [];
     try {
-        $stmt = $pdo->query("
-            SELECT id, name, polygon, alert_on_enter, alert_on_exit, notification_email
-            FROM perimeters
-            WHERE is_active = 1
-        ");
+        // Load perimeters: global (device_id IS NULL) + device-specific
+        if ($deviceId !== null) {
+            $stmt = $pdo->prepare("
+                SELECT id, name, polygon, alert_on_enter, alert_on_exit, notification_email, device_id
+                FROM perimeters
+                WHERE is_active = 1 AND (device_id IS NULL OR device_id = :did)
+            ");
+            $stmt->execute([':did' => $deviceId]);
+        } else {
+            $stmt = $pdo->query("
+                SELECT id, name, polygon, alert_on_enter, alert_on_exit, notification_email, device_id
+                FROM perimeters
+                WHERE is_active = 1
+            ");
+        }
         while ($r = $stmt->fetch()) {
             $pid = (int)$r['id'];
 
@@ -541,6 +551,7 @@ function load_active_perimeters(PDO $pdo): array {
                 'alert_on_enter' => (bool)$r['alert_on_enter'],
                 'alert_on_exit' => (bool)$r['alert_on_exit'],
                 'notification_email' => $r['notification_email'],
+                'device_id' => $r['device_id'] !== null ? (int)$r['device_id'] : null,
                 'emails' => $emails
             ];
 
@@ -552,9 +563,10 @@ function load_active_perimeters(PDO $pdo): array {
                 if ($em['alert_on_enter']) $enterCount++;
                 if ($em['alert_on_exit']) $exitCount++;
             }
-            info_log("PERIMETER '{$r['name']}' (id=$pid): emails=$emailCount, alert_on_enter=$enterCount, alert_on_exit=$exitCount");
+            $deviceLabel = $r['device_id'] !== null ? "device={$r['device_id']}" : 'global';
+            info_log("PERIMETER '{$r['name']}' (id=$pid, $deviceLabel): emails=$emailCount, alert_on_enter=$enterCount, alert_on_exit=$exitCount");
         }
-        info_log("PERIMETERS: loaded ".count($perimeters)." active zones");
+        info_log("PERIMETERS: loaded ".count($perimeters)." active zones" . ($deviceId !== null ? " for device_id=$deviceId" : ""));
     } catch (Throwable $e) {
         info_log("PERIMETERS ERROR: ".$e->getMessage());
     }
@@ -576,7 +588,8 @@ function check_perimeter_breaches(
     string $timestamp,
     array $perimeters,
     array $currentStates,
-    array $previousStates
+    array $previousStates,
+    ?string $deviceName = null
 ): array {
     $breaches = [];
 
@@ -619,9 +632,10 @@ function check_perimeter_breaches(
                 'type' => 'enter',
                 'lat' => $lat,
                 'lng' => $lng,
-                'timestamp' => $timestamp
+                'timestamp' => $timestamp,
+                'device_name' => $deviceName
             ];
-            info_log("    PERIMETER BREACH DETECTED: ENTERED '{$p['name']}'");
+            info_log("    PERIMETER BREACH DETECTED: ENTERED '{$p['name']}'" . ($deviceName ? " (device: $deviceName)" : ""));
         } elseif ($wasInside && !$isInside && $anyWantsExit) {
             // EXITED the zone
             $breaches[] = [
@@ -629,9 +643,10 @@ function check_perimeter_breaches(
                 'type' => 'exit',
                 'lat' => $lat,
                 'lng' => $lng,
-                'timestamp' => $timestamp
+                'timestamp' => $timestamp,
+                'device_name' => $deviceName
             ];
-            info_log("    PERIMETER BREACH DETECTED: EXITED '{$p['name']}'");
+            info_log("    PERIMETER BREACH DETECTED: EXITED '{$p['name']}'" . ($deviceName ? " (device: $deviceName)" : ""));
         } elseif ($stateChanged) {
             // State changed but alert not configured
             if (!$wasInside && $isInside && !$anyWantsEnter) {
@@ -649,8 +664,9 @@ function send_perimeter_alert_emails(array $breach): int {
     $p = $breach['perimeter'];
     $emails = $p['emails'] ?? [];
     $breachType = $breach['type']; // 'enter' or 'exit'
+    $deviceName = $breach['device_name'] ?? null;
 
-    info_log("    SENDING EMAIL for breach: type=$breachType perimeter='{$p['name']}' emails_count=".count($emails));
+    info_log("    SENDING EMAIL for breach: type=$breachType perimeter='{$p['name']}' device='" . ($deviceName ?? 'unknown') . "' emails_count=".count($emails));
 
     if (empty($emails)) {
         info_log("    EMAIL SKIP: no emails configured for '{$p['name']}'");
@@ -667,7 +683,8 @@ function send_perimeter_alert_emails(array $breach): int {
     $fromName = getenv('EMAIL_FROM_NAME') ?: 'Family Tracker';
 
     $alertType = $breachType === 'enter' ? 'VSTUP DO ZÓNY' : 'OPUSTENIE ZÓNY';
-    $subject = "Family Tracker: $alertType - {$p['name']}";
+    $deviceLabel = $deviceName ? " ($deviceName)" : '';
+    $subject = "Family Tracker: $alertType - {$p['name']}$deviceLabel";
 
     // Format timestamp for display
     try {
@@ -712,7 +729,11 @@ function send_perimeter_alert_emails(array $breach): int {
                 <h2 style='margin:0;'>$alertType</h2>
                 <p style='margin:5px 0 0;opacity:0.9;'>Family Tracker</p>
             </div>
-            <div class='content'>
+            <div class='content'>" .
+                ($deviceName ? "
+                <div class='info-row'>
+                    <span class='label'>Zariadenie:</span> $deviceName
+                </div>" : "") . "
                 <div class='info-row'>
                     <span class='label'>Zóna:</span> {$p['name']}
                 </div>
@@ -847,6 +868,12 @@ function send_refetch_summary_email(array $breaches, string $refetchDate): int {
 
     $subject = "Family Tracker: Súhrn udalostí z $refetchDate (" . count($breaches) . " udalostí)";
 
+    // Check if any breach has device info
+    $hasDeviceInfo = false;
+    foreach ($breaches as $b) {
+        if (!empty($b['device_name'])) { $hasDeviceInfo = true; break; }
+    }
+
     // Build HTML table with all breaches
     $tableRows = '';
     foreach ($breaches as $breach) {
@@ -871,9 +898,12 @@ function send_refetch_summary_email(array $breaches, string $refetchDate): int {
             $mapsUrl = "https://www.google.com/maps?q={$breach['lat']},{$breach['lng']}";
         }
 
+        $breachDeviceName = $breach['device_name'] ?? '';
         $tableRows .= "
         <tr>
-            <td style='padding:10px;border-bottom:1px solid #e5e5e5;'>$formattedTime</td>
+            <td style='padding:10px;border-bottom:1px solid #e5e5e5;'>$formattedTime</td>" .
+            ($hasDeviceInfo ? "
+            <td style='padding:10px;border-bottom:1px solid #e5e5e5;'>$breachDeviceName</td>" : "") . "
             <td style='padding:10px;border-bottom:1px solid #e5e5e5;'>{$p['name']}</td>
             <td style='padding:10px;border-bottom:1px solid #e5e5e5;'>
                 <span style='display:inline-block;padding:4px 10px;background:$alertColor;color:white;border-radius:4px;font-size:12px;font-weight:bold;'>$alertType</span>
@@ -914,7 +944,9 @@ function send_refetch_summary_email(array $breaches, string $refetchDate): int {
                 <table>
                     <thead>
                         <tr>
-                            <th>Čas</th>
+                            <th>Čas</th>" .
+                            ($hasDeviceInfo ? "
+                            <th>Zariadenie</th>" : "") . "
                             <th>Zóna</th>
                             <th>Typ</th>
                             <th>Poloha</th>
@@ -1010,7 +1042,7 @@ function record_perimeter_alert(PDO $pdo, array $breach, bool $emailSent): void 
  * Send battery low alert email
  * Returns true if email was sent successfully
  */
-function send_battery_alert_email(PDO $pdo): bool {
+function send_battery_alert_email(PDO $pdo, ?string $deviceName = null): bool {
     if (!BATTERY_ALERT_ENABLED || !BATTERY_ALERT_EMAIL) {
         debug_log("BATTERY ALERT: Skipped - not enabled or no email configured");
         return false;
@@ -1024,7 +1056,8 @@ function send_battery_alert_email(PDO $pdo): bool {
     $fromEmail = getenv('EMAIL_FROM') ?: 'tracker@bagron.eu';
     $fromName = getenv('EMAIL_FROM_NAME') ?: 'Family Tracker';
 
-    $subject = "Family Tracker: Nízka batéria trackera";
+    $deviceLabel = $deviceName ? " ($deviceName)" : '';
+    $subject = "Family Tracker: Nízka batéria trackera$deviceLabel";
 
     $formattedTime = (new DateTimeImmutable())->setTimezone(new DateTimeZone('Europe/Bratislava'))->format('d.m.Y H:i:s');
 
@@ -1058,7 +1091,11 @@ function send_battery_alert_email(PDO $pdo): bool {
                 <h2 style='margin:0;'>Nízka batéria trackera</h2>
                 <p style='margin:5px 0 0;opacity:0.9;'>Family Tracker</p>
             </div>
-            <div class='content'>
+            <div class='content'>" .
+                ($deviceName ? "
+                <div class='info-row'>
+                    <span class='label'>Zariadenie:</span> $deviceName
+                </div>" : "") . "
                 <div class='info-row'>
                     <span class='label'>Stav:</span> Batéria trackera je takmer vybitá
                 </div>
@@ -1528,8 +1565,8 @@ try {
     $ibeaconMap = load_ibeacon_map($pdo);
     $macCache = load_mac_cache($pdo, $MAC_CACHE_MAX_AGE);
 
-    // Load active perimeters for breach detection
-    $activePerimeters = load_active_perimeters($pdo);
+    // Load active perimeters for breach detection (global + device-specific)
+    $activePerimeters = load_active_perimeters($pdo, $DEVICE_ID);
     $previousPerimeterStates = [];
     // NOTE: $previousPerimeterStates will be initialized AFTER $lastInsertedPos is set below
 
@@ -1562,12 +1599,12 @@ try {
     $perimeterAlerts=0; $emailsSent=0;
 
     // Helper function to check perimeters after successful insert
-    $checkPerimetersAfterInsert = function(float $lat, float $lng, string $iso) use ($pdo, $activePerimeters, &$previousPerimeterStates, &$perimeterAlerts, &$emailsSent) {
+    $checkPerimetersAfterInsert = function(float $lat, float $lng, string $iso) use ($pdo, $activePerimeters, &$previousPerimeterStates, &$perimeterAlerts, &$emailsSent, $DEVICE_NAME) {
         global $REFETCH_MODE, $REFETCH_BREACHES;
         if (empty($activePerimeters)) return;
 
         $currentStates = get_position_perimeter_states($lat, $lng, $activePerimeters);
-        $breaches = check_perimeter_breaches($pdo, $lat, $lng, $iso, $activePerimeters, $currentStates, $previousPerimeterStates);
+        $breaches = check_perimeter_breaches($pdo, $lat, $lng, $iso, $activePerimeters, $currentStates, $previousPerimeterStates, $DEVICE_NAME);
 
         foreach ($breaches as $breach) {
             if ($REFETCH_MODE) {
@@ -1875,7 +1912,7 @@ try {
             if (!$REFETCH_MODE && $deviceStatus['battery_status'] === 0) {
                 info_log("BATTERY STATUS: LOW - checking if alert should be sent");
                 if (should_send_battery_alert($pdo)) {
-                    $alertSent = send_battery_alert_email($pdo);
+                    $alertSent = send_battery_alert_email($pdo, $DEVICE_NAME);
                     if ($alertSent) {
                         info_log("BATTERY ALERT: Email sent successfully");
                     }

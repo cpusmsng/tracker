@@ -87,27 +87,28 @@ while ($r = $q->fetch()) {
     $tables[] = $r['name'];
 }
 
-// Check if tracker_data has device_id column (the critical migration step)
-$trackerHasDeviceId = false;
+// Check if tracker_data has all required columns
+$trackerColumns = [];
 if (in_array('tracker_data', $tables)) {
     $q = $pdo->query("PRAGMA table_info(tracker_data)");
     while ($r = $q->fetch()) {
-        if ($r['name'] === 'device_id') {
-            $trackerHasDeviceId = true;
-            break;
-        }
+        $trackerColumns[] = $r['name'];
     }
 }
+$trackerHasDeviceId = in_array('device_id', $trackerColumns);
+$trackerHasMacCols = in_array('raw_wifi_macs', $trackerColumns) && in_array('primary_mac', $trackerColumns);
 
-if (in_array('devices', $tables) && $trackerHasDeviceId && !$FORCE) {
-    echo "\nMigration already applied (devices table exists and tracker_data has device_id).\n";
+if (in_array('devices', $tables) && $trackerHasDeviceId && $trackerHasMacCols && !$FORCE) {
+    echo "\nMigration already applied (devices table exists, tracker_data has all columns).\n";
     echo "Use --force to run again.\n";
     exit(0);
 }
 
-if (in_array('devices', $tables) && !$trackerHasDeviceId) {
-    echo "\nPartial migration detected: devices table exists but tracker_data lacks device_id.\n";
-    echo "Continuing migration to complete remaining steps...\n";
+if (in_array('devices', $tables) && (!$trackerHasDeviceId || !$trackerHasMacCols)) {
+    echo "\nPartial migration detected. Missing:";
+    if (!$trackerHasDeviceId) echo " device_id";
+    if (!$trackerHasMacCols) echo " raw_wifi_macs/primary_mac";
+    echo "\nContinuing migration to complete remaining steps...\n";
 }
 
 echo "\nStep 2: Creating devices table...\n";
@@ -173,6 +174,33 @@ if (!$DRY_RUN) {
 } else {
     $defaultDeviceId = 1;
     echo "  [DRY RUN] Would create default device: name='$deviceName', eui='$eui'\n";
+}
+
+echo "\nStep 4b: Adding raw_wifi_macs and primary_mac columns to tracker_data...\n";
+$columns = [];
+$q = $pdo->query("PRAGMA table_info(tracker_data)");
+while ($r = $q->fetch()) {
+    $columns[] = $r['name'];
+}
+if (!in_array('raw_wifi_macs', $columns)) {
+    if (!$DRY_RUN) {
+        $pdo->exec("ALTER TABLE tracker_data ADD COLUMN raw_wifi_macs TEXT");
+        echo "  Added raw_wifi_macs column.\n";
+    } else {
+        echo "  [DRY RUN] Would add raw_wifi_macs column.\n";
+    }
+} else {
+    echo "  raw_wifi_macs column already exists.\n";
+}
+if (!in_array('primary_mac', $columns)) {
+    if (!$DRY_RUN) {
+        $pdo->exec("ALTER TABLE tracker_data ADD COLUMN primary_mac TEXT");
+        echo "  Added primary_mac column.\n";
+    } else {
+        echo "  [DRY RUN] Would add primary_mac column.\n";
+    }
+} else {
+    echo "  primary_mac column already exists.\n";
 }
 
 echo "\nStep 5: Adding device_id column to tracker_data...\n";

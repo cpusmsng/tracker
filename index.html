@@ -54,33 +54,6 @@
       
       <!-- Pravá strana: Last Online + Battery + Hamburger -->
       <div class="topbar-right">
-        <!-- Last online info -->
-        <div id="lastOnlineInfo" class="last-online-info" title="Posledný update">
-          <svg class="clock-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <circle cx="12" cy="12" r="10"></circle>
-            <polyline points="12 6 12 12 16 14"></polyline>
-          </svg>
-          <span id="lastOnlineText">-</span>
-        </div>
-        
-        <!-- Battery indicator -->
-        <div id="batteryIndicator" class="battery-indicator" title="Stav batérie">
-          <!-- Good battery icon (full) -->
-          <svg class="battery-icon-good" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <rect x="2" y="7" width="18" height="10" rx="1"></rect>
-            <path d="M22 11v2"></path>
-            <rect x="4" y="9" width="14" height="6" rx="0.5" fill="currentColor" stroke="none"></rect>
-          </svg>
-          <!-- Low battery icon (empty with warning) -->
-          <svg class="battery-icon-low" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <rect x="2" y="7" width="18" height="10" rx="1"></rect>
-            <path d="M22 11v2"></path>
-            <rect x="4" y="9" width="4" height="6" rx="0.5" fill="currentColor" stroke="none"></rect>
-            <path d="M12 9v4M12 15v.01" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path>
-          </svg>
-          <span id="batteryText" class="battery-text">-</span>
-        </div>
-        
         <!-- User name (shown when logged in via SSO) -->
         <span id="userNameDisplay" class="user-name-display hidden"></span>
 
@@ -811,6 +784,13 @@
                   <div class="form-row">
                     <label for="perimeterColor">Farba zóny</label>
                     <input type="color" id="perimeterColor" value="#ff6b6b">
+                  </div>
+
+                  <div class="form-row" id="perimeterDeviceRow">
+                    <label for="perimeterDeviceId">Zariadenie</label>
+                    <select id="perimeterDeviceId">
+                      <option value="">Všetky zariadenia</option>
+                    </select>
                   </div>
                 </div>
 

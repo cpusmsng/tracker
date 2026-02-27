@@ -462,10 +462,6 @@ async function initializeApp() {
     }
   }
 
-  // Update battery a last online každých 30 sekúnd pre real-time info
-  setInterval(() => {
-    updateBatteryStatus();
-  }, 30 * 1000);
 }
 
 // --------- Helpers ---------
@@ -632,121 +628,31 @@ function initSelectorMap() {
 }
 
 // --------- Battery Status ---------
-async function updateBatteryStatus() {
+function formatTimeAgo(isoTimestamp) {
   try {
-    const data = await apiGet(`${API}?action=get_device_status`);
-    
-    console.log('Device status response:', data);
-    
-    // Update battery status
-    if (data.ok && data.battery_state !== null && data.battery_state !== undefined) {
-      const state = data.battery_state; // 0 = low, 1 = good
-      const textSpan = $('#batteryText');
-      
-      if (textSpan) {
-        textSpan.textContent = state === 1 ? 'Dobrá' : 'Slabá';
-        console.log('Battery updated to:', state === 1 ? 'Dobrá' : 'Slabá');
-      }
-      
-      // Nastav farbu podľa stavu
-      const indicator = $('#batteryIndicator');
-      if (indicator) {
-        if (state === 1) {
-          indicator.setAttribute('data-level', 'good');
-        } else {
-          indicator.setAttribute('data-level', 'low');
-        }
-      }
-    } else {
-      console.log('No battery data available:', data);
-      const textSpan = $('#batteryText');
-      if (textSpan) {
-        textSpan.textContent = '—';
-      }
+    const uploadTime = new Date(isoTimestamp);
+    const now = new Date();
+    const diffMs = now - uploadTime;
+    const diffMinutes = Math.floor(diffMs / 60000);
+    if (diffMinutes < 1) return 'teraz';
+    if (diffMinutes < 60) return `pred ${diffMinutes}m`;
+    const diffHours = Math.floor(diffMinutes / 60);
+    if (diffHours < 24) {
+      const rem = diffMinutes % 60;
+      return rem > 0 && diffHours < 6 ? `pred ${diffHours}h ${rem}m` : `pred ${diffHours}h`;
     }
-    
-    // Update last online time (from real-time API data)
-    if (data.ok && data.latest_message_time) {
-      const lastOnlineText = $('#lastOnlineText');
-      const lastOnlineInfo = $('#lastOnlineInfo');
-      
-      if (lastOnlineText) {
-        try {
-          const uploadTime = new Date(data.latest_message_time);
-          const now = new Date();
-          const diffMs = now - uploadTime;
-          const diffSeconds = Math.floor(diffMs / 1000);
-          const diffMinutes = Math.floor(diffMs / 60000);
-          
-          // Presnejšie časové zobrazenie
-          if (diffSeconds < 60) {
-            lastOnlineText.textContent = 'teraz';
-          } else if (diffMinutes < 60) {
-            lastOnlineText.textContent = `pred ${diffMinutes}m`;
-          } else {
-            const diffHours = Math.floor(diffMinutes / 60);
-            if (diffHours < 24) {
-              const remainingMinutes = diffMinutes % 60;
-              if (remainingMinutes > 0 && diffHours < 6) {
-                lastOnlineText.textContent = `pred ${diffHours}h ${remainingMinutes}m`;
-              } else {
-                lastOnlineText.textContent = `pred ${diffHours}h`;
-              }
-            } else {
-              const diffDays = Math.floor(diffHours / 24);
-              const remainingHours = diffHours % 24;
-              if (remainingHours > 0 && diffDays < 7) {
-                lastOnlineText.textContent = `pred ${diffDays}d ${remainingHours}h`;
-              } else {
-                lastOnlineText.textContent = `pred ${diffDays}d`;
-              }
-            }
-          }
-          
-          // Set online/offline status color
-          if (lastOnlineInfo && data.online_status !== undefined) {
-            if (data.online_status === 1) {
-              lastOnlineInfo.setAttribute('data-status', 'online');
-              lastOnlineInfo.title = 'Online - Posledný upload dát';
-            } else {
-              lastOnlineInfo.setAttribute('data-status', 'offline');
-              lastOnlineInfo.title = 'Offline - Posledný upload dát';
-            }
-          }
-          
-          // Ak je z cache, pridaj indikátor
-          if (data.from_cache) {
-            if (lastOnlineInfo) {
-              lastOnlineInfo.setAttribute('data-source', 'cache');
-              lastOnlineInfo.title += ' (z cache)';
-            }
-          }
-        } catch (e) {
-          console.error('Error parsing upload time:', e);
-          lastOnlineText.textContent = '—';
-        }
-      }
-    } else {
-      const lastOnlineText = $('#lastOnlineText');
-      const lastOnlineInfo = $('#lastOnlineInfo');
-      if (lastOnlineText) {
-        lastOnlineText.textContent = '—';
-      }
-      if (lastOnlineInfo) {
-        lastOnlineInfo.removeAttribute('data-status');
-      }
-    }
-  } catch (err) {
-    console.error('Device status error:', err);
-    const textSpan = $('#batteryText');
-    const lastOnlineText = $('#lastOnlineText');
-    if (textSpan) {
-      textSpan.textContent = '—';
-    }
-    if (lastOnlineText) {
-      lastOnlineText.textContent = '—';
-    }
+    const diffDays = Math.floor(diffHours / 24);
+    const remH = diffHours % 24;
+    return remH > 0 && diffDays < 7 ? `pred ${diffDays}d ${remH}h` : `pred ${diffDays}d`;
+  } catch (e) {
+    return '—';
   }
+}
+
+async function updateBatteryStatus() {
+  // Device status is now shown in device management overlay via loadDevices()
+  // Refresh devices data so status is up to date
+  await loadDevices();
 }
 
 // --------- Hamburger Menu ---------
@@ -3308,6 +3214,22 @@ function showPerimeterEditView(perimeter = null) {
   $('#perimeterListView').classList.add('hidden');
   $('#perimeterEditView').classList.remove('hidden');
 
+  // Populate device selector
+  const deviceSelect = $('#perimeterDeviceId');
+  const deviceRow = $('#perimeterDeviceRow');
+  if (deviceSelect && devices.length > 1) {
+    deviceSelect.innerHTML = '<option value="">Všetky zariadenia</option>';
+    devices.forEach(d => {
+      const opt = document.createElement('option');
+      opt.value = d.id;
+      opt.textContent = d.name;
+      deviceSelect.appendChild(opt);
+    });
+    if (deviceRow) deviceRow.classList.remove('hidden');
+  } else if (deviceRow) {
+    deviceRow.classList.add('hidden');
+  }
+
   if (perimeter) {
     editingPerimeterId = perimeter.id;
     $('#perimeterOverlayTitle').textContent = 'Upraviť perimeter';
@@ -3315,6 +3237,7 @@ function showPerimeterEditView(perimeter = null) {
     $('#perimeterName').value = perimeter.name;
     $('#perimeterColor').value = perimeter.color || '#ff6b6b';
     perimeterPolygonPoints = perimeter.polygon || [];
+    if (deviceSelect) deviceSelect.value = perimeter.device_id || '';
 
     // Populate emails list
     renderEmailsList(perimeter.emails || []);
@@ -3325,6 +3248,7 @@ function showPerimeterEditView(perimeter = null) {
     $('#perimeterName').value = '';
     $('#perimeterColor').value = '#ff6b6b';
     perimeterPolygonPoints = [];
+    if (deviceSelect) deviceSelect.value = '';
 
     // Start with one empty email entry
     renderEmailsList([{ email: '', alert_on_enter: true, alert_on_exit: true }]);
@@ -3639,12 +3563,23 @@ async function loadPerimeterList() {
                         emailCount === 1 ? '1 e-mail' :
                         `${emailCount} e-maily`;
 
+      // Device name for multi-device
+      let deviceText = '';
+      if (devices.length > 1) {
+        if (p.device_id) {
+          const dev = devices.find(d => d.id === p.device_id);
+          deviceText = dev ? dev.name : `#${p.device_id}`;
+        } else {
+          deviceText = 'Všetky';
+        }
+      }
+
       return `
         <div class="perimeter-item ${p.is_active ? '' : 'inactive'}" data-id="${p.id}">
           <div class="perimeter-color" style="background-color:${p.color || '#ff6b6b'}"></div>
           <div class="perimeter-info">
             <h4>${escapeHtml(p.name)}</h4>
-            <small>${emailText} | ${p.polygon?.length || 0} bodov</small>
+            <small>${emailText} | ${p.polygon?.length || 0} bodov${deviceText ? ' | ' + escapeHtml(deviceText) : ''}</small>
             <div class="perimeter-badges">${badges.join('')}</div>
           </div>
           <div class="perimeter-actions">
@@ -3720,12 +3655,14 @@ async function savePerimeter() {
   }
 
   try {
+    const deviceIdVal = $('#perimeterDeviceId')?.value || '';
     const payload = {
       name: name,
       polygon: perimeterPolygonPoints,
       emails: emails,
       color: color,
-      is_active: true
+      is_active: true,
+      device_id: deviceIdVal ? parseInt(deviceIdVal) : null
     };
 
     if (editingPerimeterId) {
@@ -4359,7 +4296,12 @@ async function loadDeviceManagementList() {
     return;
   }
 
-  container.innerHTML = devices.map(d => `
+  container.innerHTML = devices.map(d => {
+    const batteryLabel = d.status ? (d.status.battery_state === 1 ? 'Dobrá' : d.status.battery_state === 0 ? 'Slabá' : '—') : '—';
+    const batteryClass = d.status ? (d.status.battery_state === 1 ? 'good' : d.status.battery_state === 0 ? 'low' : '') : '';
+    const lastOnline = d.status && d.status.latest_message_time ? formatTimeAgo(d.status.latest_message_time) : '—';
+    const onlineClass = d.status ? (d.status.online_status === 1 ? 'online' : 'offline') : '';
+    return `
     <div class="device-card" data-id="${d.id}">
       <div class="device-card-header">
         <span class="device-color-indicator" style="background:${d.color}"></span>
@@ -4369,7 +4311,8 @@ async function loadDeviceManagementList() {
       </div>
       <div class="device-card-info">
         ${d.last_position ? `<span>Posledná poloha: ${toTime(d.last_position.timestamp)}</span>` : '<span>Bez dát</span>'}
-        ${d.status ? `<span>Batéria: ${d.status.battery_state === 1 ? 'OK' : d.status.battery_state === 0 ? 'Nízka' : '?'}</span>` : ''}
+        <span class="device-battery ${batteryClass}">Batéria: ${batteryLabel}</span>
+        <span class="device-online ${onlineClass}">Online: ${lastOnline}</span>
       </div>
       <div class="device-card-actions">
         <button class="btn-sm btn-edit" onclick="editDevice(${d.id})">Upraviť</button>
@@ -4377,7 +4320,7 @@ async function loadDeviceManagementList() {
         <button class="btn-sm btn-danger" onclick="deleteDevice(${d.id}, '${d.name}')">Zmazať</button>
       </div>
     </div>
-  `).join('');
+  `;}).join('');
 }
 
 function openDeviceForm(device = null) {
