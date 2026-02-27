@@ -66,6 +66,17 @@ preflight() {
     fi
     log_success ".env file found"
 
+    # Check if .env is readable (often owned by www-data uid 33 with 600 perms)
+    if [ ! -r "${SCRIPT_DIR}/.env" ]; then
+        log_warning ".env not readable (owned by uid 33 / www-data)"
+        log_info "Fixing: sudo chmod 644 .env"
+        sudo chmod 644 "${SCRIPT_DIR}/.env" 2>/dev/null || {
+            log_error "Cannot fix .env permissions. Run: sudo chmod 644 ${SCRIPT_DIR}/.env"
+            exit 1
+        }
+        log_success ".env permissions fixed (644)"
+    fi
+
     if [ ! -f "${SCRIPT_DIR}/migrate_multi_device.php" ]; then
         log_error "migrate_multi_device.php not found. Are you on the right branch?"
         exit 1
@@ -183,12 +194,31 @@ check_env_updates() {
 }
 
 # -------------------------------------------------------------------
+# Fix .env permissions for Docker Compose
+# -------------------------------------------------------------------
+fix_env_permissions() {
+    local env_file="${SCRIPT_DIR}/.env"
+    if [ ! -r "${env_file}" ]; then
+        log_warning ".env is not readable by current user (owned by www-data/uid 33)"
+        log_info "Fixing permissions: chmod 644 .env"
+        sudo chmod 644 "${env_file}" 2>/dev/null || {
+            log_error "Cannot fix .env permissions. Run manually: sudo chmod 644 ${env_file}"
+            exit 1
+        }
+        log_success ".env is now readable"
+    fi
+}
+
+# -------------------------------------------------------------------
 # Rebuild and restart container
 # -------------------------------------------------------------------
 rebuild_and_restart() {
     log_step "Rebuilding and restarting container"
 
     cd "${SCRIPT_DIR}"
+
+    # Docker Compose needs to read .env for variable interpolation
+    fix_env_permissions
 
     log_info "Building new Docker image..."
     if [ -f "${COMPOSE_PROD_FILE}" ]; then
