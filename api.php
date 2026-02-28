@@ -270,24 +270,46 @@ if ($action === 'health') {
 }
 
 if ($action === 'get_last_position') {
-    $row = $pdo->query("
-        SELECT id, timestamp, latitude, longitude, source
-        FROM tracker_data
-        ORDER BY timestamp DESC
-        LIMIT 1
-    ")->fetch();
+    $deviceId = qparam('device_id');
+
+    if ($deviceId) {
+        $stmt = $pdo->prepare("
+            SELECT td.id, td.timestamp, td.latitude, td.longitude, td.source, td.device_id,
+                   d.name as device_name, d.color as device_color
+            FROM tracker_data td
+            LEFT JOIN devices d ON td.device_id = d.id
+            WHERE td.device_id = :did
+            ORDER BY td.timestamp DESC
+            LIMIT 1
+        ");
+        $stmt->execute([':did' => (int)$deviceId]);
+        $row = $stmt->fetch();
+    } else {
+        $row = $pdo->query("
+            SELECT td.id, td.timestamp, td.latitude, td.longitude, td.source, td.device_id,
+                   d.name as device_name, d.color as device_color
+            FROM tracker_data td
+            LEFT JOIN devices d ON td.device_id = d.id
+            ORDER BY td.timestamp DESC
+            LIMIT 1
+        ")->fetch();
+    }
     if (!$row) respond([]);
-    
+
     respond([
-        'id'        => (int)$row['id'],
-        'timestamp' => utc_to_local($row['timestamp']),
-        'latitude'  => (float)$row['latitude'],
-        'longitude' => (float)$row['longitude'],
-        'source'    => (string)$row['source'],
+        'id'          => (int)$row['id'],
+        'timestamp'   => utc_to_local($row['timestamp']),
+        'latitude'    => (float)$row['latitude'],
+        'longitude'   => (float)$row['longitude'],
+        'source'      => (string)$row['source'],
+        'device_id'   => $row['device_id'] ? (int)$row['device_id'] : null,
+        'device_name' => $row['device_name'] ?? null,
+        'device_color'=> $row['device_color'] ?? null,
     ]);
 }
 
 if ($action === 'get_history') {
+    $deviceId = qparam('device_id');
     // OPRAVA: PouÅ¾Ã­vateÄ¾ zadÃ¡ dÃ¡tum v lokÃ¡lnom Äase, musÃ­me ho konvertovaÅ¥ na UTC rozsah
     $localDate = qparam('date') ?: (new DateTimeImmutable('now', new DateTimeZone('Europe/Bratislava')))->format('Y-m-d');
     
@@ -298,14 +320,23 @@ if ($action === 'get_history') {
     $startUtc = $startLocal->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d H:i:s');
     $endUtc = $endLocal->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d H:i:s');
     
-    $stmt = $pdo->prepare("
-        SELECT id, timestamp, latitude, longitude, source
-        FROM tracker_data
-        WHERE timestamp BETWEEN :start AND :end
-        ORDER BY timestamp ASC
-    ");
-    $stmt->execute([':start' => $startUtc, ':end' => $endUtc]);
-    
+    $sql = "
+        SELECT td.id, td.timestamp, td.latitude, td.longitude, td.source, td.device_id,
+               d.name as device_name, d.color as device_color
+        FROM tracker_data td
+        LEFT JOIN devices d ON td.device_id = d.id
+        WHERE td.timestamp BETWEEN :start AND :end
+    ";
+    $params = [':start' => $startUtc, ':end' => $endUtc];
+    if ($deviceId) {
+        $sql .= " AND td.device_id = :did";
+        $params[':did'] = (int)$deviceId;
+    }
+    $sql .= " ORDER BY td.timestamp ASC";
+
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($params);
+
     $out = [];
     while ($r = $stmt->fetch()) {
         $out[] = [
@@ -314,15 +345,19 @@ if ($action === 'get_history') {
             'latitude'=>(float)$r['latitude'],
             'longitude'=>(float)$r['longitude'],
             'source'=>(string)$r['source'],
+            'device_id'=>$r['device_id'] ? (int)$r['device_id'] : null,
+            'device_name'=>$r['device_name'] ?? null,
+            'device_color'=>$r['device_color'] ?? null,
         ];
     }
     respond($out);
 }
 
 if ($action === 'get_history_range') {
-    $since = qparam('since'); 
+    $since = qparam('since');
     $until = qparam('until');
-    
+    $deviceId = qparam('device_id');
+
     if (!$since || !$until) {
         $dtUntil = new DateTimeImmutable('now', new DateTimeZone('UTC'));
         $dtSince = $dtUntil->sub(new DateInterval('P1D'));
@@ -334,17 +369,26 @@ if ($action === 'get_history_range') {
         $dtUntil = $dtUntil->setTimezone(new DateTimeZone('UTC'));
     }
     
-    $stmt = $pdo->prepare("
-        SELECT id, timestamp, latitude, longitude, source
-        FROM tracker_data
-        WHERE timestamp BETWEEN :since AND :until
-        ORDER BY timestamp ASC
-    ");
-    $stmt->execute([
+    $sql = "
+        SELECT td.id, td.timestamp, td.latitude, td.longitude, td.source, td.device_id,
+               d.name as device_name, d.color as device_color
+        FROM tracker_data td
+        LEFT JOIN devices d ON td.device_id = d.id
+        WHERE td.timestamp BETWEEN :since AND :until
+    ";
+    $params = [
         ':since'=>$dtSince->format('Y-m-d H:i:s'),
         ':until'=>$dtUntil->format('Y-m-d H:i:s'),
-    ]);
-    
+    ];
+    if ($deviceId) {
+        $sql .= " AND td.device_id = :did";
+        $params[':did'] = (int)$deviceId;
+    }
+    $sql .= " ORDER BY td.timestamp ASC";
+
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($params);
+
     $out = [];
     while ($r = $stmt->fetch()) {
         $out[] = [
@@ -353,6 +397,9 @@ if ($action === 'get_history_range') {
             'latitude'=>(float)$r['latitude'],
             'longitude'=>(float)$r['longitude'],
             'source'=>(string)$r['source'],
+            'device_id'=>$r['device_id'] ? (int)$r['device_id'] : null,
+            'device_name'=>$r['device_name'] ?? null,
+            'device_color'=>$r['device_color'] ?? null,
         ];
     }
     respond($out);
@@ -1925,9 +1972,14 @@ try {
 
 if ($action === 'get_perimeters') {
     try {
-        $q = $pdo->query("SELECT id, name, polygon, alert_on_enter, alert_on_exit, notification_email, is_active, color, created_at, updated_at
-                          FROM perimeters
-                          ORDER BY id ASC");
+        // Check if device_id column exists (migration may not have run yet)
+        $hasDeviceId = false;
+        $cols = $pdo->query("PRAGMA table_info(perimeters)");
+        while ($c = $cols->fetch()) {
+            if ($c['name'] === 'device_id') { $hasDeviceId = true; break; }
+        }
+
+        $q = $pdo->query("SELECT * FROM perimeters ORDER BY id ASC");
         $out = [];
         while ($r = $q->fetch()) {
             $perimeterId = (int)$r['id'];
@@ -1961,10 +2013,11 @@ if ($action === 'get_perimeters') {
                 'polygon' => json_decode($r['polygon'], true),
                 'alert_on_enter' => (bool)$r['alert_on_enter'],
                 'alert_on_exit' => (bool)$r['alert_on_exit'],
-                'notification_email' => $r['notification_email'], // Keep for backwards compatibility
+                'notification_email' => $r['notification_email'] ?? null,
                 'emails' => $emails,
                 'is_active' => (bool)$r['is_active'],
                 'color' => $r['color'] ?? '#ff6b6b',
+                'device_id' => ($hasDeviceId && isset($r['device_id']) && $r['device_id'] !== null) ? (int)$r['device_id'] : null,
                 'created_at' => $r['created_at'],
                 'updated_at' => $r['updated_at']
             ];
@@ -1987,6 +2040,8 @@ if ($action === 'save_perimeter' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         $emails = $j['emails'] ?? []; // New: array of {email, alert_on_enter, alert_on_exit}
         $isActive = isset($j['is_active']) ? (int)(bool)$j['is_active'] : 1;
         $color = trim((string)($j['color'] ?? '#ff6b6b'));
+        $deviceId = isset($j['device_id']) ? (int)$j['device_id'] : null;
+        if ($deviceId === 0) $deviceId = null;
 
         if ($name === '') {
             respond(['ok' => false, 'error' => 'Názov perimetra je povinný'], 400);
@@ -2006,23 +2061,21 @@ if ($action === 'save_perimeter' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         $polygonJson = json_encode($polygon);
         $now = (new DateTimeImmutable())->format('Y-m-d H:i:s');
 
+        // Check if device_id column exists
+        $hasDeviceIdCol = false;
+        $cols = $pdo->query("PRAGMA table_info(perimeters)");
+        while ($c = $cols->fetch()) {
+            if ($c['name'] === 'device_id') { $hasDeviceIdCol = true; break; }
+        }
+
         $pdo->beginTransaction();
 
         if ($id) {
             // Update existing
-            $stmt = $pdo->prepare("
-                UPDATE perimeters SET
-                    name = :name,
-                    polygon = :polygon,
-                    alert_on_enter = :enter,
-                    alert_on_exit = :exit,
-                    notification_email = :email,
-                    is_active = :active,
-                    color = :color,
-                    updated_at = :updated
-                WHERE id = :id
-            ");
-            $stmt->execute([
+            $sql = "UPDATE perimeters SET name = :name, polygon = :polygon, alert_on_enter = :enter, alert_on_exit = :exit, notification_email = :email, is_active = :active, color = :color, updated_at = :updated"
+                 . ($hasDeviceIdCol ? ", device_id = :device_id" : "")
+                 . " WHERE id = :id";
+            $params = [
                 ':id' => $id,
                 ':name' => $name,
                 ':polygon' => $polygonJson,
@@ -2032,15 +2085,18 @@ if ($action === 'save_perimeter' && $_SERVER['REQUEST_METHOD'] === 'POST') {
                 ':active' => $isActive,
                 ':color' => $color,
                 ':updated' => $now
-            ]);
+            ];
+            if ($hasDeviceIdCol) $params[':device_id'] = $deviceId;
+            $stmt = $pdo->prepare($sql);
+            $stmt->execute($params);
             $perimeterId = $id;
         } else {
             // Insert new
-            $stmt = $pdo->prepare("
-                INSERT INTO perimeters (name, polygon, alert_on_enter, alert_on_exit, notification_email, is_active, color, created_at, updated_at)
-                VALUES (:name, :polygon, :enter, :exit, :email, :active, :color, :created, :updated)
-            ");
-            $stmt->execute([
+            $fields = "name, polygon, alert_on_enter, alert_on_exit, notification_email, is_active, color, created_at, updated_at"
+                    . ($hasDeviceIdCol ? ", device_id" : "");
+            $placeholders = ":name, :polygon, :enter, :exit, :email, :active, :color, :created, :updated"
+                          . ($hasDeviceIdCol ? ", :device_id" : "");
+            $params = [
                 ':name' => $name,
                 ':polygon' => $polygonJson,
                 ':enter' => $alertOnEnter,
@@ -2050,7 +2106,10 @@ if ($action === 'save_perimeter' && $_SERVER['REQUEST_METHOD'] === 'POST') {
                 ':color' => $color,
                 ':created' => $now,
                 ':updated' => $now
-            ]);
+            ];
+            if ($hasDeviceIdCol) $params[':device_id'] = $deviceId;
+            $stmt = $pdo->prepare("INSERT INTO perimeters ($fields) VALUES ($placeholders)");
+            $stmt->execute($params);
             $perimeterId = (int)$pdo->lastInsertId();
         }
 
@@ -2376,54 +2435,106 @@ function verify_n8n_api_key(): bool {
     return hash_equals($apiKey, $providedKey);
 }
 
-// GET /api.php?action=n8n_status
+// GET /api.php?action=n8n_status&device_id=X
 // Returns: current device status, last position, battery info
+// If device_id specified, returns for that device. Otherwise returns all devices.
 if ($action === 'n8n_status') {
     if (!verify_n8n_api_key()) {
         respond(['ok' => false, 'error' => 'Invalid or missing API key'], 401);
     }
 
     try {
-        // Get device status
-        $deviceStatus = null;
-        $stmt = $pdo->query("SELECT * FROM device_status ORDER BY last_update DESC LIMIT 1");
-        if ($r = $stmt->fetch()) {
-            $deviceStatus = [
-                'device_eui' => $r['device_eui'],
-                'battery_status' => $r['battery_status'] === 1 ? 'good' : ($r['battery_status'] === 0 ? 'low' : 'unknown'),
-                'online_status' => $r['online_status'] === 1 ? 'online' : 'offline',
-                'latest_message_time' => $r['latest_message_time'],
-                'last_update' => $r['last_update']
-            ];
-        }
+        $deviceId = qparam('device_id');
 
-        // Get last position
-        $lastPosition = null;
-        $stmt = $pdo->query("SELECT * FROM tracker_data ORDER BY timestamp DESC LIMIT 1");
-        if ($r = $stmt->fetch()) {
-            $lastPosition = [
-                'latitude' => (float)$r['latitude'],
-                'longitude' => (float)$r['longitude'],
-                'timestamp' => $r['timestamp'],
-                'source' => $r['source'],
-                'maps_url' => "https://www.google.com/maps?q={$r['latitude']},{$r['longitude']}"
-            ];
-        }
+        if ($deviceId) {
+            // Single device status
+            $stmtDev = $pdo->prepare("SELECT * FROM devices WHERE id = :did");
+            $stmtDev->execute([':did' => (int)$deviceId]);
+            $dev = $stmtDev->fetch();
 
-        respond([
-            'ok' => true,
-            'data' => [
-                'device' => $deviceStatus,
-                'last_position' => $lastPosition,
-                'generated_at' => (new DateTimeImmutable())->format('Y-m-d\TH:i:sP')
-            ]
-        ]);
+            $deviceStatus = null;
+            if ($dev) {
+                $stmtStatus = $pdo->prepare("SELECT * FROM device_status WHERE device_eui = :eui LIMIT 1");
+                $stmtStatus->execute([':eui' => $dev['device_eui']]);
+                $r = $stmtStatus->fetch();
+                if ($r) {
+                    $deviceStatus = [
+                        'device_eui' => $r['device_eui'],
+                        'device_name' => $dev['name'],
+                        'battery_status' => $r['battery_state'] === 1 ? 'good' : ($r['battery_state'] === 0 ? 'low' : 'unknown'),
+                        'online_status' => $r['online_status'] === 1 ? 'online' : 'offline',
+                        'latest_message_time' => $r['latest_message_time'],
+                        'last_update' => $r['last_update']
+                    ];
+                }
+            }
+
+            $lastPosition = null;
+            $stmtPos = $pdo->prepare("SELECT * FROM tracker_data WHERE device_id = :did ORDER BY timestamp DESC LIMIT 1");
+            $stmtPos->execute([':did' => (int)$deviceId]);
+            if ($r = $stmtPos->fetch()) {
+                $lastPosition = [
+                    'latitude' => (float)$r['latitude'],
+                    'longitude' => (float)$r['longitude'],
+                    'timestamp' => $r['timestamp'],
+                    'source' => $r['source'],
+                    'maps_url' => "https://www.google.com/maps?q={$r['latitude']},{$r['longitude']}"
+                ];
+            }
+
+            respond([
+                'ok' => true,
+                'data' => [
+                    'device' => $deviceStatus,
+                    'last_position' => $lastPosition,
+                    'generated_at' => (new DateTimeImmutable())->format('Y-m-d\TH:i:sP')
+                ]
+            ]);
+        } else {
+            // All devices status
+            $devices = [];
+            $stmtDevices = $pdo->query("SELECT * FROM devices WHERE is_active = 1 ORDER BY id");
+            while ($dev = $stmtDevices->fetch()) {
+                $stmtStatus = $pdo->prepare("SELECT * FROM device_status WHERE device_eui = :eui LIMIT 1");
+                $stmtStatus->execute([':eui' => $dev['device_eui']]);
+                $status = $stmtStatus->fetch();
+
+                $stmtPos = $pdo->prepare("SELECT * FROM tracker_data WHERE device_id = :did ORDER BY timestamp DESC LIMIT 1");
+                $stmtPos->execute([':did' => (int)$dev['id']]);
+                $pos = $stmtPos->fetch();
+
+                $devices[] = [
+                    'id' => (int)$dev['id'],
+                    'name' => $dev['name'],
+                    'device_eui' => $dev['device_eui'],
+                    'color' => $dev['color'],
+                    'battery_status' => $status ? ($status['battery_state'] === 1 ? 'good' : ($status['battery_state'] === 0 ? 'low' : 'unknown')) : 'unknown',
+                    'online_status' => $status ? ($status['online_status'] === 1 ? 'online' : 'offline') : 'unknown',
+                    'last_position' => $pos ? [
+                        'latitude' => (float)$pos['latitude'],
+                        'longitude' => (float)$pos['longitude'],
+                        'timestamp' => $pos['timestamp'],
+                        'source' => $pos['source'],
+                        'maps_url' => "https://www.google.com/maps?q={$pos['latitude']},{$pos['longitude']}"
+                    ] : null
+                ];
+            }
+
+            respond([
+                'ok' => true,
+                'data' => [
+                    'devices' => $devices,
+                    'count' => count($devices),
+                    'generated_at' => (new DateTimeImmutable())->format('Y-m-d\TH:i:sP')
+                ]
+            ]);
+        }
     } catch (Throwable $e) {
         respond(['ok' => false, 'error' => $e->getMessage()], 500);
     }
 }
 
-// GET /api.php?action=n8n_positions&date=YYYY-MM-DD&limit=100
+// GET /api.php?action=n8n_positions&date=YYYY-MM-DD&limit=100&device_id=X
 // Returns: positions for a specific date or recent positions
 if ($action === 'n8n_positions') {
     if (!verify_n8n_api_key()) {
@@ -2433,27 +2544,26 @@ if ($action === 'n8n_positions') {
     try {
         $date = qparam('date');
         $limit = min((int)(qparam('limit') ?: 100), 1000);
+        $deviceId = qparam('device_id');
 
         if ($date && preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) {
-            // Get positions for specific date
-            $stmt = $pdo->prepare("
-                SELECT id, timestamp, latitude, longitude, source
-                FROM tracker_data
-                WHERE DATE(timestamp) = :date
-                ORDER BY timestamp ASC
-                LIMIT :limit
-            ");
+            $sql = "SELECT td.id, td.timestamp, td.latitude, td.longitude, td.source, td.device_id, d.name as device_name
+                    FROM tracker_data td LEFT JOIN devices d ON td.device_id = d.id
+                    WHERE DATE(td.timestamp) = :date";
+            if ($deviceId) $sql .= " AND td.device_id = :did";
+            $sql .= " ORDER BY td.timestamp ASC LIMIT :limit";
+            $stmt = $pdo->prepare($sql);
             $stmt->bindValue(':date', $date, PDO::PARAM_STR);
+            if ($deviceId) $stmt->bindValue(':did', (int)$deviceId, PDO::PARAM_INT);
             $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
             $stmt->execute();
         } else {
-            // Get recent positions
-            $stmt = $pdo->prepare("
-                SELECT id, timestamp, latitude, longitude, source
-                FROM tracker_data
-                ORDER BY timestamp DESC
-                LIMIT :limit
-            ");
+            $sql = "SELECT td.id, td.timestamp, td.latitude, td.longitude, td.source, td.device_id, d.name as device_name
+                    FROM tracker_data td LEFT JOIN devices d ON td.device_id = d.id";
+            if ($deviceId) $sql .= " WHERE td.device_id = :did";
+            $sql .= " ORDER BY td.timestamp DESC LIMIT :limit";
+            $stmt = $pdo->prepare($sql);
+            if ($deviceId) $stmt->bindValue(':did', (int)$deviceId, PDO::PARAM_INT);
             $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
             $stmt->execute();
         }
@@ -2466,6 +2576,8 @@ if ($action === 'n8n_positions') {
                 'latitude' => (float)$r['latitude'],
                 'longitude' => (float)$r['longitude'],
                 'source' => $r['source'],
+                'device_id' => $r['device_id'] ? (int)$r['device_id'] : null,
+                'device_name' => $r['device_name'] ?? null,
                 'maps_url' => "https://www.google.com/maps?q={$r['latitude']},{$r['longitude']}"
             ];
         }
@@ -2476,6 +2588,7 @@ if ($action === 'n8n_positions') {
                 'positions' => $positions,
                 'count' => count($positions),
                 'date_filter' => $date ?: null,
+                'device_id' => $deviceId ? (int)$deviceId : null,
                 'generated_at' => (new DateTimeImmutable())->format('Y-m-d\TH:i:sP')
             ]
         ]);
@@ -2729,6 +2842,372 @@ if ($action === 'api_auth_check') {
         'config' => $config,
         'middleware_loaded' => function_exists('authenticateApiRequest')
     ]);
+}
+
+// ========== MULTI-DEVICE MANAGEMENT ==========
+
+// Ensure devices table exists (auto-migration for existing installs)
+try {
+    $pdo->exec("CREATE TABLE IF NOT EXISTS devices (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        device_eui TEXT NOT NULL UNIQUE,
+        color TEXT NOT NULL DEFAULT '#3388ff',
+        icon TEXT DEFAULT 'default',
+        is_active INTEGER NOT NULL DEFAULT 1,
+        notifications_enabled INTEGER DEFAULT 0,
+        notification_email TEXT,
+        notification_webhook TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )");
+    $pdo->exec("CREATE TABLE IF NOT EXISTS device_perimeters (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        device_id INTEGER NOT NULL,
+        name TEXT NOT NULL,
+        latitude REAL NOT NULL,
+        longitude REAL NOT NULL,
+        radius_meters REAL NOT NULL DEFAULT 500,
+        alert_on_enter INTEGER DEFAULT 0,
+        alert_on_exit INTEGER DEFAULT 0,
+        is_active INTEGER DEFAULT 1,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE CASCADE
+    )");
+} catch (Throwable $e) {
+    // Tables may already exist
+}
+
+// GET /api.php?action=get_devices
+if ($action === 'get_devices') {
+    try {
+        $q = $pdo->query("SELECT id, name, device_eui, color, icon, is_active, notifications_enabled, notification_email, notification_webhook, created_at, updated_at FROM devices ORDER BY id ASC");
+        $out = [];
+        while ($r = $q->fetch()) {
+            // Get last position for this device
+            $lastPos = null;
+            $stmtPos = $pdo->prepare("SELECT timestamp, latitude, longitude, source FROM tracker_data WHERE device_id = :did ORDER BY timestamp DESC LIMIT 1");
+            $stmtPos->execute([':did' => (int)$r['id']]);
+            $pos = $stmtPos->fetch();
+            if ($pos) {
+                $lastPos = [
+                    'timestamp' => utc_to_local($pos['timestamp']),
+                    'latitude' => (float)$pos['latitude'],
+                    'longitude' => (float)$pos['longitude'],
+                    'source' => $pos['source']
+                ];
+            }
+
+            // Get device status (battery, online)
+            $deviceStatus = null;
+            $stmtStatus = $pdo->prepare("SELECT battery_state, online_status, latest_message_time, last_update FROM device_status WHERE device_eui = :eui LIMIT 1");
+            $stmtStatus->execute([':eui' => $r['device_eui']]);
+            $status = $stmtStatus->fetch();
+            if ($status) {
+                $deviceStatus = [
+                    'battery_state' => $status['battery_state'] !== null ? (int)$status['battery_state'] : null,
+                    'online_status' => $status['online_status'] !== null ? (int)$status['online_status'] : null,
+                    'latest_message_time' => $status['latest_message_time'],
+                    'last_update' => $status['last_update']
+                ];
+            }
+
+            $out[] = [
+                'id' => (int)$r['id'],
+                'name' => $r['name'],
+                'device_eui' => $r['device_eui'],
+                'color' => $r['color'],
+                'icon' => $r['icon'],
+                'is_active' => (bool)(int)$r['is_active'],
+                'notifications_enabled' => (bool)(int)$r['notifications_enabled'],
+                'notification_email' => $r['notification_email'],
+                'notification_webhook' => $r['notification_webhook'],
+                'created_at' => $r['created_at'],
+                'updated_at' => $r['updated_at'],
+                'last_position' => $lastPos,
+                'status' => $deviceStatus
+            ];
+        }
+        respond(['ok' => true, 'data' => $out]);
+    } catch (Throwable $e) {
+        respond(['ok' => false, 'error' => $e->getMessage()], 500);
+    }
+}
+
+// POST /api.php?action=save_device
+if ($action === 'save_device' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    try {
+        $j = json_body();
+        $id = isset($j['id']) ? (int)$j['id'] : null;
+        $name = trim((string)($j['name'] ?? ''));
+        $deviceEui = trim((string)($j['device_eui'] ?? ''));
+        $color = trim((string)($j['color'] ?? '#3388ff'));
+        $icon = trim((string)($j['icon'] ?? 'default'));
+        $isActive = isset($j['is_active']) ? (int)(bool)$j['is_active'] : 1;
+        $notificationsEnabled = isset($j['notifications_enabled']) ? (int)(bool)$j['notifications_enabled'] : 0;
+        $notificationEmail = trim((string)($j['notification_email'] ?? ''));
+        $notificationWebhook = trim((string)($j['notification_webhook'] ?? ''));
+
+        if ($name === '') {
+            respond(['ok' => false, 'error' => 'Názov zariadenia je povinný'], 400);
+        }
+        if ($deviceEui === '') {
+            respond(['ok' => false, 'error' => 'Device EUI je povinný'], 400);
+        }
+        if (!preg_match('/^#[0-9A-Fa-f]{6}$/', $color)) {
+            $color = '#3388ff';
+        }
+        if ($notificationEmail !== '' && !filter_var($notificationEmail, FILTER_VALIDATE_EMAIL)) {
+            respond(['ok' => false, 'error' => 'Neplatná e-mailová adresa'], 400);
+        }
+
+        $now = (new DateTimeImmutable())->format('Y-m-d H:i:s');
+
+        if ($id) {
+            $stmt = $pdo->prepare("
+                UPDATE devices SET
+                    name = :name,
+                    device_eui = :eui,
+                    color = :color,
+                    icon = :icon,
+                    is_active = :active,
+                    notifications_enabled = :notif,
+                    notification_email = :email,
+                    notification_webhook = :webhook,
+                    updated_at = :updated
+                WHERE id = :id
+            ");
+            $stmt->execute([
+                ':id' => $id,
+                ':name' => $name,
+                ':eui' => $deviceEui,
+                ':color' => $color,
+                ':icon' => $icon,
+                ':active' => $isActive,
+                ':notif' => $notificationsEnabled,
+                ':email' => $notificationEmail ?: null,
+                ':webhook' => $notificationWebhook ?: null,
+                ':updated' => $now
+            ]);
+            $deviceId = $id;
+        } else {
+            $stmt = $pdo->prepare("
+                INSERT INTO devices (name, device_eui, color, icon, is_active, notifications_enabled, notification_email, notification_webhook, created_at, updated_at)
+                VALUES (:name, :eui, :color, :icon, :active, :notif, :email, :webhook, :created, :updated)
+            ");
+            $stmt->execute([
+                ':name' => $name,
+                ':eui' => $deviceEui,
+                ':color' => $color,
+                ':icon' => $icon,
+                ':active' => $isActive,
+                ':notif' => $notificationsEnabled,
+                ':email' => $notificationEmail ?: null,
+                ':webhook' => $notificationWebhook ?: null,
+                ':created' => $now,
+                ':updated' => $now
+            ]);
+            $deviceId = (int)$pdo->lastInsertId();
+        }
+
+        respond(['ok' => true, 'message' => $id ? 'Zariadenie aktualizované' : 'Zariadenie vytvorené', 'id' => $deviceId]);
+    } catch (Throwable $e) {
+        $msg = $e->getMessage();
+        if (strpos($msg, 'UNIQUE constraint failed') !== false) {
+            respond(['ok' => false, 'error' => 'Zariadenie s týmto EUI už existuje'], 409);
+        }
+        respond(['ok' => false, 'error' => $msg], 500);
+    }
+}
+
+// DELETE /api.php?action=delete_device
+if ($action === 'delete_device') {
+    try {
+        $id = qparam('id');
+        if (!$id) {
+            $j = json_body();
+            $id = isset($j['id']) ? (int)$j['id'] : null;
+        }
+        if (!$id) {
+            respond(['ok' => false, 'error' => 'Missing device id'], 400);
+        }
+        $id = (int)$id;
+
+        // Check if it's the last device
+        $count = (int)$pdo->query("SELECT COUNT(*) as c FROM devices")->fetch()['c'];
+        if ($count <= 1) {
+            respond(['ok' => false, 'error' => 'Nemožno zmazať posledné zariadenie'], 400);
+        }
+
+        $pdo->beginTransaction();
+
+        // Delete associated tracker data
+        $pdo->prepare("DELETE FROM tracker_data WHERE device_id = :did")->execute([':did' => $id]);
+        // Delete device perimeters
+        $pdo->prepare("DELETE FROM device_perimeters WHERE device_id = :did")->execute([':did' => $id]);
+        // Delete device
+        $pdo->prepare("DELETE FROM devices WHERE id = :id")->execute([':id' => $id]);
+
+        $pdo->commit();
+        respond(['ok' => true, 'message' => 'Zariadenie a súvisiace dáta zmazané']);
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        respond(['ok' => false, 'error' => $e->getMessage()], 500);
+    }
+}
+
+// POST /api.php?action=toggle_device
+if ($action === 'toggle_device' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    try {
+        $j = json_body();
+        $id = isset($j['id']) ? (int)$j['id'] : null;
+        $isActive = isset($j['is_active']) ? (int)(bool)$j['is_active'] : 0;
+
+        if (!$id) {
+            respond(['ok' => false, 'error' => 'Missing device id'], 400);
+        }
+
+        $stmt = $pdo->prepare("UPDATE devices SET is_active = :active, updated_at = :updated WHERE id = :id");
+        $stmt->execute([
+            ':id' => $id,
+            ':active' => $isActive,
+            ':updated' => (new DateTimeImmutable())->format('Y-m-d H:i:s')
+        ]);
+
+        respond(['ok' => true, 'message' => $isActive ? 'Zariadenie aktivované' : 'Zariadenie deaktivované']);
+    } catch (Throwable $e) {
+        respond(['ok' => false, 'error' => $e->getMessage()], 500);
+    }
+}
+
+// ========== DEVICE PERIMETERS (Circular Geofences) ==========
+
+// GET /api.php?action=get_device_perimeters&device_id=X
+if ($action === 'get_device_perimeters') {
+    try {
+        $deviceId = qparam('device_id');
+        if ($deviceId) {
+            $stmt = $pdo->prepare("SELECT dp.*, d.name as device_name, d.color as device_color FROM device_perimeters dp JOIN devices d ON dp.device_id = d.id WHERE dp.device_id = :did ORDER BY dp.id ASC");
+            $stmt->execute([':did' => (int)$deviceId]);
+        } else {
+            $stmt = $pdo->query("SELECT dp.*, d.name as device_name, d.color as device_color FROM device_perimeters dp JOIN devices d ON dp.device_id = d.id ORDER BY dp.device_id, dp.id ASC");
+        }
+        $out = [];
+        while ($r = $stmt->fetch()) {
+            $out[] = [
+                'id' => (int)$r['id'],
+                'device_id' => (int)$r['device_id'],
+                'device_name' => $r['device_name'],
+                'device_color' => $r['device_color'],
+                'name' => $r['name'],
+                'latitude' => (float)$r['latitude'],
+                'longitude' => (float)$r['longitude'],
+                'radius_meters' => (float)$r['radius_meters'],
+                'alert_on_enter' => (bool)(int)$r['alert_on_enter'],
+                'alert_on_exit' => (bool)(int)$r['alert_on_exit'],
+                'is_active' => (bool)(int)$r['is_active'],
+                'created_at' => $r['created_at']
+            ];
+        }
+        respond(['ok' => true, 'data' => $out]);
+    } catch (Throwable $e) {
+        respond(['ok' => false, 'error' => $e->getMessage()], 500);
+    }
+}
+
+// POST /api.php?action=save_device_perimeter
+if ($action === 'save_device_perimeter' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    try {
+        $j = json_body();
+        $id = isset($j['id']) ? (int)$j['id'] : null;
+        $deviceId = isset($j['device_id']) ? (int)$j['device_id'] : null;
+        $name = trim((string)($j['name'] ?? ''));
+        $lat = isset($j['latitude']) ? (float)$j['latitude'] : null;
+        $lng = isset($j['longitude']) ? (float)$j['longitude'] : null;
+        $radius = isset($j['radius_meters']) ? (float)$j['radius_meters'] : 500;
+        $alertOnEnter = isset($j['alert_on_enter']) ? (int)(bool)$j['alert_on_enter'] : 0;
+        $alertOnExit = isset($j['alert_on_exit']) ? (int)(bool)$j['alert_on_exit'] : 0;
+        $isActive = isset($j['is_active']) ? (int)(bool)$j['is_active'] : 1;
+
+        if (!$deviceId && !$id) {
+            respond(['ok' => false, 'error' => 'device_id je povinný'], 400);
+        }
+        if ($name === '') {
+            respond(['ok' => false, 'error' => 'Názov perimetra je povinný'], 400);
+        }
+        if ($lat === null || $lng === null) {
+            respond(['ok' => false, 'error' => 'Súradnice sú povinné'], 400);
+        }
+        if ($radius < 10 || $radius > 50000) {
+            respond(['ok' => false, 'error' => 'Polomer musí byť medzi 10 a 50000 metrov'], 400);
+        }
+
+        if ($id) {
+            $stmt = $pdo->prepare("
+                UPDATE device_perimeters SET
+                    name = :name,
+                    latitude = :lat,
+                    longitude = :lng,
+                    radius_meters = :radius,
+                    alert_on_enter = :enter,
+                    alert_on_exit = :exit,
+                    is_active = :active
+                WHERE id = :id
+            ");
+            $stmt->execute([
+                ':id' => $id,
+                ':name' => $name,
+                ':lat' => $lat,
+                ':lng' => $lng,
+                ':radius' => $radius,
+                ':enter' => $alertOnEnter,
+                ':exit' => $alertOnExit,
+                ':active' => $isActive
+            ]);
+            $perimeterId = $id;
+        } else {
+            $stmt = $pdo->prepare("
+                INSERT INTO device_perimeters (device_id, name, latitude, longitude, radius_meters, alert_on_enter, alert_on_exit, is_active)
+                VALUES (:did, :name, :lat, :lng, :radius, :enter, :exit, :active)
+            ");
+            $stmt->execute([
+                ':did' => $deviceId,
+                ':name' => $name,
+                ':lat' => $lat,
+                ':lng' => $lng,
+                ':radius' => $radius,
+                ':enter' => $alertOnEnter,
+                ':exit' => $alertOnExit,
+                ':active' => $isActive
+            ]);
+            $perimeterId = (int)$pdo->lastInsertId();
+        }
+
+        respond(['ok' => true, 'message' => $id ? 'Perimeter aktualizovaný' : 'Perimeter vytvorený', 'id' => $perimeterId]);
+    } catch (Throwable $e) {
+        respond(['ok' => false, 'error' => $e->getMessage()], 500);
+    }
+}
+
+// DELETE /api.php?action=delete_device_perimeter&id=X
+if ($action === 'delete_device_perimeter') {
+    try {
+        $id = qparam('id');
+        if (!$id) {
+            $j = json_body();
+            $id = isset($j['id']) ? (int)$j['id'] : null;
+        }
+        if (!$id) {
+            respond(['ok' => false, 'error' => 'Missing perimeter id'], 400);
+        }
+
+        $stmt = $pdo->prepare("DELETE FROM device_perimeters WHERE id = :id");
+        $stmt->execute([':id' => (int)$id]);
+
+        respond(['ok' => true, 'message' => 'Perimeter zmazaný']);
+    } catch (Throwable $e) {
+        respond(['ok' => false, 'error' => $e->getMessage()], 500);
+    }
 }
 
 respond(['ok'=>false,'error'=>'unknown action'], 400);

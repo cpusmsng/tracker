@@ -54,35 +54,25 @@
       
       <!-- Pravá strana: Last Online + Battery + Hamburger -->
       <div class="topbar-right">
-        <!-- Last online info -->
-        <div id="lastOnlineInfo" class="last-online-info" title="Posledný update">
-          <svg class="clock-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <circle cx="12" cy="12" r="10"></circle>
-            <polyline points="12 6 12 12 16 14"></polyline>
-          </svg>
-          <span id="lastOnlineText">-</span>
-        </div>
-        
-        <!-- Battery indicator -->
-        <div id="batteryIndicator" class="battery-indicator" title="Stav batérie">
-          <!-- Good battery icon (full) -->
-          <svg class="battery-icon-good" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <rect x="2" y="7" width="18" height="10" rx="1"></rect>
-            <path d="M22 11v2"></path>
-            <rect x="4" y="9" width="14" height="6" rx="0.5" fill="currentColor" stroke="none"></rect>
-          </svg>
-          <!-- Low battery icon (empty with warning) -->
-          <svg class="battery-icon-low" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <rect x="2" y="7" width="18" height="10" rx="1"></rect>
-            <path d="M22 11v2"></path>
-            <rect x="4" y="9" width="4" height="6" rx="0.5" fill="currentColor" stroke="none"></rect>
-            <path d="M12 9v4M12 15v.01" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path>
-          </svg>
-          <span id="batteryText" class="battery-text">-</span>
-        </div>
-        
         <!-- User name (shown when logged in via SSO) -->
         <span id="userNameDisplay" class="user-name-display hidden"></span>
+
+        <!-- Device selector dropdown -->
+        <div id="deviceDropdownContainer" class="device-dropdown-container hidden">
+          <button id="deviceDropdownBtn" class="device-dropdown-btn" aria-label="Vybrať zariadenia">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="5" y="2" width="14" height="20" rx="2" ry="2"/>
+              <line x1="12" y1="18" x2="12.01" y2="18"/>
+            </svg>
+            <span id="deviceDropdownLabel">1</span>
+            <svg class="dropdown-arrow" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="6 9 12 15 18 9"/>
+            </svg>
+          </button>
+          <div id="deviceDropdownMenu" class="device-dropdown-menu hidden">
+            <!-- Filled by JS -->
+          </div>
+        </div>
 
         <!-- Hamburger menu button + dropdown container -->
         <div class="hamburger-container">
@@ -137,6 +127,13 @@
           </button>
         </div>
       </div>
+      <button class="menu-item" id="menuDevices">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="5" y="2" width="14" height="20" rx="2" ry="2"/>
+          <line x1="12" y1="18" x2="12.01" y2="18"/>
+        </svg>
+        Zariadenia
+      </button>
       <button class="menu-item" id="menuPerimeters">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <polygon points="12 2 22 8.5 22 15.5 12 22 2 15.5 2 8.5"/>
@@ -161,7 +158,10 @@
       <div id="map" role="region" aria-label="Mapa s trasou a polohami"></div>
     </div>
 
-    <!-- Tabuľka časových úsekov -->
+    <!-- Device tabs + table -->
+    <div id="deviceTabsContainer" class="device-tabs-container hidden">
+      <div id="deviceTabs" class="device-tabs"></div>
+    </div>
     <div id="positionsTable" aria-live="polite">-</div>
 
     <footer class="site-footer">
@@ -785,6 +785,13 @@
                     <label for="perimeterColor">Farba zóny</label>
                     <input type="color" id="perimeterColor" value="#ff6b6b">
                   </div>
+
+                  <div class="form-row" id="perimeterDeviceRow">
+                    <label for="perimeterDeviceId">Zariadenie</label>
+                    <select id="perimeterDeviceId">
+                      <option value="">Všetky zariadenia</option>
+                    </select>
+                  </div>
                 </div>
 
                 <!-- Multiple Emails Section -->
@@ -1196,6 +1203,126 @@
             <button type="button" id="cancelPositionEdit" class="btn-secondary">Zrušiť</button>
           </div>
         </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- Device Management Overlay -->
+  <div id="deviceManagementOverlay" class="overlay hidden">
+    <div class="overlay-content overlay-wide">
+      <div class="overlay-header">
+        <h2>Správa zariadení</h2>
+        <button class="overlay-close-btn" onclick="closeDeviceManagement()">&times;</button>
+      </div>
+      <div class="overlay-body">
+        <div id="deviceList"></div>
+        <div class="overlay-actions" style="margin-top:16px;">
+          <button class="btn-primary" onclick="openDeviceForm()">Pridať zariadenie</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Device Form (inline within management overlay) -->
+  <div id="deviceForm" class="overlay hidden">
+    <div class="overlay-content">
+      <div class="overlay-header">
+        <h2 id="deviceFormTitle">Nové zariadenie</h2>
+        <button class="overlay-close-btn" onclick="closeDeviceForm()">&times;</button>
+      </div>
+      <div class="overlay-body">
+        <input type="hidden" id="deviceId">
+        <div class="form-group">
+          <label for="deviceName">Názov zariadenia</label>
+          <input type="text" id="deviceName" placeholder="Napr. Tracker Fido" required>
+        </div>
+        <div class="form-group">
+          <label for="deviceEui">Device EUI</label>
+          <input type="text" id="deviceEui" placeholder="Napr. 2CF7F1C0443.." required>
+        </div>
+        <div class="form-group">
+          <label for="deviceColor">Farba na mape</label>
+          <input type="color" id="deviceColor" value="#3388ff">
+        </div>
+        <div class="form-group">
+          <label class="checkbox-label">
+            <input type="checkbox" id="deviceActive" checked>
+            Aktívne zariadenie
+          </label>
+        </div>
+        <div class="form-group">
+          <label class="checkbox-label">
+            <input type="checkbox" id="deviceNotifEnabled">
+            Notifikácie zapnuté
+          </label>
+        </div>
+        <div class="form-group">
+          <label for="deviceNotifEmail">Email pre notifikácie</label>
+          <input type="email" id="deviceNotifEmail" placeholder="email@example.com">
+        </div>
+        <div class="form-actions">
+          <button class="btn-primary" onclick="saveDevice()">Uložiť</button>
+          <button class="btn-secondary" onclick="closeDeviceForm()">Zrušiť</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Device Perimeter Overlay -->
+  <div id="devicePerimeterOverlay" class="overlay hidden">
+    <div class="overlay-content overlay-wide">
+      <div class="overlay-header">
+        <h2>Perimeter zóny zariadenia</h2>
+        <button class="overlay-close-btn" onclick="closeDevicePerimeterManager()">&times;</button>
+      </div>
+      <div class="overlay-body">
+        <!-- Content injected by JS -->
+      </div>
+    </div>
+  </div>
+
+  <!-- Device Perimeter Form -->
+  <div id="devicePerimeterForm" class="overlay hidden">
+    <div class="overlay-content">
+      <div class="overlay-header">
+        <h2 id="dpFormTitle">Nový perimeter</h2>
+        <button class="overlay-close-btn" onclick="closeDevicePerimeterForm()">&times;</button>
+      </div>
+      <div class="overlay-body">
+        <input type="hidden" id="dpId">
+        <input type="hidden" id="dpDeviceId">
+        <div class="form-group">
+          <label for="dpName">Názov perimetra</label>
+          <input type="text" id="dpName" placeholder="Napr. Domov" required>
+        </div>
+        <div class="form-group">
+          <label for="dpLat">Zemepisná šírka</label>
+          <input type="number" id="dpLat" step="0.000001" placeholder="48.1486" required>
+        </div>
+        <div class="form-group">
+          <label for="dpLng">Zemepisná dĺžka</label>
+          <input type="number" id="dpLng" step="0.000001" placeholder="17.1077" required>
+        </div>
+        <div class="form-group">
+          <label for="dpRadius">Polomer (m)</label>
+          <input type="number" id="dpRadius" min="10" max="50000" value="500">
+        </div>
+        <div class="form-group">
+          <label class="checkbox-label">
+            <input type="checkbox" id="dpAlertEnter">
+            Upozornenie pri vstupe
+          </label>
+        </div>
+        <div class="form-group">
+          <label class="checkbox-label">
+            <input type="checkbox" id="dpAlertExit">
+            Upozornenie pri výstupe
+          </label>
+        </div>
+        <div class="form-actions">
+          <button class="btn-primary" onclick="saveDevicePerimeter()">Uložiť</button>
+          <button class="btn-secondary" onclick="closeDevicePerimeterForm()">Zrušiť</button>
+        </div>
       </div>
     </div>
   </div>

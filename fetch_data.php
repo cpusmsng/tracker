@@ -41,9 +41,10 @@ $DEBUG_MODE = false;
 $REFETCH_MODE = false;
 $REFETCH_DATE = null;
 $REFETCH_BREACHES = []; // Collect breaches for summary email in refetch mode
+$LOG_DEVICE_PREFIX = ''; // Set per-device during processing loop
 
 function logl(string $msg, string $level = 'debug'): void {
-    global $LOG_FILE, $CURRENT_LOG_LEVEL, $LOG_LEVELS, $DEBUG_MODE;
+    global $LOG_FILE, $CURRENT_LOG_LEVEL, $LOG_LEVELS, $DEBUG_MODE, $LOG_DEVICE_PREFIX;
     $msgLevel = $LOG_LEVELS[$level] ?? 2;
 
     // Always log if DEBUG_MODE is on, otherwise check level
@@ -51,7 +52,8 @@ function logl(string $msg, string $level = 'debug'): void {
 
     $ts = (new DateTimeImmutable())->format('Y-m-d\TH:i:sP');
     $levelTag = strtoupper($level);
-    file_put_contents($LOG_FILE, "[$ts] [$levelTag] $msg\n", FILE_APPEND);
+    $prefix = $LOG_DEVICE_PREFIX ? "[$LOG_DEVICE_PREFIX] " : '';
+    file_put_contents($LOG_FILE, "[$ts] [$levelTag] {$prefix}$msg\n", FILE_APPEND);
 }
 
 function error_log_custom(string $msg): void {
@@ -242,11 +244,17 @@ function fetch_device_running_status(string $devEui, string $aid, string $akey):
     ];
 }
 
-function last_db_ts(PDO $pdo): ?DateTimeImmutable {
-    $r = $pdo->query("SELECT MAX(timestamp) AS mx FROM tracker_data")->fetch();
+function last_db_ts(PDO $pdo, ?int $deviceId = null): ?DateTimeImmutable {
+    if ($deviceId !== null) {
+        $stmt = $pdo->prepare("SELECT MAX(timestamp) AS mx FROM tracker_data WHERE device_id = :did");
+        $stmt->execute([':did' => $deviceId]);
+        $r = $stmt->fetch();
+    } else {
+        $r = $pdo->query("SELECT MAX(timestamp) AS mx FROM tracker_data")->fetch();
+    }
     if (!$r || !$r['mx']) return null;
     $dt = new DateTimeImmutable((string)$r['mx'], new DateTimeZone('UTC'));
-    debug_log("LAST_DB_TS: ".$dt->format('Y-m-d\TH:i:s.u\Z')." UTC");
+    debug_log("LAST_DB_TS: ".$dt->format('Y-m-d\TH:i:s.u\Z')." UTC" . ($deviceId ? " (device=$deviceId)" : ""));
     return $dt;
 }
 
@@ -261,10 +269,18 @@ function haversine(float $lat1, float $lon1, float $lat2, float $lon2): float {
     return $R * $c;
 }
 
-function get_last_position(PDO $pdo, ?string $beforeDate = null): ?array {
-    if ($beforeDate) {
+function get_last_position(PDO $pdo, ?string $beforeDate = null, ?int $deviceId = null): ?array {
+    if ($beforeDate && $deviceId !== null) {
+        $stmt = $pdo->prepare("SELECT latitude, longitude, source FROM tracker_data WHERE timestamp < :d AND device_id = :did ORDER BY timestamp DESC LIMIT 1");
+        $stmt->execute([':d' => $beforeDate, ':did' => $deviceId]);
+        $r = $stmt->fetch();
+    } else if ($beforeDate) {
         $stmt = $pdo->prepare("SELECT latitude, longitude, source FROM tracker_data WHERE timestamp < :d ORDER BY timestamp DESC LIMIT 1");
         $stmt->execute([':d' => $beforeDate]);
+        $r = $stmt->fetch();
+    } else if ($deviceId !== null) {
+        $stmt = $pdo->prepare("SELECT latitude, longitude, source FROM tracker_data WHERE device_id = :did ORDER BY timestamp DESC LIMIT 1");
+        $stmt->execute([':did' => $deviceId]);
         $r = $stmt->fetch();
     } else {
         $r = $pdo->query("SELECT latitude, longitude, source FROM tracker_data ORDER BY timestamp DESC LIMIT 1")->fetch();
@@ -282,7 +298,8 @@ function insert_position_with_hysteresis(
     int $hysteresisMeters,
     ?array &$lastInsertedPos,
     ?string $rawMacs = null,
-    ?string $primaryMac = null
+    ?string $primaryMac = null,
+    ?int $deviceId = null
 ): array {
     
     $lastPos = $lastInsertedPos;
@@ -322,8 +339,8 @@ function insert_position_with_hysteresis(
     $ts = $dt->format('Y-m-d H:i:s');
     
     try {
-        $stmt = $pdo->prepare("INSERT INTO tracker_data (timestamp, latitude, longitude, source, raw_wifi_macs, primary_mac) VALUES (:t,:la,:lo,:s,:macs,:pmac)");
-        $stmt->execute([':t'=>$ts, ':la'=>$lat, ':lo'=>$lng, ':s'=>$source, ':macs'=>$rawMacs, ':pmac'=>$primaryMac]);
+        $stmt = $pdo->prepare("INSERT INTO tracker_data (timestamp, latitude, longitude, source, raw_wifi_macs, primary_mac, device_id) VALUES (:t,:la,:lo,:s,:macs,:pmac,:did)");
+        $stmt->execute([':t'=>$ts, ':la'=>$lat, ':lo'=>$lng, ':s'=>$source, ':macs'=>$rawMacs, ':pmac'=>$primaryMac, ':did'=>$deviceId]);
 
         $lastInsertedPos = ['lat' => $lat, 'lng' => $lng, 'source' => $source];
 
@@ -483,14 +500,37 @@ function point_in_polygon(float $lat, float $lng, array $polygon): bool {
     return $inside;
 }
 
-function load_active_perimeters(PDO $pdo): array {
+function load_active_perimeters(PDO $pdo, ?int $deviceId = null): array {
     $perimeters = [];
     try {
-        $stmt = $pdo->query("
-            SELECT id, name, polygon, alert_on_enter, alert_on_exit, notification_email
-            FROM perimeters
-            WHERE is_active = 1
-        ");
+        // Check if device_id column exists
+        $hasDeviceIdCol = false;
+        $cols = $pdo->query("PRAGMA table_info(perimeters)");
+        while ($c = $cols->fetch()) {
+            if ($c['name'] === 'device_id') { $hasDeviceIdCol = true; break; }
+        }
+
+        // Load perimeters: global (device_id IS NULL) + device-specific
+        if ($hasDeviceIdCol && $deviceId !== null) {
+            $stmt = $pdo->prepare("
+                SELECT id, name, polygon, alert_on_enter, alert_on_exit, notification_email, device_id
+                FROM perimeters
+                WHERE is_active = 1 AND (device_id IS NULL OR device_id = :did)
+            ");
+            $stmt->execute([':did' => $deviceId]);
+        } elseif ($hasDeviceIdCol) {
+            $stmt = $pdo->query("
+                SELECT id, name, polygon, alert_on_enter, alert_on_exit, notification_email, device_id
+                FROM perimeters
+                WHERE is_active = 1
+            ");
+        } else {
+            $stmt = $pdo->query("
+                SELECT id, name, polygon, alert_on_enter, alert_on_exit, notification_email
+                FROM perimeters
+                WHERE is_active = 1
+            ");
+        }
         while ($r = $stmt->fetch()) {
             $pid = (int)$r['id'];
 
@@ -519,6 +559,7 @@ function load_active_perimeters(PDO $pdo): array {
                 ];
             }
 
+            $perDeviceId = ($hasDeviceIdCol && isset($r['device_id']) && $r['device_id'] !== null) ? (int)$r['device_id'] : null;
             $perimeters[] = [
                 'id' => $pid,
                 'name' => $r['name'],
@@ -526,6 +567,7 @@ function load_active_perimeters(PDO $pdo): array {
                 'alert_on_enter' => (bool)$r['alert_on_enter'],
                 'alert_on_exit' => (bool)$r['alert_on_exit'],
                 'notification_email' => $r['notification_email'],
+                'device_id' => $perDeviceId,
                 'emails' => $emails
             ];
 
@@ -537,9 +579,10 @@ function load_active_perimeters(PDO $pdo): array {
                 if ($em['alert_on_enter']) $enterCount++;
                 if ($em['alert_on_exit']) $exitCount++;
             }
-            info_log("PERIMETER '{$r['name']}' (id=$pid): emails=$emailCount, alert_on_enter=$enterCount, alert_on_exit=$exitCount");
+            $deviceLabel = $perDeviceId !== null ? "device=$perDeviceId" : 'global';
+            info_log("PERIMETER '{$r['name']}' (id=$pid, $deviceLabel): emails=$emailCount, alert_on_enter=$enterCount, alert_on_exit=$exitCount");
         }
-        info_log("PERIMETERS: loaded ".count($perimeters)." active zones");
+        info_log("PERIMETERS: loaded ".count($perimeters)." active zones" . ($deviceId !== null ? " for device_id=$deviceId" : ""));
     } catch (Throwable $e) {
         info_log("PERIMETERS ERROR: ".$e->getMessage());
     }
@@ -561,7 +604,8 @@ function check_perimeter_breaches(
     string $timestamp,
     array $perimeters,
     array $currentStates,
-    array $previousStates
+    array $previousStates,
+    ?string $deviceName = null
 ): array {
     $breaches = [];
 
@@ -604,9 +648,10 @@ function check_perimeter_breaches(
                 'type' => 'enter',
                 'lat' => $lat,
                 'lng' => $lng,
-                'timestamp' => $timestamp
+                'timestamp' => $timestamp,
+                'device_name' => $deviceName
             ];
-            info_log("    PERIMETER BREACH DETECTED: ENTERED '{$p['name']}'");
+            info_log("    PERIMETER BREACH DETECTED: ENTERED '{$p['name']}'" . ($deviceName ? " (device: $deviceName)" : ""));
         } elseif ($wasInside && !$isInside && $anyWantsExit) {
             // EXITED the zone
             $breaches[] = [
@@ -614,9 +659,10 @@ function check_perimeter_breaches(
                 'type' => 'exit',
                 'lat' => $lat,
                 'lng' => $lng,
-                'timestamp' => $timestamp
+                'timestamp' => $timestamp,
+                'device_name' => $deviceName
             ];
-            info_log("    PERIMETER BREACH DETECTED: EXITED '{$p['name']}'");
+            info_log("    PERIMETER BREACH DETECTED: EXITED '{$p['name']}'" . ($deviceName ? " (device: $deviceName)" : ""));
         } elseif ($stateChanged) {
             // State changed but alert not configured
             if (!$wasInside && $isInside && !$anyWantsEnter) {
@@ -634,8 +680,9 @@ function send_perimeter_alert_emails(array $breach): int {
     $p = $breach['perimeter'];
     $emails = $p['emails'] ?? [];
     $breachType = $breach['type']; // 'enter' or 'exit'
+    $deviceName = $breach['device_name'] ?? null;
 
-    info_log("    SENDING EMAIL for breach: type=$breachType perimeter='{$p['name']}' emails_count=".count($emails));
+    info_log("    SENDING EMAIL for breach: type=$breachType perimeter='{$p['name']}' device='" . ($deviceName ?? 'unknown') . "' emails_count=".count($emails));
 
     if (empty($emails)) {
         info_log("    EMAIL SKIP: no emails configured for '{$p['name']}'");
@@ -652,7 +699,8 @@ function send_perimeter_alert_emails(array $breach): int {
     $fromName = getenv('EMAIL_FROM_NAME') ?: 'Family Tracker';
 
     $alertType = $breachType === 'enter' ? 'VSTUP DO ZÓNY' : 'OPUSTENIE ZÓNY';
-    $subject = "Family Tracker: $alertType - {$p['name']}";
+    $deviceLabel = $deviceName ? " ($deviceName)" : '';
+    $subject = "Family Tracker: $alertType - {$p['name']}$deviceLabel";
 
     // Format timestamp for display
     try {
@@ -697,7 +745,11 @@ function send_perimeter_alert_emails(array $breach): int {
                 <h2 style='margin:0;'>$alertType</h2>
                 <p style='margin:5px 0 0;opacity:0.9;'>Family Tracker</p>
             </div>
-            <div class='content'>
+            <div class='content'>" .
+                ($deviceName ? "
+                <div class='info-row'>
+                    <span class='label'>Zariadenie:</span> $deviceName
+                </div>" : "") . "
                 <div class='info-row'>
                     <span class='label'>Zóna:</span> {$p['name']}
                 </div>
@@ -832,6 +884,12 @@ function send_refetch_summary_email(array $breaches, string $refetchDate): int {
 
     $subject = "Family Tracker: Súhrn udalostí z $refetchDate (" . count($breaches) . " udalostí)";
 
+    // Check if any breach has device info
+    $hasDeviceInfo = false;
+    foreach ($breaches as $b) {
+        if (!empty($b['device_name'])) { $hasDeviceInfo = true; break; }
+    }
+
     // Build HTML table with all breaches
     $tableRows = '';
     foreach ($breaches as $breach) {
@@ -856,9 +914,12 @@ function send_refetch_summary_email(array $breaches, string $refetchDate): int {
             $mapsUrl = "https://www.google.com/maps?q={$breach['lat']},{$breach['lng']}";
         }
 
+        $breachDeviceName = $breach['device_name'] ?? '';
         $tableRows .= "
         <tr>
-            <td style='padding:10px;border-bottom:1px solid #e5e5e5;'>$formattedTime</td>
+            <td style='padding:10px;border-bottom:1px solid #e5e5e5;'>$formattedTime</td>" .
+            ($hasDeviceInfo ? "
+            <td style='padding:10px;border-bottom:1px solid #e5e5e5;'>$breachDeviceName</td>" : "") . "
             <td style='padding:10px;border-bottom:1px solid #e5e5e5;'>{$p['name']}</td>
             <td style='padding:10px;border-bottom:1px solid #e5e5e5;'>
                 <span style='display:inline-block;padding:4px 10px;background:$alertColor;color:white;border-radius:4px;font-size:12px;font-weight:bold;'>$alertType</span>
@@ -899,7 +960,9 @@ function send_refetch_summary_email(array $breaches, string $refetchDate): int {
                 <table>
                     <thead>
                         <tr>
-                            <th>Čas</th>
+                            <th>Čas</th>" .
+                            ($hasDeviceInfo ? "
+                            <th>Zariadenie</th>" : "") . "
                             <th>Zóna</th>
                             <th>Typ</th>
                             <th>Poloha</th>
@@ -995,7 +1058,7 @@ function record_perimeter_alert(PDO $pdo, array $breach, bool $emailSent): void 
  * Send battery low alert email
  * Returns true if email was sent successfully
  */
-function send_battery_alert_email(PDO $pdo): bool {
+function send_battery_alert_email(PDO $pdo, ?string $deviceName = null): bool {
     if (!BATTERY_ALERT_ENABLED || !BATTERY_ALERT_EMAIL) {
         debug_log("BATTERY ALERT: Skipped - not enabled or no email configured");
         return false;
@@ -1009,7 +1072,8 @@ function send_battery_alert_email(PDO $pdo): bool {
     $fromEmail = getenv('EMAIL_FROM') ?: 'tracker@bagron.eu';
     $fromName = getenv('EMAIL_FROM_NAME') ?: 'Family Tracker';
 
-    $subject = "Family Tracker: Nízka batéria trackera";
+    $deviceLabel = $deviceName ? " ($deviceName)" : '';
+    $subject = "Family Tracker: Nízka batéria trackera$deviceLabel";
 
     $formattedTime = (new DateTimeImmutable())->setTimezone(new DateTimeZone('Europe/Bratislava'))->format('d.m.Y H:i:s');
 
@@ -1043,7 +1107,11 @@ function send_battery_alert_email(PDO $pdo): bool {
                 <h2 style='margin:0;'>Nízka batéria trackera</h2>
                 <p style='margin:5px 0 0;opacity:0.9;'>Family Tracker</p>
             </div>
-            <div class='content'>
+            <div class='content'>" .
+                ($deviceName ? "
+                <div class='info-row'>
+                    <span class='label'>Zariadenie:</span> $deviceName
+                </div>" : "") . "
                 <div class='info-row'>
                     <span class='label'>Stav:</span> Batéria trackera je takmer vybitá
                 </div>
@@ -1203,16 +1271,19 @@ function load_mac_cache(PDO $pdo, int $maxAgeDays): array {
     return $cache;
 }
 
-function clean_refetch_day(PDO $pdo, DateTimeImmutable $dayStart, DateTimeImmutable $dayEnd): int {
+function clean_refetch_day(PDO $pdo, DateTimeImmutable $dayStart, DateTimeImmutable $dayEnd, ?int $deviceId = null): int {
     try {
-        $stmt = $pdo->prepare("
-            DELETE FROM tracker_data 
-            WHERE timestamp BETWEEN :start AND :end
-        ");
-        $stmt->execute([
+        $sql = "DELETE FROM tracker_data WHERE timestamp BETWEEN :start AND :end";
+        $params = [
             ':start' => $dayStart->format('Y-m-d H:i:s'),
             ':end' => $dayEnd->format('Y-m-d H:i:s')
-        ]);
+        ];
+        if ($deviceId !== null) {
+            $sql .= " AND device_id = :did";
+            $params[':did'] = $deviceId;
+        }
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute($params);
         $deletedCount = $stmt->rowCount();
         info_log("CLEAN REFETCH: Deleted $deletedCount existing records for date range");
         return $deletedCount;
@@ -1312,10 +1383,9 @@ try {
 
     $AID  = getenv('SENSECAP_ACCESS_ID') ?: '';
     $AKEY = getenv('SENSECAP_ACCESS_KEY') ?: '';
-    $EUI  = getenv('SENSECAP_DEVICE_EUI') ?: '';
     $GKEY = getenv('GOOGLE_API_KEY') ?: '';
 
-    // Measurement IDs (môžu byť prekonfigurované cez .env)
+    // Measurement IDs
     $MEAS_GNSS_LON        = (int)(getenv('MEAS_GNSS_LON')        ?: 4197);
     $MEAS_GNSS_LAT        = (int)(getenv('MEAS_GNSS_LAT')        ?: 4198);
     $MEAS_WIFI_MAC        = (int)(getenv('MEAS_WIFI_MAC')        ?: 5001);
@@ -1330,12 +1400,51 @@ try {
 
     debug_log("CONFIG: WIFI_MIN_APS=$WIFI_MIN_APS MAX_APS=$MAX_APS RSSI_FLOOR={$RSSI_FLOOR}dBm HYSTERESIS={$HYSTERESIS_METERS}m MAC_CACHE_AGE={$MAC_CACHE_MAX_AGE}d");
 
-    if (!$AID || !$AKEY || !$EUI) { 
-        info_log('ERROR: Missing SenseCAP credentials'); 
-        exit(0); 
+    if (!$AID || !$AKEY) {
+        info_log('ERROR: Missing SenseCAP API credentials (ACCESS_ID/ACCESS_KEY)');
+        exit(0);
     }
 
     $pdo = db();
+
+    // Multi-device support: Load active devices from DB, fallback to .env EUI
+    $activeDevices = [];
+    try {
+        $tables = [];
+        $tq = $pdo->query("SELECT name FROM sqlite_master WHERE type='table' AND name='devices'");
+        while ($tr = $tq->fetch()) $tables[] = $tr['name'];
+
+        if (in_array('devices', $tables)) {
+            $dq = $pdo->query("SELECT id, name, device_eui FROM devices WHERE is_active = 1 ORDER BY id ASC");
+            while ($dr = $dq->fetch()) {
+                $activeDevices[] = ['id' => (int)$dr['id'], 'name' => $dr['name'], 'eui' => $dr['device_eui']];
+            }
+        }
+    } catch (Throwable $e) {
+        debug_log("DEVICES: Could not load from DB: " . $e->getMessage());
+    }
+
+    // Fallback: use .env EUI if no devices in DB
+    if (empty($activeDevices)) {
+        $envEui = getenv('SENSECAP_DEVICE_EUI') ?: '';
+        if ($envEui === '') {
+            info_log('ERROR: No active devices in DB and no SENSECAP_DEVICE_EUI in .env');
+            exit(0);
+        }
+        $activeDevices[] = ['id' => null, 'name' => 'Default', 'eui' => $envEui];
+        info_log("DEVICES: Using .env EUI fallback: $envEui");
+    } else {
+        info_log("DEVICES: Found " . count($activeDevices) . " active device(s): " . implode(', ', array_map(fn($d) => "{$d['name']} ({$d['eui']})", $activeDevices)));
+    }
+
+    // Process each device
+    $totalInsertedAll = 0;
+    foreach ($activeDevices as $deviceInfo) {
+    $EUI = $deviceInfo['eui'];
+    $DEVICE_ID = $deviceInfo['id'];
+    $DEVICE_NAME = $deviceInfo['name'];
+    $LOG_DEVICE_PREFIX = $DEVICE_NAME;
+    info_log("=== PROCESSING DEVICE: $DEVICE_NAME (EUI=$EUI, ID=" . ($DEVICE_ID ?? 'null') . ") ===");
     
     $lastDb = null;
     $refetchDayStart = null;
@@ -1361,8 +1470,8 @@ try {
             
             info_log("REFETCH: using high limits (gnss=$GNSS_LIMIT wifi/bt=$SENSECAP_LIMIT)");
 
-            // CLEAN REFETCH: Zmaž existujúce záznamy pre tento deň
-            $deletedCount = clean_refetch_day($pdo, $refetchDayStart, $refetchDayEnd);
+            // CLEAN REFETCH: Delete existing records for this day and device
+            $deletedCount = clean_refetch_day($pdo, $refetchDayStart, $refetchDayEnd, $DEVICE_ID);
             if ($deletedCount > 0) {
                 info_log("REFETCH: Successfully deleted $deletedCount old records");
             }
@@ -1372,10 +1481,16 @@ try {
             exit(1);
         }
     } else {
-        $lastDb = last_db_ts($pdo);
-        
+        $lastDb = last_db_ts($pdo, $DEVICE_ID);
+
         if ($lastDb) {
-            $lastRow = $pdo->query("SELECT latitude, longitude FROM tracker_data ORDER BY timestamp DESC LIMIT 1")->fetch();
+            if ($DEVICE_ID !== null) {
+                $stmtLast = $pdo->prepare("SELECT latitude, longitude FROM tracker_data WHERE device_id = :did ORDER BY timestamp DESC LIMIT 1");
+                $stmtLast->execute([':did' => $DEVICE_ID]);
+                $lastRow = $stmtLast->fetch();
+            } else {
+                $lastRow = $pdo->query("SELECT latitude, longitude FROM tracker_data ORDER BY timestamp DESC LIMIT 1")->fetch();
+            }
             info_log(sprintf(
                 'Last known: %s @ (%.6f, %.6f)',
                 $lastDb->format('Y-m-d H:i:s'),
@@ -1467,8 +1582,8 @@ try {
     $ibeaconMap = load_ibeacon_map($pdo);
     $macCache = load_mac_cache($pdo, $MAC_CACHE_MAX_AGE);
 
-    // Load active perimeters for breach detection
-    $activePerimeters = load_active_perimeters($pdo);
+    // Load active perimeters for breach detection (global + device-specific)
+    $activePerimeters = load_active_perimeters($pdo, $DEVICE_ID);
     $previousPerimeterStates = [];
     // NOTE: $previousPerimeterStates will be initialized AFTER $lastInsertedPos is set below
 
@@ -1501,12 +1616,12 @@ try {
     $perimeterAlerts=0; $emailsSent=0;
 
     // Helper function to check perimeters after successful insert
-    $checkPerimetersAfterInsert = function(float $lat, float $lng, string $iso) use ($pdo, $activePerimeters, &$previousPerimeterStates, &$perimeterAlerts, &$emailsSent) {
+    $checkPerimetersAfterInsert = function(float $lat, float $lng, string $iso) use ($pdo, $activePerimeters, &$previousPerimeterStates, &$perimeterAlerts, &$emailsSent, $DEVICE_NAME) {
         global $REFETCH_MODE, $REFETCH_BREACHES;
         if (empty($activePerimeters)) return;
 
         $currentStates = get_position_perimeter_states($lat, $lng, $activePerimeters);
-        $breaches = check_perimeter_breaches($pdo, $lat, $lng, $iso, $activePerimeters, $currentStates, $previousPerimeterStates);
+        $breaches = check_perimeter_breaches($pdo, $lat, $lng, $iso, $activePerimeters, $currentStates, $previousPerimeterStates, $DEVICE_NAME);
 
         foreach ($breaches as $breach) {
             if ($REFETCH_MODE) {
@@ -1529,12 +1644,12 @@ try {
     };
 
     if ($REFETCH_MODE && $refetchDayStart) {
-        $lastInsertedPos = get_last_position($pdo, $refetchDayStart->format('Y-m-d H:i:s'));
+        $lastInsertedPos = get_last_position($pdo, $refetchDayStart->format('Y-m-d H:i:s'), $DEVICE_ID);
         if ($lastInsertedPos) {
             debug_log("REFETCH: Last position before refetch day: ({$lastInsertedPos['lat']}, {$lastInsertedPos['lng']})");
         }
     } else {
-        $lastInsertedPos = get_last_position($pdo);
+        $lastInsertedPos = get_last_position($pdo, null, $DEVICE_ID);
     }
 
     // FIX: Initialize perimeter states from last known position AFTER $lastInsertedPos is set
@@ -1590,7 +1705,7 @@ try {
         if (isset($gnssBuckets[$iso])) {
             $lat = $gnssBuckets[$iso]['lat']; $lng = $gnssBuckets[$iso]['lng'];
             debug_log("  -> GNSS available: lat=$lat lng=$lng");
-            $result = insert_position_with_hysteresis($pdo, $iso, $lat, $lng, 'gnss', $HYSTERESIS_METERS, $lastInsertedPos);
+            $result = insert_position_with_hysteresis($pdo, $iso, $lat, $lng, 'gnss', $HYSTERESIS_METERS, $lastInsertedPos, null, null, $DEVICE_ID);
             if ($result['inserted']) {
                 $inserted++;
                 $checkPerimetersAfterInsert($lat, $lng, $iso);
@@ -1605,29 +1720,29 @@ try {
         // Priorita 2: BT iBeacon match
         $btForTs = null;
         foreach ($btBuckets as $b) {
-            if ($b['iso'] === $iso) { 
-                $btForTs = $b['beacons']; 
-                break; 
+            if ($b['iso'] === $iso) {
+                $btForTs = $b['beacons'];
+                break;
             }
         }
-        
+
         if ($btForTs && count($btForTs) > 0) {
             debug_log("  -> BT: ".count($btForTs)." beacons available");
-            
+
             $matchedLatLng = null;
             $matchedMac = null;
             foreach ($btForTs as $beacon) {
                 $mac = $beacon['mac'];
-                if (isset($ibeaconMap[$mac])) { 
-                    $matchedLatLng = $ibeaconMap[$mac]; 
+                if (isset($ibeaconMap[$mac])) {
+                    $matchedLatLng = $ibeaconMap[$mac];
                     $matchedMac = $mac;
-                    break; 
+                    break;
                 }
             }
-            
+
             if ($matchedLatLng) {
                 debug_log("  -> IBEACON MATCH (BT): MAC=$matchedMac");
-                $result = insert_position_with_hysteresis($pdo, $iso, $matchedLatLng[0], $matchedLatLng[1], 'ibeacon', $HYSTERESIS_METERS, $lastInsertedPos);
+                $result = insert_position_with_hysteresis($pdo, $iso, $matchedLatLng[0], $matchedLatLng[1], 'ibeacon', $HYSTERESIS_METERS, $lastInsertedPos, null, null, $DEVICE_ID);
                 if ($result['inserted']) {
                     $inserted++; $ibeaconHits++;
                     $checkPerimetersAfterInsert($matchedLatLng[0], $matchedLatLng[1], $iso);
@@ -1669,7 +1784,7 @@ try {
         
         if ($matchedLatLng) {
             debug_log("  -> IBEACON MATCH (Wi-Fi fallback)");
-            $result = insert_position_with_hysteresis($pdo, $iso, $matchedLatLng[0], $matchedLatLng[1], 'ibeacon', $HYSTERESIS_METERS, $lastInsertedPos);
+            $result = insert_position_with_hysteresis($pdo, $iso, $matchedLatLng[0], $matchedLatLng[1], 'ibeacon', $HYSTERESIS_METERS, $lastInsertedPos, null, null, $DEVICE_ID);
             if ($result['inserted']) {
                 $inserted++; $ibeaconHits++;
                 $checkPerimetersAfterInsert($matchedLatLng[0], $matchedLatLng[1], $iso);
@@ -1712,7 +1827,7 @@ try {
             debug_log("  -> USING CACHE: MAC=".$positiveCache['mac']);
             $allMacs = implode(',', array_map(fn($ap) => $ap['mac'], $wifiForTs));
             $primaryMac = $positiveCache['mac'];
-            $result = insert_position_with_hysteresis($pdo, $iso, $positiveCache['lat'], $positiveCache['lng'], 'wifi-cache', $HYSTERESIS_METERS, $lastInsertedPos, $allMacs, $primaryMac);
+            $result = insert_position_with_hysteresis($pdo, $iso, $positiveCache['lat'], $positiveCache['lng'], 'wifi-cache', $HYSTERESIS_METERS, $lastInsertedPos, $allMacs, $primaryMac, $DEVICE_ID);
             if ($result['inserted']) {
                 $inserted++; $cacheHits++;
                 $checkPerimetersAfterInsert($positiveCache['lat'], $positiveCache['lng'], $iso);
@@ -1740,7 +1855,7 @@ try {
         if ($geo) {
             [$lat,$lng,$acc] = $geo;
             $allMacs = implode(',', array_map(fn($ap) => $ap['mac'], $wifiForTs));
-            $result = insert_position_with_hysteresis($pdo, $iso, $lat, $lng, 'wifi-google', $HYSTERESIS_METERS, $lastInsertedPos, $allMacs);
+            $result = insert_position_with_hysteresis($pdo, $iso, $lat, $lng, 'wifi-google', $HYSTERESIS_METERS, $lastInsertedPos, $allMacs, null, $DEVICE_ID);
             if ($result['inserted']) {
                 $inserted++;
                 $checkPerimetersAfterInsert($lat, $lng, $iso);
@@ -1814,7 +1929,7 @@ try {
             if (!$REFETCH_MODE && $deviceStatus['battery_status'] === 0) {
                 info_log("BATTERY STATUS: LOW - checking if alert should be sent");
                 if (should_send_battery_alert($pdo)) {
-                    $alertSent = send_battery_alert_email($pdo);
+                    $alertSent = send_battery_alert_email($pdo, $DEVICE_NAME);
                     if ($alertSent) {
                         info_log("BATTERY ALERT: Email sent successfully");
                     }
@@ -1831,8 +1946,9 @@ try {
 
     $mode = $REFETCH_MODE ? "REFETCH($REFETCH_DATE)" : "NORMAL";
     info_log(sprintf(
-        'SUMMARY [%s]: fetched=%d (gnss_lon=%d gnss_lat=%d wifi=%d bt=%d) | buckets: gnss=%d wifi=%d bt=%d | inserted=%d skipped=%d (hysteresis=%d db_errors=%d) | google_calls=%d ibeacon_hits=%d cache_hits=%d cached_fails=%d | perimeter_alerts=%d emails_sent=%d',
+        'SUMMARY [%s] [%s]: fetched=%d (gnss_lon=%d gnss_lat=%d wifi=%d bt=%d) | buckets: gnss=%d wifi=%d bt=%d | inserted=%d skipped=%d (hysteresis=%d db_errors=%d) | google_calls=%d ibeacon_hits=%d cache_hits=%d cached_fails=%d | perimeter_alerts=%d emails_sent=%d',
         $mode,
+        $DEVICE_NAME,
         count($gnssLon) + count($gnssLat) + count($wifiRaw) + count($btRaw),
         count($gnssLon),
         count($gnssLat),
@@ -1853,6 +1969,8 @@ try {
         $emailsSent
     ));
 
+    $totalInsertedAll += $inserted;
+
     // Send summary email if in refetch mode and there are breaches
     if ($REFETCH_MODE && !empty($REFETCH_BREACHES)) {
         info_log("REFETCH SUMMARY: Sending summary email for " . count($REFETCH_BREACHES) . " breach(es)");
@@ -1860,7 +1978,12 @@ try {
         info_log("REFETCH SUMMARY: Sent $summaryEmailsSent summary email(s)");
     }
 
-    info_log('=== FETCH END ===');
+    info_log("=== DEVICE $DEVICE_NAME DONE ===");
+    $LOG_DEVICE_PREFIX = '';
+
+    } // end foreach activeDevices
+
+    info_log("=== FETCH END (total inserted across all devices: $totalInsertedAll) ===");
 
 } catch (Throwable $e) {
     info_log('FATAL: '.$e->getMessage().' at '.$e->getFile().':'.$e->getLine());

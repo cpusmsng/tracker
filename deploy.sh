@@ -71,6 +71,16 @@ check_prerequisites() {
             exit 1
         fi
     fi
+
+    # Fix .env permissions if owned by www-data (uid 33) with restrictive perms
+    if [ ! -r "${SCRIPT_DIR}/.env" ]; then
+        log_warning ".env not readable (likely owned by www-data). Fixing permissions..."
+        sudo chmod 644 "${SCRIPT_DIR}/.env" 2>/dev/null || {
+            log_error "Cannot fix .env permissions. Run: sudo chmod 644 ${SCRIPT_DIR}/.env"
+            exit 1
+        }
+        log_success ".env permissions fixed"
+    fi
 }
 
 # Deploy in production mode

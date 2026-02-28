@@ -48,12 +48,31 @@ if [ ! -f "${SQLITE_PATH}" ]; then
         \$pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 
         // Create tables
+
+        // Multi-device support: devices table
+        \$pdo->exec('CREATE TABLE IF NOT EXISTS devices (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            device_eui TEXT NOT NULL UNIQUE,
+            color TEXT NOT NULL DEFAULT \"#3388ff\",
+            icon TEXT DEFAULT \"default\",
+            is_active INTEGER NOT NULL DEFAULT 1,
+            notifications_enabled INTEGER DEFAULT 0,
+            notification_email TEXT,
+            notification_webhook TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )');
+
         \$pdo->exec('CREATE TABLE IF NOT EXISTS tracker_data (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             timestamp TEXT NOT NULL,
             latitude REAL NOT NULL,
             longitude REAL NOT NULL,
-            source TEXT
+            source TEXT,
+            raw_wifi_macs TEXT,
+            primary_mac TEXT,
+            device_id INTEGER DEFAULT 1 REFERENCES devices(id)
         )');
 
         \$pdo->exec('CREATE TABLE IF NOT EXISTS device_status (
@@ -87,6 +106,7 @@ if [ ! -f "${SQLITE_PATH}" ]; then
             alert_on_exit INTEGER DEFAULT 1,
             is_active INTEGER DEFAULT 1,
             color TEXT DEFAULT \"#3388ff\",
+            device_id INTEGER REFERENCES devices(id),
             created_at TEXT,
             updated_at TEXT
         )');
@@ -108,6 +128,7 @@ if [ ! -f "${SQLITE_PATH}" ]; then
             longitude REAL,
             sent_at TEXT,
             email_sent INTEGER DEFAULT 0,
+            device_id INTEGER REFERENCES devices(id),
             FOREIGN KEY (perimeter_id) REFERENCES perimeters(id) ON DELETE CASCADE
         )');
 
@@ -115,16 +136,70 @@ if [ ! -f "${SQLITE_PATH}" ]; then
             perimeter_id INTEGER PRIMARY KEY,
             is_inside INTEGER DEFAULT 0,
             last_checked TEXT,
+            device_id INTEGER REFERENCES devices(id),
             FOREIGN KEY (perimeter_id) REFERENCES perimeters(id) ON DELETE CASCADE
         )');
 
+        // Multi-device: device-specific circular perimeters
+        \$pdo->exec('CREATE TABLE IF NOT EXISTS device_perimeters (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            device_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            latitude REAL NOT NULL,
+            longitude REAL NOT NULL,
+            radius_meters REAL NOT NULL DEFAULT 500,
+            alert_on_enter INTEGER DEFAULT 0,
+            alert_on_exit INTEGER DEFAULT 0,
+            is_active INTEGER DEFAULT 1,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE CASCADE
+        )');
+
+        // Refetch state with device support
+        \$pdo->exec('CREATE TABLE IF NOT EXISTS refetch_state (
+            date TEXT NOT NULL,
+            device_id INTEGER NOT NULL DEFAULT 1,
+            last_check_time TEXT NOT NULL,
+            last_known_timestamp TEXT,
+            last_known_count INTEGER DEFAULT 0,
+            needs_refetch INTEGER DEFAULT 0,
+            last_refetch_time TEXT,
+            notes TEXT,
+            PRIMARY KEY (date, device_id),
+            FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE CASCADE
+        )');
+
+        // Create default device from .env
+        \$eui = getenv(\"SENSECAP_DEVICE_EUI\") ?: \"UNKNOWN\";
+        \$deviceName = getenv(\"DEVICE_NAME\") ?: \"Predvolené zariadenie\";
+        \$stmt = \$pdo->prepare(\"INSERT OR IGNORE INTO devices (name, device_eui, color, icon, is_active) VALUES (:name, :eui, '#3388ff', 'default', 1)\");
+        \$stmt->execute([':name' => \$deviceName, ':eui' => \$eui]);
+
         // Create indexes
         \$pdo->exec('CREATE INDEX IF NOT EXISTS idx_tracker_timestamp ON tracker_data(timestamp)');
+        \$pdo->exec('CREATE INDEX IF NOT EXISTS idx_tracker_device_timestamp ON tracker_data(device_id, timestamp)');
+        \$pdo->exec('CREATE INDEX IF NOT EXISTS idx_tracker_device_id ON tracker_data(device_id)');
+        \$pdo->exec('CREATE INDEX IF NOT EXISTS idx_devices_eui ON devices(device_eui)');
+        \$pdo->exec('CREATE INDEX IF NOT EXISTS idx_devices_active ON devices(is_active)');
+        \$pdo->exec('CREATE INDEX IF NOT EXISTS idx_device_perimeters_device ON device_perimeters(device_id)');
+        \$pdo->exec('CREATE INDEX IF NOT EXISTS idx_perimeters_device ON perimeters(device_id)');
         \$pdo->exec('CREATE INDEX IF NOT EXISTS idx_perimeter_alerts_sent ON perimeter_alerts(sent_at)');
 
         echo 'Database initialized successfully.';
     "
     echo ""
+fi
+
+# Run multi-device migration if needed (for existing databases)
+if [ -f "${SQLITE_PATH}" ] && [ -f "/var/www/html/migrate_multi_device.php" ]; then
+    echo "Checking for multi-device migration..."
+    cd /var/www/html
+    # Pass SQLITE_PATH explicitly — su resets environment, losing Docker env vars
+    if ! su -s /bin/bash www-data -c "SQLITE_PATH=${SQLITE_PATH} /usr/local/bin/php migrate_multi_device.php"; then
+        echo "WARNING: Multi-device migration failed! Check logs above."
+        echo "The application may not work correctly until migration completes."
+        echo "You can re-run manually: docker exec -u www-data ${HOSTNAME} php migrate_multi_device.php --force"
+    fi
 fi
 
 # Touch log files

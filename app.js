@@ -211,7 +211,7 @@ function addLogoutMenuItem() {
     </svg>
     Odhlásiť sa
   `;
-  logoutBtn.addEventListener('click', handleLogout);
+  // Click handled by event delegation in initHamburgerMenu()
   hamburgerMenu.appendChild(logoutBtn);
 }
 
@@ -405,6 +405,8 @@ async function initializeApp() {
   initHamburgerMenu();
   initSubdomainSwitcher();
   addUIHandlers();
+  await loadDevices();
+  initDeviceUI();
   await loadAvailableDates();
 
   // Handle URL date parameter (from email alerts)
@@ -460,10 +462,6 @@ async function initializeApp() {
     }
   }
 
-  // Update battery a last online každých 30 sekúnd pre real-time info
-  setInterval(() => {
-    updateBatteryStatus();
-  }, 30 * 1000);
 }
 
 // --------- Helpers ---------
@@ -509,6 +507,51 @@ async function apiDelete(action, payload) {
   });
   if (!r.ok) throw new Error(`DELETE ${action} -> ${r.status}`);
   return r.json();
+}
+
+// --------- Multi-Device State ---------
+let devices = [];                    // All devices from API
+let activeDeviceId = null;           // Selected device ID (null = all devices)
+let deviceViewMode = 'all';          // 'all' or 'single'
+let deviceLayers = {};               // Map of device_id -> L.layerGroup
+let deviceVisibility = {};           // Map of device_id -> bool (toggle visibility)
+let comparisonMode = false;          // Multi-device comparison
+let comparisonDeviceIds = [];        // Devices selected for comparison
+let comparisonDateFrom = '';
+let comparisonDateTo = '';
+let activeTableDeviceId = null;      // Which device's data is shown in the table
+
+async function loadDevices() {
+  try {
+    const res = await apiGet(`${API}?action=get_devices`);
+    if (res.ok && Array.isArray(res.data)) {
+      devices = res.data;
+      // Initialize visibility for all devices
+      devices.forEach(d => {
+        if (deviceVisibility[d.id] === undefined) {
+          deviceVisibility[d.id] = true;
+        }
+      });
+    }
+  } catch (e) {
+    console.error('Failed to load devices:', e);
+    devices = [];
+  }
+  return devices;
+}
+
+function getDeviceById(id) {
+  return devices.find(d => d.id === id) || null;
+}
+
+function getDeviceColor(deviceId) {
+  const dev = getDeviceById(deviceId);
+  return dev ? dev.color : '#3388ff';
+}
+
+function getDeviceName(deviceId) {
+  const dev = getDeviceById(deviceId);
+  return dev ? dev.name : 'Neznáme';
 }
 
 // --------- Map init ---------
@@ -585,131 +628,38 @@ function initSelectorMap() {
 }
 
 // --------- Battery Status ---------
-async function updateBatteryStatus() {
+function formatTimeAgo(isoTimestamp) {
   try {
-    const data = await apiGet(`${API}?action=get_device_status`);
-    
-    console.log('Device status response:', data);
-    
-    // Update battery status
-    if (data.ok && data.battery_state !== null && data.battery_state !== undefined) {
-      const state = data.battery_state; // 0 = low, 1 = good
-      const textSpan = $('#batteryText');
-      
-      if (textSpan) {
-        textSpan.textContent = state === 1 ? 'Dobrá' : 'Slabá';
-        console.log('Battery updated to:', state === 1 ? 'Dobrá' : 'Slabá');
-      }
-      
-      // Nastav farbu podľa stavu
-      const indicator = $('#batteryIndicator');
-      if (indicator) {
-        if (state === 1) {
-          indicator.setAttribute('data-level', 'good');
-        } else {
-          indicator.setAttribute('data-level', 'low');
-        }
-      }
-    } else {
-      console.log('No battery data available:', data);
-      const textSpan = $('#batteryText');
-      if (textSpan) {
-        textSpan.textContent = '—';
-      }
+    const uploadTime = new Date(isoTimestamp);
+    const now = new Date();
+    const diffMs = now - uploadTime;
+    const diffMinutes = Math.floor(diffMs / 60000);
+    if (diffMinutes < 1) return 'teraz';
+    if (diffMinutes < 60) return `pred ${diffMinutes}m`;
+    const diffHours = Math.floor(diffMinutes / 60);
+    if (diffHours < 24) {
+      const rem = diffMinutes % 60;
+      return rem > 0 && diffHours < 6 ? `pred ${diffHours}h ${rem}m` : `pred ${diffHours}h`;
     }
-    
-    // Update last online time (from real-time API data)
-    if (data.ok && data.latest_message_time) {
-      const lastOnlineText = $('#lastOnlineText');
-      const lastOnlineInfo = $('#lastOnlineInfo');
-      
-      if (lastOnlineText) {
-        try {
-          const uploadTime = new Date(data.latest_message_time);
-          const now = new Date();
-          const diffMs = now - uploadTime;
-          const diffSeconds = Math.floor(diffMs / 1000);
-          const diffMinutes = Math.floor(diffMs / 60000);
-          
-          // Presnejšie časové zobrazenie
-          if (diffSeconds < 60) {
-            lastOnlineText.textContent = 'teraz';
-          } else if (diffMinutes < 60) {
-            lastOnlineText.textContent = `pred ${diffMinutes}m`;
-          } else {
-            const diffHours = Math.floor(diffMinutes / 60);
-            if (diffHours < 24) {
-              const remainingMinutes = diffMinutes % 60;
-              if (remainingMinutes > 0 && diffHours < 6) {
-                lastOnlineText.textContent = `pred ${diffHours}h ${remainingMinutes}m`;
-              } else {
-                lastOnlineText.textContent = `pred ${diffHours}h`;
-              }
-            } else {
-              const diffDays = Math.floor(diffHours / 24);
-              const remainingHours = diffHours % 24;
-              if (remainingHours > 0 && diffDays < 7) {
-                lastOnlineText.textContent = `pred ${diffDays}d ${remainingHours}h`;
-              } else {
-                lastOnlineText.textContent = `pred ${diffDays}d`;
-              }
-            }
-          }
-          
-          // Set online/offline status color
-          if (lastOnlineInfo && data.online_status !== undefined) {
-            if (data.online_status === 1) {
-              lastOnlineInfo.setAttribute('data-status', 'online');
-              lastOnlineInfo.title = 'Online - Posledný upload dát';
-            } else {
-              lastOnlineInfo.setAttribute('data-status', 'offline');
-              lastOnlineInfo.title = 'Offline - Posledný upload dát';
-            }
-          }
-          
-          // Ak je z cache, pridaj indikátor
-          if (data.from_cache) {
-            if (lastOnlineInfo) {
-              lastOnlineInfo.setAttribute('data-source', 'cache');
-              lastOnlineInfo.title += ' (z cache)';
-            }
-          }
-        } catch (e) {
-          console.error('Error parsing upload time:', e);
-          lastOnlineText.textContent = '—';
-        }
-      }
-    } else {
-      const lastOnlineText = $('#lastOnlineText');
-      const lastOnlineInfo = $('#lastOnlineInfo');
-      if (lastOnlineText) {
-        lastOnlineText.textContent = '—';
-      }
-      if (lastOnlineInfo) {
-        lastOnlineInfo.removeAttribute('data-status');
-      }
-    }
-  } catch (err) {
-    console.error('Device status error:', err);
-    const textSpan = $('#batteryText');
-    const lastOnlineText = $('#lastOnlineText');
-    if (textSpan) {
-      textSpan.textContent = '—';
-    }
-    if (lastOnlineText) {
-      lastOnlineText.textContent = '—';
-    }
+    const diffDays = Math.floor(diffHours / 24);
+    const remH = diffHours % 24;
+    return remH > 0 && diffDays < 7 ? `pred ${diffDays}d ${remH}h` : `pred ${diffDays}d`;
+  } catch (e) {
+    return '—';
   }
+}
+
+async function updateBatteryStatus() {
+  // Device status is now shown in device management overlay via loadDevices()
+  // Refresh devices data so status is up to date
+  await loadDevices();
 }
 
 // --------- Hamburger Menu ---------
 function initHamburgerMenu() {
   const btn = $('#hamburgerBtn');
   const menu = $('#hamburgerMenu');
-
-  console.log('Initializing hamburger menu...');
-  console.log('Menu button:', btn);
-  console.log('Menu:', menu);
+  if (!btn || !menu) return;
 
   btn.addEventListener('click', () => {
     const isOpen = !menu.classList.contains('hidden');
@@ -735,82 +685,54 @@ function initHamburgerMenu() {
     }
   });
 
-  // Menu items
-  const menuRefetch = $('#menuRefetch');
-  const menuManageIBeacons = $('#menuManageIBeacons');
-  const menuViewIBeacons = $('#menuViewIBeacons');
-  const menuSettings = $('#menuSettings');
+  // Use event delegation for all menu items - more robust on mobile
+  menu.addEventListener('click', (e) => {
+    const item = e.target.closest('.menu-item');
+    if (!item) return;
 
-  console.log('Menu items found:');
-  console.log('- Refetch:', menuRefetch);
-  console.log('- Manage iBeacons:', menuManageIBeacons);
-  console.log('- View iBeacons:', menuViewIBeacons);
-  console.log('- Settings:', menuSettings);
+    const id = item.id;
 
-  if (menuRefetch) {
-    menuRefetch.addEventListener('click', () => {
-      console.log('Refetch clicked');
-      menu.classList.add('hidden');
-      btn.classList.remove('active');
-      refetchDay();
-    });
-  }
-
-  // iBeacon submenu toggle
-  const menuIBeacons = $('#menuIBeacons');
-  if (menuIBeacons) {
-    menuIBeacons.addEventListener('click', (e) => {
+    // iBeacon submenu parent toggles submenu, does not close menu
+    if (id === 'menuIBeacons') {
       e.stopPropagation();
-      const submenuItems = menuIBeacons.parentElement.querySelector('.submenu-items');
+      const submenuItems = item.parentElement.querySelector('.submenu-items');
       if (submenuItems) {
         submenuItems.classList.toggle('hidden');
-        menuIBeacons.classList.toggle('expanded');
+        item.classList.toggle('expanded');
       }
-    });
-  }
+      return;
+    }
 
-  if (menuManageIBeacons) {
-    menuManageIBeacons.addEventListener('click', () => {
-      console.log('Manage iBeacons clicked');
-      menu.classList.add('hidden');
-      btn.classList.remove('active');
-      openIBeaconOverlay();
-    });
-  }
+    // Close menu for all other items
+    menu.classList.add('hidden');
+    btn.classList.remove('active');
 
-  if (menuViewIBeacons) {
-    menuViewIBeacons.addEventListener('click', () => {
-      console.log('View iBeacons clicked');
-      menu.classList.add('hidden');
-      btn.classList.remove('active');
-      openIBeaconListOverlay();
-    });
-  }
-
-  if (menuSettings) {
-    console.log('Attaching click handler to Settings menu item');
-    menuSettings.addEventListener('click', () => {
-      console.log('Settings menu clicked');
-      menu.classList.add('hidden');
-      btn.classList.remove('active');
-      openSettingsOverlay().catch(err => {
-        console.error('Error opening settings:', err);
-      });
-    });
-  } else {
-    console.error('Settings menu item not found! Check if index.html has been updated.');
-  }
-
-  // Perimeter zones menu item
-  const menuPerimeters = $('#menuPerimeters');
-  if (menuPerimeters) {
-    menuPerimeters.addEventListener('click', () => {
-      console.log('Perimeters menu clicked');
-      menu.classList.add('hidden');
-      btn.classList.remove('active');
-      openPerimeterOverlay();
-    });
-  }
+    switch (id) {
+      case 'menuRefetch':
+        refetchDay();
+        break;
+      case 'menuManageIBeacons':
+        openIBeaconOverlay();
+        break;
+      case 'menuViewIBeacons':
+        openIBeaconListOverlay();
+        break;
+      case 'menuSettings':
+        openSettingsOverlay().catch(err => {
+          console.error('Error opening settings:', err);
+        });
+        break;
+      case 'menuPerimeters':
+        openPerimeterOverlay();
+        break;
+      case 'menuDevices':
+        openDeviceManagement();
+        break;
+      case 'menuLogout':
+        handleLogout();
+        break;
+    }
+  });
 }
 
 // --------- Site Switcher Widget (SSO) ---------
@@ -1486,14 +1408,23 @@ async function loadHistory(dateStr) {
     lastPositionMarker.remove();
     lastPositionMarker = null;
   }
+  // Clean up cluster markers from previous load
+  if (window._clusterMarkers) {
+    window._clusterMarkers.forEach(m => m.remove());
+    window._clusterMarkers = [];
+  }
+  window._lastPositionsForClustering = null;
 
-  const data = await apiGet(`${API}?action=get_history&date=${encodeURIComponent(dateStr)}`);
-  
-  // Načítaj aj posledný bod z predošlého dňa
+  // Always load all devices' data — map shows visible, table filters per device
+  let histUrl = `${API}?action=get_history&date=${encodeURIComponent(dateStr)}`;
+  const data = await apiGet(histUrl);
+
+  // Load previous day's last point
   const prevDate = new Date(dateStr);
   prevDate.setDate(prevDate.getDate() - 1);
   const prevDateStr = fmt(prevDate);
-  const prevData = await apiGet(`${API}?action=get_history&date=${encodeURIComponent(prevDateStr)}`);
+  let prevUrl = `${API}?action=get_history&date=${encodeURIComponent(prevDateStr)}`;
+  const prevData = await apiGet(prevUrl);
   const lastPrevPoint = (prevData && prevData.length > 0) ? prevData[prevData.length - 1] : null;
   
   // OPRAVA: Rozlišuj medzi dneškom a minulým dňom
@@ -1502,74 +1433,84 @@ async function loadHistory(dateStr) {
     const isToday = (dateStr === today);
     
     if (isToday) {
-      // Pre dnešok zobraz poslednú známu polohu
-      const lastPosition = await apiGet(`${API}?action=get_last_position`);
-      
-      if (lastPosition && lastPosition.latitude && lastPosition.longitude) {
-        // Zobraz poslednú známu polohu na mape
-        const markerHtml = `
-          <style>
-            @keyframes blink-marker {
-              0%, 100% { opacity: 1; transform: scale(1); }
-              50% { opacity: 0.3; transform: scale(1.3); }
+      // Pre dnešok zobraz poslednú známu polohu pre každé zariadenie
+      if (devices.length > 1) {
+        // Multi-device: fetch last position per device
+        const allBounds = [];
+        const lastPositions = [];
+
+        // Clear device layers
+        Object.values(deviceLayers).forEach(l => { l.clearLayers(); map.removeLayer(l); });
+        deviceLayers = {};
+
+        for (const dev of devices) {
+          try {
+            const lp = await apiGet(`${API}?action=get_last_position&device_id=${dev.id}`);
+            if (lp && lp.latitude && lp.longitude) {
+              const color = dev.color || '#3388ff';
+              const layer = L.layerGroup();
+              deviceLayers[dev.id] = layer;
+              if (deviceVisibility[dev.id] !== false) layer.addTo(map);
+
+              lastPositions.push({ p: lp, color, name: dev.name, did: dev.id, layer });
+              allBounds.push([lp.latitude, lp.longitude]);
             }
-          </style>
-          <div style="
-            width: 16px;
-            height: 16px;
-            background: #ff9800;
-            border-radius: 50%;
-            border: 3px solid white;
-            box-shadow: 0 0 4px rgba(0,0,0,0.3);
-            animation: blink-marker 1.5s ease-in-out infinite;
-          "></div>
-        `;
-        
-        const icon = L.divIcon({
-          className: '',
-          html: markerHtml,
-          iconSize: [22, 22],
-          iconAnchor: [11, 11]
-        });
-        
-        lastPositionMarker = L.marker([lastPosition.latitude, lastPosition.longitude], { icon })
-          .bindTooltip(`Posledná známa poloha<br>${new Date(lastPosition.timestamp).toLocaleString('sk-SK')}`, 
-            { permanent:false, opacity:1 })
-          .addTo(map);
-        
-        map.setView([lastPosition.latitude, lastPosition.longitude], 15);
-        
-        // Zobraz info v tabuľke
-        const rows = [{
-          i: 1,
-          id: lastPosition.id, // Add position ID for editing
-          from: lastPosition.timestamp,
-          to: null,
-          durMin: 0,
-          source: lastPosition.source,
-          lat: lastPosition.latitude,
-          lng: lastPosition.longitude,
-          isPrevDay: false,
-          isLastKnown: true,  // <-- toto označuje že je to "last known"
-          sortValues: [
-            1,
-            new Date(lastPosition.timestamp).getTime(),
-            0,
-            0,
-            lastPosition.source,
-            lastPosition.latitude,
-            lastPosition.longitude
-          ]
-        }];
-        renderTable(rows);
-        
-        // Pridaj info text
+          } catch (e) { /* skip */ }
+        }
+
+        if (lastPositions.length > 0) {
+          renderLastPositionMarkers(lastPositions);
+          if (allBounds.length > 0) map.fitBounds(allBounds, { padding: [50, 50] });
+
+          // Table shows info for active device
+          const activeLp = lastPositions.find(lp => lp.did === activeTableDeviceId) || lastPositions[0];
+          const rows = [{
+            i: 1, id: activeLp.p.id, from: activeLp.p.timestamp, to: null, durMin: 0,
+            source: activeLp.p.source, lat: activeLp.p.latitude, lng: activeLp.p.longitude,
+            isPrevDay: false, isLastKnown: true,
+            sortValues: [1, new Date(activeLp.p.timestamp).getTime(), 0, 0, activeLp.p.source, activeLp.p.latitude, activeLp.p.longitude]
+          }];
+          renderTable(rows);
+        } else {
+          $('#positionsTable').innerHTML = 'Žiadne dáta pre dnes a žiadna posledná známa poloha.';
+        }
+
         const info = document.createElement('div');
         info.style.cssText = 'padding: 12px; background: #fef3c7; border: 1px solid #fbbf24; border-radius: 8px; margin-bottom: 12px; color: #92400e;';
         info.innerHTML = '<strong>Žiadny pohyb v tento deň.</strong> Zobrazená je posledná známa poloha.';
-        $('#positionsTable').prepend(info);
+        if (lastPositions.length > 0) $('#positionsTable').prepend(info);
       } else {
-        $('#positionsTable').innerHTML = 'Žiadne dáta pre dnes a žiadna posledná známa poloha.';
+        // Single device mode
+        let lpUrl = `${API}?action=get_last_position`;
+        const lastPosition = await apiGet(lpUrl);
+
+        if (lastPosition && lastPosition.latitude && lastPosition.longitude) {
+          const lpColor = (activeDeviceId) ? getDeviceColor(activeDeviceId) : '#ff9800';
+          const markerHtml = `
+            <style>@keyframes blink-marker{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.3;transform:scale(1.3)}}</style>
+            <div style="width:16px;height:16px;background:${lpColor};border-radius:50%;border:3px solid white;box-shadow:0 0 4px rgba(0,0,0,.3);animation:blink-marker 1.5s ease-in-out infinite"></div>`;
+          const icon = L.divIcon({ className: '', html: markerHtml, iconSize: [22, 22], iconAnchor: [11, 11] });
+          lastPositionMarker = L.marker([lastPosition.latitude, lastPosition.longitude], { icon })
+            .bindTooltip(`Posledná známa poloha<br>${new Date(lastPosition.timestamp).toLocaleString('sk-SK')}`,
+              { permanent: false, opacity: 1 })
+            .addTo(map);
+          map.setView([lastPosition.latitude, lastPosition.longitude], 15);
+
+          const rows = [{
+            i: 1, id: lastPosition.id, from: lastPosition.timestamp, to: null, durMin: 0,
+            source: lastPosition.source, lat: lastPosition.latitude, lng: lastPosition.longitude,
+            isPrevDay: false, isLastKnown: true,
+            sortValues: [1, new Date(lastPosition.timestamp).getTime(), 0, 0, lastPosition.source, lastPosition.latitude, lastPosition.longitude]
+          }];
+          renderTable(rows);
+
+          const info = document.createElement('div');
+          info.style.cssText = 'padding: 12px; background: #fef3c7; border: 1px solid #fbbf24; border-radius: 8px; margin-bottom: 12px; color: #92400e;';
+          info.innerHTML = '<strong>Žiadny pohyb v tento deň.</strong> Zobrazená je posledná známa poloha.';
+          $('#positionsTable').prepend(info);
+        } else {
+          $('#positionsTable').innerHTML = 'Žiadne dáta pre dnes a žiadna posledná známa poloha.';
+        }
       }
     } else {
       // OPRAVA: Pre minulý deň bez pohybu nezobrazuj tabuľku ani posledný bod
@@ -1578,80 +1519,248 @@ async function loadHistory(dateStr) {
     return;
   }
 
-  // polyline
-  const latlngs = data.map(p => [p.latitude, p.longitude]);
-  const line = L.polyline(latlngs, { color:'#3388ff', weight:3 }).addTo(trackLayer);
-  map.fitBounds(line.getBounds(), { padding:[20,20] });
+  // Polyline - multi-device aware
+  if (devices.length > 1) {
+    // Group data by device_id
+    const byDevice = {};
+    data.forEach(p => {
+      const did = p.device_id || 'unknown';
+      if (!byDevice[did]) byDevice[did] = [];
+      byDevice[did].push(p);
+    });
 
-  // body s tooltipom
-  data.forEach((p, idx) => {
-    // Posledný bod bude blikajúci
-    if (idx === data.length - 1) {
-      // Vytvor HTML element pre blikajúci marker s inline keyframes
-      const markerHtml = `
-        <style>
-          @keyframes blink-marker {
-            0%, 100% { opacity: 1; transform: scale(1); }
-            50% { opacity: 0.3; transform: scale(1.3); }
-          }
-        </style>
-        <div style="
-          width: 16px;
-          height: 16px;
-          background: #3388ff;
-          border-radius: 50%;
-          border: 3px solid white;
-          box-shadow: 0 0 4px rgba(0,0,0,0.3);
-          animation: blink-marker 1.5s ease-in-out infinite;
-        "></div>
-      `;
-      
-      const icon = L.divIcon({
-        className: '',
-        html: markerHtml,
-        iconSize: [22, 22],
-        iconAnchor: [11, 11]
-      });
-      
-      lastPositionMarker = L.marker([p.latitude, p.longitude], { icon })
-        .bindTooltip(new Date(p.timestamp).toLocaleString('sk-SK'), { permanent:false, opacity:1 })
-        .addTo(map);
+    // Clear device layers
+    Object.values(deviceLayers).forEach(l => { l.clearLayers(); map.removeLayer(l); });
+    deviceLayers = {};
 
-      // Add click handler to highlight corresponding table row
-      lastPositionMarker.on('click', () => {
-        highlightTableRowByCoords(p.latitude, p.longitude);
-      });
-    } else {
-      const marker = L.circleMarker([p.latitude, p.longitude], {
-        radius:4,
-        fillColor: '#3388ff',
-        color: '#fff',
-        weight: 1,
-        fillOpacity: 0.8
-      })
-       .bindTooltip(new Date(p.timestamp).toLocaleString('sk-SK'), { permanent:false, opacity:1 })
-       .addTo(trackLayer);
+    let allBounds = [];
+    Object.keys(byDevice).forEach(did => {
+      const pts = byDevice[did];
+      const color = pts[0].device_color || getDeviceColor(parseInt(did)) || '#3388ff';
+      const name = pts[0].device_name || getDeviceName(parseInt(did));
+      const lls = pts.map(p => [p.latitude, p.longitude]);
+      allBounds.push(...lls);
 
-      // Add click handler to highlight corresponding table row
-      marker.on('click', () => {
-        highlightTableRowByCoords(p.latitude, p.longitude);
-        highlightMarker(marker);
-      });
+      const layer = L.layerGroup();
+      const polyline = L.polyline(lls, { color, weight: 3 });
+      polyline.bindTooltip(name, { sticky: true });
+      polyline.addTo(layer);
 
-      circleMarkers.push({ marker, lat: p.latitude, lng: p.longitude });
+      // Last point for this device
+      const lastPt = pts[pts.length - 1];
+      L.circleMarker([lastPt.latitude, lastPt.longitude], {
+        radius: 8, color, fillColor: color, fillOpacity: 0.9, weight: 2
+      }).bindTooltip(`${name}: ${toTime(lastPt.timestamp)}`).addTo(layer);
+
+      deviceLayers[did] = layer;
+      if (deviceVisibility[parseInt(did)] !== false) {
+        layer.addTo(map);
+      }
+    });
+
+    if (allBounds.length > 0) {
+      map.fitBounds(allBounds, { padding: [20, 20] });
     }
+  } else {
+    // Single device or legacy mode
+    const routeColor = (deviceViewMode === 'single' && activeDeviceId) ? getDeviceColor(activeDeviceId) : '#3388ff';
+    const latlngs = data.map(p => [p.latitude, p.longitude]);
+    const line = L.polyline(latlngs, { color: routeColor, weight:3 }).addTo(trackLayer);
+    map.fitBounds(line.getBounds(), { padding:[20,20] });
+  }
+
+  // Position dots and last-position markers
+  if (devices.length > 1) {
+    // Multi-device: group by device, add dots to each device layer
+    const byDeviceDots = {};
+    data.forEach(p => {
+      const did = p.device_id || 'unknown';
+      if (!byDeviceDots[did]) byDeviceDots[did] = [];
+      byDeviceDots[did].push(p);
+    });
+
+    // Per-device last position markers for clustering
+    const lastPositions = [];
+
+    Object.keys(byDeviceDots).forEach(did => {
+      const pts = byDeviceDots[did];
+      const color = pts[0].device_color || getDeviceColor(parseInt(did)) || '#3388ff';
+      const name = pts[0].device_name || getDeviceName(parseInt(did));
+      const layer = deviceLayers[did];
+      if (!layer) return;
+
+      pts.forEach((p, idx) => {
+        if (idx === pts.length - 1) {
+          // Last position for this device - collect for cluster check
+          lastPositions.push({ p, color, name, did, layer });
+        } else {
+          // Regular dot in device color
+          const marker = L.circleMarker([p.latitude, p.longitude], {
+            radius: 4, fillColor: color, color: '#fff', weight: 1, fillOpacity: 0.8
+          })
+          .bindTooltip(`${name}: ${new Date(p.timestamp).toLocaleString('sk-SK')}`, { permanent: false, opacity: 1 })
+          .addTo(layer);
+
+          marker.on('click', () => {
+            highlightTableRowByCoords(p.latitude, p.longitude);
+            highlightMarker(marker);
+          });
+
+          circleMarkers.push({ marker, lat: p.latitude, lng: p.longitude, deviceColor: color });
+        }
+      });
+    });
+
+    // Render last position markers with clustering for overlapping positions
+    renderLastPositionMarkers(lastPositions);
+  } else {
+    // Single device mode
+    const singleColor = (activeDeviceId) ? getDeviceColor(activeDeviceId) : '#3388ff';
+    data.forEach((p, idx) => {
+      if (idx === data.length - 1) {
+        const markerHtml = `
+          <style>@keyframes blink-marker{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.3;transform:scale(1.3)}}</style>
+          <div style="width:16px;height:16px;background:${singleColor};border-radius:50%;border:3px solid white;box-shadow:0 0 4px rgba(0,0,0,.3);animation:blink-marker 1.5s ease-in-out infinite"></div>`;
+        const icon = L.divIcon({ className: '', html: markerHtml, iconSize: [22, 22], iconAnchor: [11, 11] });
+        lastPositionMarker = L.marker([p.latitude, p.longitude], { icon })
+          .bindTooltip(new Date(p.timestamp).toLocaleString('sk-SK'), { permanent: false, opacity: 1 })
+          .addTo(map);
+        lastPositionMarker.on('click', () => { highlightTableRowByCoords(p.latitude, p.longitude); });
+      } else {
+        const marker = L.circleMarker([p.latitude, p.longitude], {
+          radius: 4, fillColor: singleColor, color: '#fff', weight: 1, fillOpacity: 0.8
+        })
+        .bindTooltip(new Date(p.timestamp).toLocaleString('sk-SK'), { permanent: false, opacity: 1 })
+        .addTo(trackLayer);
+        marker.on('click', () => { highlightTableRowByCoords(p.latitude, p.longitude); highlightMarker(marker); });
+        circleMarkers.push({ marker, lat: p.latitude, lng: p.longitude, deviceColor: singleColor });
+      }
+    });
+  }
+
+  // Cache data for table filtering by device
+  window._lastHistoryData = data;
+  window._lastHistoryDate = dateStr;
+  window._lastPrevData = prevData;
+
+  // Build table for active table device only
+  buildTableFromData(data, dateStr);
+}
+
+// Render last position markers for each device, clustering nearby positions
+function renderLastPositionMarkers(lastPositions) {
+  if (!lastPositions.length) return;
+
+  // Store for rebuilding clusters on visibility toggle
+  window._lastPositionsForClustering = lastPositions;
+
+  // Add per-device blinking markers to their device layers
+  lastPositions.forEach(({ p, color, name, layer }) => {
+    addBlinkingLastMarker(p, color, name, layer);
   });
+
+  // Build cluster overlays for visible devices
+  const visibleLastPos = lastPositions.filter(
+    lp => deviceVisibility[parseInt(lp.did)] !== false
+  );
+  renderClusterOverlays(visibleLastPos);
+}
+
+// Render cluster overlay markers for nearby last positions (on map layer, not device layer)
+function renderClusterOverlays(visibleLastPositions) {
+  const CLUSTER_DISTANCE = 100;
+  const clusters = [];
+  const used = new Set();
+
+  for (let i = 0; i < visibleLastPositions.length; i++) {
+    if (used.has(i)) continue;
+    const cluster = [visibleLastPositions[i]];
+    used.add(i);
+    for (let j = i + 1; j < visibleLastPositions.length; j++) {
+      if (used.has(j)) continue;
+      const d = haversineJs(visibleLastPositions[i].p.latitude, visibleLastPositions[i].p.longitude,
+                            visibleLastPositions[j].p.latitude, visibleLastPositions[j].p.longitude);
+      if (d < CLUSTER_DISTANCE) {
+        cluster.push(visibleLastPositions[j]);
+        used.add(j);
+      }
+    }
+    clusters.push(cluster);
+  }
+
+  // Only create cluster overlay markers for groups of 2+
+  clusters.forEach(cluster => {
+    if (cluster.length < 2) return;
+
+    const avgLat = cluster.reduce((s, c) => s + c.p.latitude, 0) / cluster.length;
+    const avgLng = cluster.reduce((s, c) => s + c.p.longitude, 0) / cluster.length;
+
+    const clusterHtml = `
+      <style>@keyframes blink-marker{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.3;transform:scale(1.3)}}</style>
+      <div style="width:28px;height:28px;background:linear-gradient(135deg,${cluster[0].color},${cluster[1] ? cluster[1].color : cluster[0].color});border-radius:50%;border:3px solid white;box-shadow:0 0 6px rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;color:white;font-weight:bold;font-size:13px;animation:blink-marker 1.5s ease-in-out infinite">${cluster.length}</div>`;
+    const clusterIcon = L.divIcon({ className: '', html: clusterHtml, iconSize: [34, 34], iconAnchor: [17, 17] });
+
+    const popupContent = cluster.map(c => {
+      const ts = new Date(c.p.timestamp).toLocaleString('sk-SK');
+      return `<div style="display:flex;align-items:center;gap:6px;padding:3px 0"><span style="width:10px;height:10px;border-radius:50%;background:${c.color};display:inline-block;flex-shrink:0"></span><b>${c.name}</b>&nbsp;<small>${ts}</small></div>`;
+    }).join('');
+
+    const clusterMarker = L.marker([avgLat, avgLng], { icon: clusterIcon })
+      .bindPopup(`<div style="min-width:180px">${popupContent}</div>`, { maxWidth: 300 })
+      .addTo(map);
+
+    if (!window._clusterMarkers) window._clusterMarkers = [];
+    window._clusterMarkers.push(clusterMarker);
+  });
+}
+
+function addBlinkingLastMarker(p, color, name, layer) {
+  const markerHtml = `
+    <style>@keyframes blink-marker{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.3;transform:scale(1.3)}}</style>
+    <div style="width:16px;height:16px;background:${color};border-radius:50%;border:3px solid white;box-shadow:0 0 4px rgba(0,0,0,.3);animation:blink-marker 1.5s ease-in-out infinite"></div>`;
+  const icon = L.divIcon({ className: '', html: markerHtml, iconSize: [22, 22], iconAnchor: [11, 11] });
+  const m = L.marker([p.latitude, p.longitude], { icon })
+    .bindTooltip(`${name}: ${new Date(p.timestamp).toLocaleString('sk-SK')}`, { permanent: false, opacity: 1 })
+    .addTo(layer);
+  m.on('click', () => { highlightTableRowByCoords(p.latitude, p.longitude); });
+}
+
+// Simple haversine for client-side distance check (meters)
+function haversineJs(lat1, lon1, lat2, lon2) {
+  const R = 6371000;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+            Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+            Math.sin(dLon/2) * Math.sin(dLon/2);
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+
+function buildTableFromData(data, dateStr) {
+  // Filter data for the active table device
+  let tableData = data;
+  let tablePrevData = window._lastPrevData || [];
+  if (devices.length > 1 && activeTableDeviceId) {
+    tableData = data.filter(p => p.device_id === activeTableDeviceId);
+    tablePrevData = tablePrevData.filter(p => p.device_id === activeTableDeviceId);
+  }
+  const lastPrevPoint = (tablePrevData && tablePrevData.length > 0) ? tablePrevData[tablePrevData.length - 1] : null;
+
+  if (!tableData || tableData.length === 0) {
+    $('#positionsTable').innerHTML = '<div style="padding: 12px; background: var(--muted-bg); border: 1px solid var(--border); border-radius: 8px; margin: 12px; color: var(--muted-text);">Žiadne dáta pre toto zariadenie v tento deň.</div>';
+    return;
+  }
 
   // tabuľka "od–do" s prvým riadkom z predošlého dňa
   const rows = [];
-  
+
   // Ak existuje posledný bod z predošlého dňa, pridaj ho ako prvý riadok
-  if (lastPrevPoint && data.length > 0) {
-    const firstCur = data[0];
+  if (lastPrevPoint && tableData.length > 0) {
+    const firstCur = tableData[0];
     const durMin = Math.max(0, Math.round((new Date(firstCur.timestamp) - new Date(lastPrevPoint.timestamp)) / 60000));
     rows.push({
       i: 0,
-      id: lastPrevPoint.id, // Add position ID for editing
+      id: lastPrevPoint.id,
       from: lastPrevPoint.timestamp,
       to: firstCur.timestamp,
       durMin: durMin,
@@ -1670,15 +1779,15 @@ async function loadHistory(dateStr) {
       ]
     });
   }
-  
+
   // Ostatné riadky z aktuálneho dňa
-  for (let i=0; i<data.length; i++) {
-    const cur = data[i];
-    const nxt = data[i+1];
+  for (let i=0; i<tableData.length; i++) {
+    const cur = tableData[i];
+    const nxt = tableData[i+1];
     const durMin = nxt ? Math.max(0, Math.round((new Date(nxt.timestamp) - new Date(cur.timestamp)) / 60000)) : 0;
     rows.push({
       i: i+1,
-      id: cur.id, // Add position ID for editing
+      id: cur.id,
       from: cur.timestamp,
       to: nxt ? nxt.timestamp : null,
       durMin: durMin,
@@ -1742,9 +1851,6 @@ function renderTable(rows) {
       });
       toDisplay = 'teraz';
     }
-
-    // Debug: log row data to verify id exists
-    console.log('Row data:', { i: r.i, id: r.id, source: r.source });
 
     const editBtn = r.id ? `
       <button class="edit-position-btn" data-id="${r.id}" title="Upraviť záznam">
@@ -1815,17 +1921,17 @@ function renderTable(rows) {
       circleMarkers.forEach(cm => {
         const markerLatLng = cm.marker.getLatLng();
         if (Math.abs(markerLatLng.lat - lat) < 0.000001 && Math.abs(markerLatLng.lng - lng) < 0.000001) {
-          // Reset all markers to default style
+          // Reset all markers to their device color
           circleMarkers.forEach(m => {
             m.marker.setStyle({
               radius: 4,
-              fillColor: '#3388ff',
+              fillColor: m.deviceColor || '#3388ff',
               color: '#fff',
               weight: 1,
               fillOpacity: 0.8
             });
           });
-          
+
           // Highlight selected marker
           cm.marker.setStyle({
             radius: 8,
@@ -1880,11 +1986,11 @@ function highlightTableRowByCoords(lat, lng) {
 }
 
 function highlightMarker(selectedMarker) {
-  // Reset all markers to default style
+  // Reset all markers to their device color
   circleMarkers.forEach(cm => {
     cm.marker.setStyle({
       radius: 4,
-      fillColor: '#3388ff',
+      fillColor: cm.deviceColor || '#3388ff',
       color: '#fff',
       weight: 1,
       fillOpacity: 0.8
@@ -2546,11 +2652,11 @@ function setDateLabel() {
 
 async function refresh() {
   setDateLabel();
+  renderDeviceTabs();
   await loadHistory(fmt(currentDate));
   await loadIBeacons();
   await loadPerimetersOnMainMap();
   await updateBatteryStatus();
-  // updateLastOnline() removed - updateBatteryStatus() now handles this from device status API
 }
 
 function addUIHandlers() {
@@ -3180,6 +3286,22 @@ function showPerimeterEditView(perimeter = null) {
   $('#perimeterListView').classList.add('hidden');
   $('#perimeterEditView').classList.remove('hidden');
 
+  // Populate device selector
+  const deviceSelect = $('#perimeterDeviceId');
+  const deviceRow = $('#perimeterDeviceRow');
+  if (deviceSelect && devices.length > 1) {
+    deviceSelect.innerHTML = '<option value="">Všetky zariadenia</option>';
+    devices.forEach(d => {
+      const opt = document.createElement('option');
+      opt.value = d.id;
+      opt.textContent = d.name;
+      deviceSelect.appendChild(opt);
+    });
+    if (deviceRow) deviceRow.classList.remove('hidden');
+  } else if (deviceRow) {
+    deviceRow.classList.add('hidden');
+  }
+
   if (perimeter) {
     editingPerimeterId = perimeter.id;
     $('#perimeterOverlayTitle').textContent = 'Upraviť perimeter';
@@ -3187,6 +3309,7 @@ function showPerimeterEditView(perimeter = null) {
     $('#perimeterName').value = perimeter.name;
     $('#perimeterColor').value = perimeter.color || '#ff6b6b';
     perimeterPolygonPoints = perimeter.polygon || [];
+    if (deviceSelect) deviceSelect.value = perimeter.device_id || '';
 
     // Populate emails list
     renderEmailsList(perimeter.emails || []);
@@ -3197,6 +3320,7 @@ function showPerimeterEditView(perimeter = null) {
     $('#perimeterName').value = '';
     $('#perimeterColor').value = '#ff6b6b';
     perimeterPolygonPoints = [];
+    if (deviceSelect) deviceSelect.value = '';
 
     // Start with one empty email entry
     renderEmailsList([{ email: '', alert_on_enter: true, alert_on_exit: true }]);
@@ -3511,12 +3635,23 @@ async function loadPerimeterList() {
                         emailCount === 1 ? '1 e-mail' :
                         `${emailCount} e-maily`;
 
+      // Device name for multi-device
+      let deviceText = '';
+      if (devices.length > 1) {
+        if (p.device_id) {
+          const dev = devices.find(d => d.id === p.device_id);
+          deviceText = dev ? dev.name : `#${p.device_id}`;
+        } else {
+          deviceText = 'Všetky';
+        }
+      }
+
       return `
         <div class="perimeter-item ${p.is_active ? '' : 'inactive'}" data-id="${p.id}">
           <div class="perimeter-color" style="background-color:${p.color || '#ff6b6b'}"></div>
           <div class="perimeter-info">
             <h4>${escapeHtml(p.name)}</h4>
-            <small>${emailText} | ${p.polygon?.length || 0} bodov</small>
+            <small>${emailText} | ${p.polygon?.length || 0} bodov${deviceText ? ' | ' + escapeHtml(deviceText) : ''}</small>
             <div class="perimeter-badges">${badges.join('')}</div>
           </div>
           <div class="perimeter-actions">
@@ -3592,12 +3727,14 @@ async function savePerimeter() {
   }
 
   try {
+    const deviceIdVal = $('#perimeterDeviceId')?.value || '';
     const payload = {
       name: name,
       polygon: perimeterPolygonPoints,
       emails: emails,
       color: color,
-      is_active: true
+      is_active: true,
+      device_id: deviceIdVal ? parseInt(deviceIdVal) : null
     };
 
     if (editingPerimeterId) {
@@ -4057,6 +4194,580 @@ function initLogViewer() {
   const nextPageBtn = $('#logNextPage');
   if (nextPageBtn) {
     nextPageBtn.addEventListener('click', goToNextPage);
+  }
+}
+
+// ========== MULTI-DEVICE UI ==========
+
+function initDeviceUI() {
+  const dropdownContainer = $('#deviceDropdownContainer');
+  const tabsContainer = $('#deviceTabsContainer');
+
+  if (devices.length <= 1) {
+    // Single device mode - hide multi-device controls
+    if (dropdownContainer) dropdownContainer.classList.add('hidden');
+    if (tabsContainer) tabsContainer.classList.add('hidden');
+    // Set single device as active for table
+    if (devices.length === 1) {
+      activeTableDeviceId = devices[0].id;
+      deviceVisibility[devices[0].id] = true;
+    }
+    return;
+  }
+
+  // Multi-device: show dropdown in header and tabs above table
+  if (dropdownContainer) dropdownContainer.classList.remove('hidden');
+  if (tabsContainer) tabsContainer.classList.remove('hidden');
+
+  // Set default active table device
+  if (!activeTableDeviceId && devices.length > 0) {
+    activeTableDeviceId = devices[0].id;
+  }
+
+  renderDeviceDropdown();
+  renderDeviceTabs();
+  initDeviceDropdownHandlers();
+}
+
+function renderDeviceDropdown() {
+  const menu = $('#deviceDropdownMenu');
+  const label = $('#deviceDropdownLabel');
+  if (!menu) return;
+
+  const visibleCount = devices.filter(d => deviceVisibility[d.id] !== false).length;
+  if (label) label.textContent = visibleCount;
+
+  menu.innerHTML = devices.map(d => {
+    const checked = deviceVisibility[d.id] !== false;
+    return `
+      <label class="device-dropdown-item" data-device-id="${d.id}">
+        <input type="checkbox" class="device-dd-toggle" data-device-id="${d.id}" ${checked ? 'checked' : ''}>
+        <span class="device-dd-dot" style="background:${d.color}"></span>
+        <span class="device-dd-name">${d.name}</span>
+      </label>
+    `;
+  }).join('');
+
+  // Checkbox handlers
+  menu.querySelectorAll('.device-dd-toggle').forEach(cb => {
+    cb.addEventListener('change', (e) => {
+      e.stopPropagation();
+      const did = parseInt(e.target.dataset.deviceId);
+      // Ensure at least one device stays visible
+      const othersVisible = devices.some(d => d.id !== did && deviceVisibility[d.id] !== false);
+      if (!e.target.checked && !othersVisible) {
+        e.target.checked = true;
+        return;
+      }
+      deviceVisibility[did] = e.target.checked;
+      updateDeviceLayerVisibility();
+      renderDeviceDropdown();
+      renderDeviceTabs();
+      // If active table device was hidden, switch to first visible
+      if (!deviceVisibility[activeTableDeviceId]) {
+        const firstVisible = devices.find(d => deviceVisibility[d.id] !== false);
+        if (firstVisible) {
+          activeTableDeviceId = firstVisible.id;
+          refilterTableForDevice();
+        }
+      }
+    });
+  });
+}
+
+let _dropdownHandlersInited = false;
+let _dropdownAbort = null;
+
+function initDeviceDropdownHandlers() {
+  const btn = $('#deviceDropdownBtn');
+  const menu = $('#deviceDropdownMenu');
+  if (!btn || !menu) return;
+
+  // Prevent duplicate handler registration
+  if (_dropdownAbort) {
+    _dropdownAbort.abort();
+  }
+  _dropdownAbort = new AbortController();
+  const signal = _dropdownAbort.signal;
+
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    menu.classList.toggle('hidden');
+  }, { signal });
+
+  // Close on outside click
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('.device-dropdown-container')) {
+      menu.classList.add('hidden');
+    }
+  }, { signal });
+}
+
+function renderDeviceTabs() {
+  const container = $('#deviceTabs');
+  if (!container) return;
+
+  const visibleDevices = devices.filter(d => deviceVisibility[d.id] !== false);
+  if (visibleDevices.length <= 1) {
+    $('#deviceTabsContainer').classList.add('hidden');
+    if (visibleDevices.length === 1) {
+      activeTableDeviceId = visibleDevices[0].id;
+    }
+    return;
+  }
+
+  $('#deviceTabsContainer').classList.remove('hidden');
+
+  container.innerHTML = visibleDevices.map(d => `
+    <button class="device-tab ${d.id === activeTableDeviceId ? 'active' : ''}" data-device-id="${d.id}">
+      <span class="device-tab-dot" style="background:${d.color}"></span>
+      ${d.name}
+    </button>
+  `).join('');
+
+  container.querySelectorAll('.device-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      activeTableDeviceId = parseInt(tab.dataset.deviceId);
+      renderDeviceTabs();
+      refilterTableForDevice();
+    });
+  });
+}
+
+function refilterTableForDevice() {
+  // Re-render table from cached data for the active table device
+  if (window._lastHistoryData && window._lastHistoryDate) {
+    buildTableFromData(window._lastHistoryData, window._lastHistoryDate);
+  }
+}
+
+function updateDeviceLayerVisibility() {
+  Object.keys(deviceLayers).forEach(did => {
+    const layer = deviceLayers[did];
+    const visible = deviceVisibility[parseInt(did)] !== false;
+    if (visible && !map.hasLayer(layer)) {
+      map.addLayer(layer);
+    } else if (!visible && map.hasLayer(layer)) {
+      map.removeLayer(layer);
+    }
+  });
+
+  // Rebuild cluster markers based on visible devices
+  if (window._lastPositionsForClustering) {
+    // Remove old clusters
+    if (window._clusterMarkers) {
+      window._clusterMarkers.forEach(m => m.remove());
+      window._clusterMarkers = [];
+    }
+    // Re-render with only visible devices
+    const visibleLastPos = window._lastPositionsForClustering.filter(
+      lp => deviceVisibility[parseInt(lp.did)] !== false
+    );
+    renderClusterOverlays(visibleLastPos);
+  }
+}
+
+// ========== DEVICE MANAGEMENT (Settings) ==========
+
+function openDeviceManagement() {
+  const overlay = $('#deviceManagementOverlay');
+  if (overlay) {
+    overlay.classList.remove('hidden');
+    loadDeviceManagementList();
+
+    // Close on background click (consistent with other overlays)
+    overlay.onclick = (e) => {
+      if (e.target === overlay) closeDeviceManagement();
+    };
+  }
+}
+
+function closeDeviceManagement() {
+  const overlay = $('#deviceManagementOverlay');
+  if (overlay) overlay.classList.add('hidden');
+}
+
+async function loadDeviceManagementList() {
+  await loadDevices();
+  const container = $('#deviceList');
+  if (!container) return;
+
+  if (devices.length === 0) {
+    container.innerHTML = '<p class="empty-state">Žiadne zariadenia</p>';
+    return;
+  }
+
+  container.innerHTML = devices.map(d => {
+    const batteryLabel = d.status ? (d.status.battery_state === 1 ? 'Dobrá' : d.status.battery_state === 0 ? 'Slabá' : '—') : '—';
+    const batteryClass = d.status ? (d.status.battery_state === 1 ? 'good' : d.status.battery_state === 0 ? 'low' : '') : '';
+    const lastOnline = d.status && d.status.latest_message_time ? formatTimeAgo(d.status.latest_message_time) : '—';
+    const onlineClass = d.status ? (d.status.online_status === 1 ? 'online' : 'offline') : '';
+    return `
+    <div class="device-card" data-id="${d.id}">
+      <div class="device-card-header">
+        <span class="device-color-indicator" style="background:${d.color}"></span>
+        <span class="device-card-name">${d.name}</span>
+        <span class="device-card-eui">${d.device_eui}</span>
+        <span class="device-card-status ${d.is_active ? 'active' : 'inactive'}">${d.is_active ? 'Aktívne' : 'Neaktívne'}</span>
+      </div>
+      <div class="device-card-info">
+        ${d.last_position ? `<span>Posledná poloha: ${toTime(d.last_position.timestamp)}</span>` : '<span>Bez dát</span>'}
+        <span class="device-battery ${batteryClass}">Batéria: ${batteryLabel}</span>
+        <span class="device-online ${onlineClass}">Online: ${lastOnline}</span>
+      </div>
+      <div class="device-card-actions">
+        <button class="btn-sm btn-edit" onclick="editDevice(${d.id})">Upraviť</button>
+        <button class="btn-sm btn-toggle" onclick="toggleDevice(${d.id}, ${d.is_active ? 0 : 1})">${d.is_active ? 'Deaktivovať' : 'Aktivovať'}</button>
+        <button class="btn-sm btn-danger" onclick="deleteDevice(${d.id}, '${d.name}')">Zmazať</button>
+      </div>
+    </div>
+  `;}).join('');
+}
+
+function openDeviceForm(device = null) {
+  const form = $('#deviceForm');
+  if (!form) return;
+
+  form.querySelector('#deviceFormTitle').textContent = device ? 'Upraviť zariadenie' : 'Nové zariadenie';
+  form.querySelector('#deviceId').value = device ? device.id : '';
+  form.querySelector('#deviceName').value = device ? device.name : '';
+  form.querySelector('#deviceEui').value = device ? device.device_eui : '';
+  form.querySelector('#deviceColor').value = device ? device.color : '#3388ff';
+  form.querySelector('#deviceActive').checked = device ? device.is_active : true;
+  form.querySelector('#deviceNotifEnabled').checked = device ? device.notifications_enabled : false;
+  form.querySelector('#deviceNotifEmail').value = device ? (device.notification_email || '') : '';
+
+  form.classList.remove('hidden');
+}
+
+function closeDeviceForm() {
+  const form = $('#deviceForm');
+  if (form) form.classList.add('hidden');
+}
+
+async function saveDevice() {
+  const form = $('#deviceForm');
+  if (!form) return;
+
+  const id = form.querySelector('#deviceId').value;
+  const payload = {
+    name: form.querySelector('#deviceName').value.trim(),
+    device_eui: form.querySelector('#deviceEui').value.trim(),
+    color: form.querySelector('#deviceColor').value,
+    is_active: form.querySelector('#deviceActive').checked,
+    notifications_enabled: form.querySelector('#deviceNotifEnabled').checked,
+    notification_email: form.querySelector('#deviceNotifEmail').value.trim()
+  };
+
+  if (id) payload.id = parseInt(id);
+
+  if (!payload.name || !payload.device_eui) {
+    alert('Názov a Device EUI sú povinné');
+    return;
+  }
+
+  try {
+    const res = await apiPost('save_device', payload);
+    if (res.ok) {
+      closeDeviceForm();
+      await loadDeviceManagementList();
+      await loadDevices();
+      initDeviceUI();
+    } else {
+      alert(res.error || 'Chyba pri ukladaní');
+    }
+  } catch (e) {
+    alert('Chyba: ' + e.message);
+  }
+}
+
+async function editDevice(id) {
+  const dev = getDeviceById(id);
+  if (dev) openDeviceForm(dev);
+}
+
+async function toggleDevice(id, active) {
+  try {
+    await apiPost('toggle_device', { id, is_active: active });
+    await loadDeviceManagementList();
+    await loadDevices();
+    initDeviceUI();
+  } catch (e) {
+    alert('Chyba: ' + e.message);
+  }
+}
+
+async function deleteDevice(id, name) {
+  if (!confirm(`Naozaj chcete zmazať zariadenie "${name}" a všetky jeho dáta?`)) return;
+  try {
+    const res = await apiGet(`${API}?action=delete_device&id=${id}`);
+    if (res.ok) {
+      await loadDeviceManagementList();
+      await loadDevices();
+      if (activeDeviceId === id) {
+        activeDeviceId = devices.length > 0 ? devices[0].id : null;
+      }
+      initDeviceUI();
+      refresh();
+    } else {
+      alert(res.error || 'Chyba pri mazaní');
+    }
+  } catch (e) {
+    alert('Chyba: ' + e.message);
+  }
+}
+
+// ========== COMPARISON MODE ==========
+
+function openComparisonPanel() {
+  let panel = $('#comparisonPanel');
+  if (!panel) {
+    panel = document.createElement('div');
+    panel.id = 'comparisonPanel';
+    panel.className = 'comparison-panel';
+    document.querySelector('.container').appendChild(panel);
+  }
+
+  const today = fmt(new Date());
+  panel.innerHTML = `
+    <div class="comparison-header">
+      <h3>Porovnanie zariadení</h3>
+      <button class="btn-close" onclick="closeComparisonPanel()">&times;</button>
+    </div>
+    <div class="comparison-controls">
+      <div class="comparison-dates">
+        <label>Od: <input type="date" id="compDateFrom" value="${comparisonDateFrom || today}"></label>
+        <label>Do: <input type="date" id="compDateTo" value="${comparisonDateTo || today}"></label>
+      </div>
+      <div class="comparison-devices">
+        ${devices.map(d => `
+          <label class="comparison-device-toggle">
+            <input type="checkbox" value="${d.id}" ${comparisonDeviceIds.includes(d.id) ? 'checked' : ''}>
+            <span class="leg-dot" style="background:${d.color}"></span>
+            ${d.name}
+          </label>
+        `).join('')}
+      </div>
+      <button class="btn-primary" onclick="runComparison()">Porovnať</button>
+    </div>
+  `;
+  panel.classList.remove('hidden');
+}
+
+function closeComparisonPanel() {
+  comparisonMode = false;
+  deviceViewMode = 'all';
+  const panel = $('#comparisonPanel');
+  if (panel) panel.classList.add('hidden');
+  refresh();
+}
+
+async function runComparison() {
+  const fromInput = $('#compDateFrom');
+  const toInput = $('#compDateTo');
+  if (!fromInput || !toInput) return;
+
+  comparisonDateFrom = fromInput.value;
+  comparisonDateTo = toInput.value;
+  comparisonDeviceIds = [];
+
+  document.querySelectorAll('.comparison-device-toggle input:checked').forEach(cb => {
+    comparisonDeviceIds.push(parseInt(cb.value));
+  });
+
+  if (comparisonDeviceIds.length < 1) {
+    alert('Vyberte aspoň jedno zariadenie');
+    return;
+  }
+
+  // Clear existing layers
+  trackLayer.clearLayers();
+  Object.values(deviceLayers).forEach(l => l.clearLayers());
+
+  const allBounds = [];
+
+  for (const did of comparisonDeviceIds) {
+    const dev = getDeviceById(did);
+    const color = dev ? dev.color : '#3388ff';
+    const name = dev ? dev.name : 'Zariadenie ' + did;
+
+    try {
+      const data = await apiGet(`${API}?action=get_history_range&since=${comparisonDateFrom}T00:00:00&until=${comparisonDateTo}T23:59:59&device_id=${did}`);
+      if (!Array.isArray(data) || data.length === 0) continue;
+
+      const points = data.map(p => [p.latitude, p.longitude]);
+      allBounds.push(...points);
+
+      const polyline = L.polyline(points, { color, weight: 3, opacity: 0.8 });
+      polyline.bindTooltip(name, { sticky: true });
+      polyline.addTo(trackLayer);
+
+      // Last point marker
+      const lastPt = data[data.length - 1];
+      L.circleMarker([lastPt.latitude, lastPt.longitude], {
+        radius: 8, color: color, fillColor: color, fillOpacity: 0.9, weight: 2
+      }).bindTooltip(`${name}: ${toTime(lastPt.timestamp)}`).addTo(trackLayer);
+    } catch (e) {
+      console.error(`Comparison fetch failed for device ${did}:`, e);
+    }
+  }
+
+  if (allBounds.length > 0) {
+    map.fitBounds(allBounds, { padding: [30, 30] });
+  }
+}
+
+// ========== DEVICE PERIMETERS (Circular Geofences) ==========
+
+async function loadDevicePerimeters(deviceId) {
+  try {
+    const url = deviceId ? `${API}?action=get_device_perimeters&device_id=${deviceId}` : `${API}?action=get_device_perimeters`;
+    const res = await apiGet(url);
+    return (res.ok && Array.isArray(res.data)) ? res.data : [];
+  } catch (e) {
+    console.error('Failed to load device perimeters:', e);
+    return [];
+  }
+}
+
+function renderDevicePerimetersOnMap(perimeters) {
+  // Remove existing device perimeter circles
+  if (window._devicePerimeterLayer) {
+    map.removeLayer(window._devicePerimeterLayer);
+  }
+  window._devicePerimeterLayer = L.layerGroup().addTo(map);
+
+  perimeters.forEach(p => {
+    if (!p.is_active) return;
+    const color = p.device_color || '#3388ff';
+    const circle = L.circle([p.latitude, p.longitude], {
+      radius: p.radius_meters,
+      color: color,
+      fillColor: color,
+      fillOpacity: 0.1,
+      weight: 2,
+      dashArray: '5,5'
+    });
+    circle.bindTooltip(`${p.name} (${p.device_name})`);
+    circle.addTo(window._devicePerimeterLayer);
+  });
+}
+
+async function openDevicePerimeterManager(deviceId) {
+  const dev = getDeviceById(deviceId);
+  if (!dev) return;
+
+  const perimeters = await loadDevicePerimeters(deviceId);
+  const overlay = $('#devicePerimeterOverlay');
+  if (!overlay) return;
+
+  overlay.classList.remove('hidden');
+  const body = overlay.querySelector('.overlay-body');
+  body.innerHTML = `
+    <h3>Perimeter zóny - ${dev.name}</h3>
+    <div id="devicePerimeterList">
+      ${perimeters.length === 0 ? '<p class="empty-state">Žiadne perimeter zóny</p>' : perimeters.map(p => `
+        <div class="perimeter-card">
+          <div class="perimeter-card-header">
+            <span class="device-color-indicator" style="background:${dev.color}"></span>
+            <strong>${p.name}</strong>
+            <span class="perimeter-radius">${p.radius_meters}m</span>
+            <span class="device-card-status ${p.is_active ? 'active' : 'inactive'}">${p.is_active ? 'Aktívne' : 'Neaktívne'}</span>
+          </div>
+          <div class="perimeter-card-info">
+            <span>Vstup: ${p.alert_on_enter ? 'Áno' : 'Nie'}</span>
+            <span>Výstup: ${p.alert_on_exit ? 'Áno' : 'Nie'}</span>
+          </div>
+          <div class="device-card-actions">
+            <button class="btn-sm btn-edit" onclick="editDevicePerimeter(${p.id}, ${deviceId})">Upraviť</button>
+            <button class="btn-sm btn-danger" onclick="deleteDevicePerimeter(${p.id}, ${deviceId})">Zmazať</button>
+          </div>
+        </div>
+      `).join('')}
+    </div>
+    <button class="btn-primary" onclick="openDevicePerimeterForm(${deviceId})">Pridať perimeter</button>
+  `;
+}
+
+function closeDevicePerimeterManager() {
+  const overlay = $('#devicePerimeterOverlay');
+  if (overlay) overlay.classList.add('hidden');
+}
+
+function openDevicePerimeterForm(deviceId, perimeter = null) {
+  const form = $('#devicePerimeterForm');
+  if (!form) return;
+
+  form.querySelector('#dpFormTitle').textContent = perimeter ? 'Upraviť perimeter' : 'Nový perimeter';
+  form.querySelector('#dpId').value = perimeter ? perimeter.id : '';
+  form.querySelector('#dpDeviceId').value = deviceId;
+  form.querySelector('#dpName').value = perimeter ? perimeter.name : '';
+  form.querySelector('#dpLat').value = perimeter ? perimeter.latitude : '';
+  form.querySelector('#dpLng').value = perimeter ? perimeter.longitude : '';
+  form.querySelector('#dpRadius').value = perimeter ? perimeter.radius_meters : 500;
+  form.querySelector('#dpAlertEnter').checked = perimeter ? perimeter.alert_on_enter : false;
+  form.querySelector('#dpAlertExit').checked = perimeter ? perimeter.alert_on_exit : false;
+
+  form.classList.remove('hidden');
+}
+
+function closeDevicePerimeterForm() {
+  const form = $('#devicePerimeterForm');
+  if (form) form.classList.add('hidden');
+}
+
+async function saveDevicePerimeter() {
+  const form = $('#devicePerimeterForm');
+  if (!form) return;
+
+  const id = form.querySelector('#dpId').value;
+  const payload = {
+    device_id: parseInt(form.querySelector('#dpDeviceId').value),
+    name: form.querySelector('#dpName').value.trim(),
+    latitude: parseFloat(form.querySelector('#dpLat').value),
+    longitude: parseFloat(form.querySelector('#dpLng').value),
+    radius_meters: parseFloat(form.querySelector('#dpRadius').value),
+    alert_on_enter: form.querySelector('#dpAlertEnter').checked,
+    alert_on_exit: form.querySelector('#dpAlertExit').checked
+  };
+  if (id) payload.id = parseInt(id);
+
+  if (!payload.name || isNaN(payload.latitude) || isNaN(payload.longitude)) {
+    alert('Vyplňte všetky povinné polia');
+    return;
+  }
+
+  try {
+    const res = await apiPost('save_device_perimeter', payload);
+    if (res.ok) {
+      closeDevicePerimeterForm();
+      openDevicePerimeterManager(payload.device_id);
+      // Refresh perimeters on map
+      const allPerimeters = await loadDevicePerimeters();
+      renderDevicePerimetersOnMap(allPerimeters);
+    } else {
+      alert(res.error || 'Chyba pri ukladaní');
+    }
+  } catch (e) {
+    alert('Chyba: ' + e.message);
+  }
+}
+
+async function editDevicePerimeter(perimeterId, deviceId) {
+  const perimeters = await loadDevicePerimeters(deviceId);
+  const p = perimeters.find(x => x.id === perimeterId);
+  if (p) openDevicePerimeterForm(deviceId, p);
+}
+
+async function deleteDevicePerimeter(perimeterId, deviceId) {
+  if (!confirm('Naozaj chcete zmazať tento perimeter?')) return;
+  try {
+    await apiGet(`${API}?action=delete_device_perimeter&id=${perimeterId}`);
+    openDevicePerimeterManager(deviceId);
+    const allPerimeters = await loadDevicePerimeters();
+    renderDevicePerimetersOnMap(allPerimeters);
+  } catch (e) {
+    alert('Chyba: ' + e.message);
   }
 }
 
