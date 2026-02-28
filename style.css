@@ -2133,6 +2133,7 @@ body.authenticated .container{
   /* Hamburger button smaller on mobile */
   .hamburger-btn{
     width:36px;height:36px;
+    touch-action:manipulation;
   }
 
   .hamburger-btn span{
@@ -2148,6 +2149,14 @@ body.authenticated .container{
   .menu-item{
     padding:10px 12px;
     font-size:13px;
+  }
+
+  /* Hamburger menu items need higher specificity to override #topbar button */
+  #topbar .hamburger-menu .menu-item{
+    padding:10px 12px;
+    font-size:13px;
+    touch-action:manipulation;
+    -webkit-tap-highlight-color:transparent;
   }
 
   /* Date controls */
@@ -2673,6 +2682,8 @@ body.authenticated .container{
   cursor:pointer;
   font-size:13px;
   transition:background 0.15s;
+  touch-action:manipulation;
+  -webkit-tap-highlight-color:transparent;
 }
 .device-dropdown-btn:hover{
   background:var(--muted-bg);
@@ -2705,6 +2716,7 @@ body.authenticated .container{
   font-size:13px;
   color:var(--text);
   transition:background 0.1s;
+  touch-action:manipulation;
 }
 .device-dropdown-item:hover{
   background:var(--muted-bg);

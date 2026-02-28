@@ -211,7 +211,7 @@ function addLogoutMenuItem() {
     </svg>
     Odhlásiť sa
   `;
-  logoutBtn.addEventListener('click', handleLogout);
+  // Click handled by event delegation in initHamburgerMenu()
   hamburgerMenu.appendChild(logoutBtn);
 }
 
@@ -659,10 +659,7 @@ async function updateBatteryStatus() {
 function initHamburgerMenu() {
   const btn = $('#hamburgerBtn');
   const menu = $('#hamburgerMenu');
-
-  console.log('Initializing hamburger menu...');
-  console.log('Menu button:', btn);
-  console.log('Menu:', menu);
+  if (!btn || !menu) return;
 
   btn.addEventListener('click', () => {
     const isOpen = !menu.classList.contains('hidden');
@@ -688,93 +685,54 @@ function initHamburgerMenu() {
     }
   });
 
-  // Menu items
-  const menuRefetch = $('#menuRefetch');
-  const menuManageIBeacons = $('#menuManageIBeacons');
-  const menuViewIBeacons = $('#menuViewIBeacons');
-  const menuSettings = $('#menuSettings');
+  // Use event delegation for all menu items - more robust on mobile
+  menu.addEventListener('click', (e) => {
+    const item = e.target.closest('.menu-item');
+    if (!item) return;
 
-  console.log('Menu items found:');
-  console.log('- Refetch:', menuRefetch);
-  console.log('- Manage iBeacons:', menuManageIBeacons);
-  console.log('- View iBeacons:', menuViewIBeacons);
-  console.log('- Settings:', menuSettings);
+    const id = item.id;
 
-  if (menuRefetch) {
-    menuRefetch.addEventListener('click', () => {
-      console.log('Refetch clicked');
-      menu.classList.add('hidden');
-      btn.classList.remove('active');
-      refetchDay();
-    });
-  }
-
-  // iBeacon submenu toggle
-  const menuIBeacons = $('#menuIBeacons');
-  if (menuIBeacons) {
-    menuIBeacons.addEventListener('click', (e) => {
+    // iBeacon submenu parent toggles submenu, does not close menu
+    if (id === 'menuIBeacons') {
       e.stopPropagation();
-      const submenuItems = menuIBeacons.parentElement.querySelector('.submenu-items');
+      const submenuItems = item.parentElement.querySelector('.submenu-items');
       if (submenuItems) {
         submenuItems.classList.toggle('hidden');
-        menuIBeacons.classList.toggle('expanded');
+        item.classList.toggle('expanded');
       }
-    });
-  }
+      return;
+    }
 
-  if (menuManageIBeacons) {
-    menuManageIBeacons.addEventListener('click', () => {
-      console.log('Manage iBeacons clicked');
-      menu.classList.add('hidden');
-      btn.classList.remove('active');
-      openIBeaconOverlay();
-    });
-  }
+    // Close menu for all other items
+    menu.classList.add('hidden');
+    btn.classList.remove('active');
 
-  if (menuViewIBeacons) {
-    menuViewIBeacons.addEventListener('click', () => {
-      console.log('View iBeacons clicked');
-      menu.classList.add('hidden');
-      btn.classList.remove('active');
-      openIBeaconListOverlay();
-    });
-  }
-
-  if (menuSettings) {
-    console.log('Attaching click handler to Settings menu item');
-    menuSettings.addEventListener('click', () => {
-      console.log('Settings menu clicked');
-      menu.classList.add('hidden');
-      btn.classList.remove('active');
-      openSettingsOverlay().catch(err => {
-        console.error('Error opening settings:', err);
-      });
-    });
-  } else {
-    console.error('Settings menu item not found! Check if index.html has been updated.');
-  }
-
-  // Perimeter zones menu item
-  const menuPerimeters = $('#menuPerimeters');
-  if (menuPerimeters) {
-    menuPerimeters.addEventListener('click', () => {
-      console.log('Perimeters menu clicked');
-      menu.classList.add('hidden');
-      btn.classList.remove('active');
-      openPerimeterOverlay();
-    });
-  }
-
-  // Device management menu item
-  const menuDevices = $('#menuDevices');
-  if (menuDevices) {
-    menuDevices.addEventListener('click', () => {
-      menu.classList.add('hidden');
-      btn.classList.remove('active');
-      openDeviceManagement();
-    });
-  }
-
+    switch (id) {
+      case 'menuRefetch':
+        refetchDay();
+        break;
+      case 'menuManageIBeacons':
+        openIBeaconOverlay();
+        break;
+      case 'menuViewIBeacons':
+        openIBeaconListOverlay();
+        break;
+      case 'menuSettings':
+        openSettingsOverlay().catch(err => {
+          console.error('Error opening settings:', err);
+        });
+        break;
+      case 'menuPerimeters':
+        openPerimeterOverlay();
+        break;
+      case 'menuDevices':
+        openDeviceManagement();
+        break;
+      case 'menuLogout':
+        handleLogout();
+        break;
+    }
+  });
 }
 
 // --------- Site Switcher Widget (SSO) ---------
@@ -4317,22 +4275,32 @@ function renderDeviceDropdown() {
   });
 }
 
+let _dropdownHandlersInited = false;
+let _dropdownAbort = null;
+
 function initDeviceDropdownHandlers() {
   const btn = $('#deviceDropdownBtn');
   const menu = $('#deviceDropdownMenu');
   if (!btn || !menu) return;
 
+  // Prevent duplicate handler registration
+  if (_dropdownAbort) {
+    _dropdownAbort.abort();
+  }
+  _dropdownAbort = new AbortController();
+  const signal = _dropdownAbort.signal;
+
   btn.addEventListener('click', (e) => {
     e.stopPropagation();
     menu.classList.toggle('hidden');
-  });
+  }, { signal });
 
   // Close on outside click
   document.addEventListener('click', (e) => {
     if (!e.target.closest('.device-dropdown-container')) {
       menu.classList.add('hidden');
     }
-  });
+  }, { signal });
 }
 
 function renderDeviceTabs() {
@@ -4406,6 +4374,11 @@ function openDeviceManagement() {
   if (overlay) {
     overlay.classList.remove('hidden');
     loadDeviceManagementList();
+
+    // Close on background click (consistent with other overlays)
+    overlay.onclick = (e) => {
+      if (e.target === overlay) closeDeviceManagement();
+    };
   }
 }
 
