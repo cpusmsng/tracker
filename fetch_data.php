@@ -41,9 +41,10 @@ $DEBUG_MODE = false;
 $REFETCH_MODE = false;
 $REFETCH_DATE = null;
 $REFETCH_BREACHES = []; // Collect breaches for summary email in refetch mode
+$LOG_DEVICE_PREFIX = ''; // Set per-device during processing loop
 
 function logl(string $msg, string $level = 'debug'): void {
-    global $LOG_FILE, $CURRENT_LOG_LEVEL, $LOG_LEVELS, $DEBUG_MODE;
+    global $LOG_FILE, $CURRENT_LOG_LEVEL, $LOG_LEVELS, $DEBUG_MODE, $LOG_DEVICE_PREFIX;
     $msgLevel = $LOG_LEVELS[$level] ?? 2;
 
     // Always log if DEBUG_MODE is on, otherwise check level
@@ -51,7 +52,8 @@ function logl(string $msg, string $level = 'debug'): void {
 
     $ts = (new DateTimeImmutable())->format('Y-m-d\TH:i:sP');
     $levelTag = strtoupper($level);
-    file_put_contents($LOG_FILE, "[$ts] [$levelTag] $msg\n", FILE_APPEND);
+    $prefix = $LOG_DEVICE_PREFIX ? "[$LOG_DEVICE_PREFIX] " : '';
+    file_put_contents($LOG_FILE, "[$ts] [$levelTag] {$prefix}$msg\n", FILE_APPEND);
 }
 
 function error_log_custom(string $msg): void {
@@ -501,17 +503,30 @@ function point_in_polygon(float $lat, float $lng, array $polygon): bool {
 function load_active_perimeters(PDO $pdo, ?int $deviceId = null): array {
     $perimeters = [];
     try {
+        // Check if device_id column exists
+        $hasDeviceIdCol = false;
+        $cols = $pdo->query("PRAGMA table_info(perimeters)");
+        while ($c = $cols->fetch()) {
+            if ($c['name'] === 'device_id') { $hasDeviceIdCol = true; break; }
+        }
+
         // Load perimeters: global (device_id IS NULL) + device-specific
-        if ($deviceId !== null) {
+        if ($hasDeviceIdCol && $deviceId !== null) {
             $stmt = $pdo->prepare("
                 SELECT id, name, polygon, alert_on_enter, alert_on_exit, notification_email, device_id
                 FROM perimeters
                 WHERE is_active = 1 AND (device_id IS NULL OR device_id = :did)
             ");
             $stmt->execute([':did' => $deviceId]);
-        } else {
+        } elseif ($hasDeviceIdCol) {
             $stmt = $pdo->query("
                 SELECT id, name, polygon, alert_on_enter, alert_on_exit, notification_email, device_id
+                FROM perimeters
+                WHERE is_active = 1
+            ");
+        } else {
+            $stmt = $pdo->query("
+                SELECT id, name, polygon, alert_on_enter, alert_on_exit, notification_email
                 FROM perimeters
                 WHERE is_active = 1
             ");
@@ -544,6 +559,7 @@ function load_active_perimeters(PDO $pdo, ?int $deviceId = null): array {
                 ];
             }
 
+            $perDeviceId = ($hasDeviceIdCol && isset($r['device_id']) && $r['device_id'] !== null) ? (int)$r['device_id'] : null;
             $perimeters[] = [
                 'id' => $pid,
                 'name' => $r['name'],
@@ -551,7 +567,7 @@ function load_active_perimeters(PDO $pdo, ?int $deviceId = null): array {
                 'alert_on_enter' => (bool)$r['alert_on_enter'],
                 'alert_on_exit' => (bool)$r['alert_on_exit'],
                 'notification_email' => $r['notification_email'],
-                'device_id' => $r['device_id'] !== null ? (int)$r['device_id'] : null,
+                'device_id' => $perDeviceId,
                 'emails' => $emails
             ];
 
@@ -563,7 +579,7 @@ function load_active_perimeters(PDO $pdo, ?int $deviceId = null): array {
                 if ($em['alert_on_enter']) $enterCount++;
                 if ($em['alert_on_exit']) $exitCount++;
             }
-            $deviceLabel = $r['device_id'] !== null ? "device={$r['device_id']}" : 'global';
+            $deviceLabel = $perDeviceId !== null ? "device=$perDeviceId" : 'global';
             info_log("PERIMETER '{$r['name']}' (id=$pid, $deviceLabel): emails=$emailCount, alert_on_enter=$enterCount, alert_on_exit=$exitCount");
         }
         info_log("PERIMETERS: loaded ".count($perimeters)." active zones" . ($deviceId !== null ? " for device_id=$deviceId" : ""));
@@ -1427,6 +1443,7 @@ try {
     $EUI = $deviceInfo['eui'];
     $DEVICE_ID = $deviceInfo['id'];
     $DEVICE_NAME = $deviceInfo['name'];
+    $LOG_DEVICE_PREFIX = $DEVICE_NAME;
     info_log("=== PROCESSING DEVICE: $DEVICE_NAME (EUI=$EUI, ID=" . ($DEVICE_ID ?? 'null') . ") ===");
     
     $lastDb = null;
@@ -1962,6 +1979,7 @@ try {
     }
 
     info_log("=== DEVICE $DEVICE_NAME DONE ===");
+    $LOG_DEVICE_PREFIX = '';
 
     } // end foreach activeDevices
 

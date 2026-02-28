@@ -64,9 +64,13 @@ foreach ($argv as $arg) {
 // HELPER FUNKCIE
 // ================================================================
 
+$LOG_DEVICE_PREFIX = '';
+
 function info_log(string $msg): void {
+    global $LOG_DEVICE_PREFIX;
     $ts = (new DateTimeImmutable())->format('Y-m-d\TH:i:sP');
-    $line = "[$ts] $msg\n";
+    $prefix = $LOG_DEVICE_PREFIX ? "[$LOG_DEVICE_PREFIX] " : '';
+    $line = "[$ts] {$prefix}$msg\n";
     file_put_contents(LOG_FILE, $line, FILE_APPEND);
     echo $line;
 }
@@ -230,6 +234,7 @@ $all_stats_count = 0;
 foreach ($activeDevices as $deviceInfo) {
 $DEVICE_ID = $deviceInfo['id'];
 $DEVICE_NAME = $deviceInfo['name'];
+$LOG_DEVICE_PREFIX = $DEVICE_NAME;
 
 debug_log("Analyzing device '$DEVICE_NAME' (id=" . ($DEVICE_ID ?? 'null') . "): last $CHECK_DAYS days" . ($INCLUDE_TODAY ? ' + today' : '') . "...");
 
@@ -408,6 +413,7 @@ if (count($problematic_days) > 0) {
 }
 
 $all_stats_count += count($stats);
+$LOG_DEVICE_PREFIX = '';
 
 } // end foreach activeDevices
 

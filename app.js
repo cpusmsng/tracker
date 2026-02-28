@@ -1450,6 +1450,12 @@ async function loadHistory(dateStr) {
     lastPositionMarker.remove();
     lastPositionMarker = null;
   }
+  // Clean up cluster markers from previous load
+  if (window._clusterMarkers) {
+    window._clusterMarkers.forEach(m => m.remove());
+    window._clusterMarkers = [];
+  }
+  window._lastPositionsForClustering = null;
 
   // Always load all devices' data — map shows visible, table filters per device
   let histUrl = `${API}?action=get_history&date=${encodeURIComponent(dateStr)}`;
@@ -1469,75 +1475,84 @@ async function loadHistory(dateStr) {
     const isToday = (dateStr === today);
     
     if (isToday) {
-      // Pre dnešok zobraz poslednú známu polohu
-      let lpUrl = `${API}?action=get_last_position`;
-      const lastPosition = await apiGet(lpUrl);
-      
-      if (lastPosition && lastPosition.latitude && lastPosition.longitude) {
-        // Zobraz poslednú známu polohu na mape
-        const markerHtml = `
-          <style>
-            @keyframes blink-marker {
-              0%, 100% { opacity: 1; transform: scale(1); }
-              50% { opacity: 0.3; transform: scale(1.3); }
+      // Pre dnešok zobraz poslednú známu polohu pre každé zariadenie
+      if (devices.length > 1) {
+        // Multi-device: fetch last position per device
+        const allBounds = [];
+        const lastPositions = [];
+
+        // Clear device layers
+        Object.values(deviceLayers).forEach(l => { l.clearLayers(); map.removeLayer(l); });
+        deviceLayers = {};
+
+        for (const dev of devices) {
+          try {
+            const lp = await apiGet(`${API}?action=get_last_position&device_id=${dev.id}`);
+            if (lp && lp.latitude && lp.longitude) {
+              const color = dev.color || '#3388ff';
+              const layer = L.layerGroup();
+              deviceLayers[dev.id] = layer;
+              if (deviceVisibility[dev.id] !== false) layer.addTo(map);
+
+              lastPositions.push({ p: lp, color, name: dev.name, did: dev.id, layer });
+              allBounds.push([lp.latitude, lp.longitude]);
             }
-          </style>
-          <div style="
-            width: 16px;
-            height: 16px;
-            background: #ff9800;
-            border-radius: 50%;
-            border: 3px solid white;
-            box-shadow: 0 0 4px rgba(0,0,0,0.3);
-            animation: blink-marker 1.5s ease-in-out infinite;
-          "></div>
-        `;
-        
-        const icon = L.divIcon({
-          className: '',
-          html: markerHtml,
-          iconSize: [22, 22],
-          iconAnchor: [11, 11]
-        });
-        
-        lastPositionMarker = L.marker([lastPosition.latitude, lastPosition.longitude], { icon })
-          .bindTooltip(`Posledná známa poloha<br>${new Date(lastPosition.timestamp).toLocaleString('sk-SK')}`, 
-            { permanent:false, opacity:1 })
-          .addTo(map);
-        
-        map.setView([lastPosition.latitude, lastPosition.longitude], 15);
-        
-        // Zobraz info v tabuľke
-        const rows = [{
-          i: 1,
-          id: lastPosition.id, // Add position ID for editing
-          from: lastPosition.timestamp,
-          to: null,
-          durMin: 0,
-          source: lastPosition.source,
-          lat: lastPosition.latitude,
-          lng: lastPosition.longitude,
-          isPrevDay: false,
-          isLastKnown: true,  // <-- toto označuje že je to "last known"
-          sortValues: [
-            1,
-            new Date(lastPosition.timestamp).getTime(),
-            0,
-            0,
-            lastPosition.source,
-            lastPosition.latitude,
-            lastPosition.longitude
-          ]
-        }];
-        renderTable(rows);
-        
-        // Pridaj info text
+          } catch (e) { /* skip */ }
+        }
+
+        if (lastPositions.length > 0) {
+          renderLastPositionMarkers(lastPositions);
+          if (allBounds.length > 0) map.fitBounds(allBounds, { padding: [50, 50] });
+
+          // Table shows info for active device
+          const activeLp = lastPositions.find(lp => lp.did === activeTableDeviceId) || lastPositions[0];
+          const rows = [{
+            i: 1, id: activeLp.p.id, from: activeLp.p.timestamp, to: null, durMin: 0,
+            source: activeLp.p.source, lat: activeLp.p.latitude, lng: activeLp.p.longitude,
+            isPrevDay: false, isLastKnown: true,
+            sortValues: [1, new Date(activeLp.p.timestamp).getTime(), 0, 0, activeLp.p.source, activeLp.p.latitude, activeLp.p.longitude]
+          }];
+          renderTable(rows);
+        } else {
+          $('#positionsTable').innerHTML = 'Žiadne dáta pre dnes a žiadna posledná známa poloha.';
+        }
+
         const info = document.createElement('div');
         info.style.cssText = 'padding: 12px; background: #fef3c7; border: 1px solid #fbbf24; border-radius: 8px; margin-bottom: 12px; color: #92400e;';
         info.innerHTML = '<strong>Žiadny pohyb v tento deň.</strong> Zobrazená je posledná známa poloha.';
-        $('#positionsTable').prepend(info);
+        if (lastPositions.length > 0) $('#positionsTable').prepend(info);
       } else {
-        $('#positionsTable').innerHTML = 'Žiadne dáta pre dnes a žiadna posledná známa poloha.';
+        // Single device mode
+        let lpUrl = `${API}?action=get_last_position`;
+        const lastPosition = await apiGet(lpUrl);
+
+        if (lastPosition && lastPosition.latitude && lastPosition.longitude) {
+          const lpColor = (activeDeviceId) ? getDeviceColor(activeDeviceId) : '#ff9800';
+          const markerHtml = `
+            <style>@keyframes blink-marker{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.3;transform:scale(1.3)}}</style>
+            <div style="width:16px;height:16px;background:${lpColor};border-radius:50%;border:3px solid white;box-shadow:0 0 4px rgba(0,0,0,.3);animation:blink-marker 1.5s ease-in-out infinite"></div>`;
+          const icon = L.divIcon({ className: '', html: markerHtml, iconSize: [22, 22], iconAnchor: [11, 11] });
+          lastPositionMarker = L.marker([lastPosition.latitude, lastPosition.longitude], { icon })
+            .bindTooltip(`Posledná známa poloha<br>${new Date(lastPosition.timestamp).toLocaleString('sk-SK')}`,
+              { permanent: false, opacity: 1 })
+            .addTo(map);
+          map.setView([lastPosition.latitude, lastPosition.longitude], 15);
+
+          const rows = [{
+            i: 1, id: lastPosition.id, from: lastPosition.timestamp, to: null, durMin: 0,
+            source: lastPosition.source, lat: lastPosition.latitude, lng: lastPosition.longitude,
+            isPrevDay: false, isLastKnown: true,
+            sortValues: [1, new Date(lastPosition.timestamp).getTime(), 0, 0, lastPosition.source, lastPosition.latitude, lastPosition.longitude]
+          }];
+          renderTable(rows);
+
+          const info = document.createElement('div');
+          info.style.cssText = 'padding: 12px; background: #fef3c7; border: 1px solid #fbbf24; border-radius: 8px; margin-bottom: 12px; color: #92400e;';
+          info.innerHTML = '<strong>Žiadny pohyb v tento deň.</strong> Zobrazená je posledná známa poloha.';
+          $('#positionsTable').prepend(info);
+        } else {
+          $('#positionsTable').innerHTML = 'Žiadne dáta pre dnes a žiadna posledná známa poloha.';
+        }
       }
     } else {
       // OPRAVA: Pre minulý deň bez pohybu nezobrazuj tabuľku ani posledný bod
@@ -1596,64 +1611,74 @@ async function loadHistory(dateStr) {
     map.fitBounds(line.getBounds(), { padding:[20,20] });
   }
 
-  // body s tooltipom
-  data.forEach((p, idx) => {
-    // Posledný bod bude blikajúci
-    if (idx === data.length - 1) {
-      // Vytvor HTML element pre blikajúci marker s inline keyframes
-      const markerHtml = `
-        <style>
-          @keyframes blink-marker {
-            0%, 100% { opacity: 1; transform: scale(1); }
-            50% { opacity: 0.3; transform: scale(1.3); }
-          }
-        </style>
-        <div style="
-          width: 16px;
-          height: 16px;
-          background: #3388ff;
-          border-radius: 50%;
-          border: 3px solid white;
-          box-shadow: 0 0 4px rgba(0,0,0,0.3);
-          animation: blink-marker 1.5s ease-in-out infinite;
-        "></div>
-      `;
-      
-      const icon = L.divIcon({
-        className: '',
-        html: markerHtml,
-        iconSize: [22, 22],
-        iconAnchor: [11, 11]
-      });
-      
-      lastPositionMarker = L.marker([p.latitude, p.longitude], { icon })
-        .bindTooltip(new Date(p.timestamp).toLocaleString('sk-SK'), { permanent:false, opacity:1 })
-        .addTo(map);
+  // Position dots and last-position markers
+  if (devices.length > 1) {
+    // Multi-device: group by device, add dots to each device layer
+    const byDeviceDots = {};
+    data.forEach(p => {
+      const did = p.device_id || 'unknown';
+      if (!byDeviceDots[did]) byDeviceDots[did] = [];
+      byDeviceDots[did].push(p);
+    });
 
-      // Add click handler to highlight corresponding table row
-      lastPositionMarker.on('click', () => {
-        highlightTableRowByCoords(p.latitude, p.longitude);
-      });
-    } else {
-      const marker = L.circleMarker([p.latitude, p.longitude], {
-        radius:4,
-        fillColor: '#3388ff',
-        color: '#fff',
-        weight: 1,
-        fillOpacity: 0.8
-      })
-       .bindTooltip(new Date(p.timestamp).toLocaleString('sk-SK'), { permanent:false, opacity:1 })
-       .addTo(trackLayer);
+    // Per-device last position markers for clustering
+    const lastPositions = [];
 
-      // Add click handler to highlight corresponding table row
-      marker.on('click', () => {
-        highlightTableRowByCoords(p.latitude, p.longitude);
-        highlightMarker(marker);
-      });
+    Object.keys(byDeviceDots).forEach(did => {
+      const pts = byDeviceDots[did];
+      const color = pts[0].device_color || getDeviceColor(parseInt(did)) || '#3388ff';
+      const name = pts[0].device_name || getDeviceName(parseInt(did));
+      const layer = deviceLayers[did];
+      if (!layer) return;
 
-      circleMarkers.push({ marker, lat: p.latitude, lng: p.longitude });
-    }
-  });
+      pts.forEach((p, idx) => {
+        if (idx === pts.length - 1) {
+          // Last position for this device - collect for cluster check
+          lastPositions.push({ p, color, name, did, layer });
+        } else {
+          // Regular dot in device color
+          const marker = L.circleMarker([p.latitude, p.longitude], {
+            radius: 4, fillColor: color, color: '#fff', weight: 1, fillOpacity: 0.8
+          })
+          .bindTooltip(`${name}: ${new Date(p.timestamp).toLocaleString('sk-SK')}`, { permanent: false, opacity: 1 })
+          .addTo(layer);
+
+          marker.on('click', () => {
+            highlightTableRowByCoords(p.latitude, p.longitude);
+            highlightMarker(marker);
+          });
+
+          circleMarkers.push({ marker, lat: p.latitude, lng: p.longitude, deviceColor: color });
+        }
+      });
+    });
+
+    // Render last position markers with clustering for overlapping positions
+    renderLastPositionMarkers(lastPositions);
+  } else {
+    // Single device mode
+    const singleColor = (activeDeviceId) ? getDeviceColor(activeDeviceId) : '#3388ff';
+    data.forEach((p, idx) => {
+      if (idx === data.length - 1) {
+        const markerHtml = `
+          <style>@keyframes blink-marker{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.3;transform:scale(1.3)}}</style>
+          <div style="width:16px;height:16px;background:${singleColor};border-radius:50%;border:3px solid white;box-shadow:0 0 4px rgba(0,0,0,.3);animation:blink-marker 1.5s ease-in-out infinite"></div>`;
+        const icon = L.divIcon({ className: '', html: markerHtml, iconSize: [22, 22], iconAnchor: [11, 11] });
+        lastPositionMarker = L.marker([p.latitude, p.longitude], { icon })
+          .bindTooltip(new Date(p.timestamp).toLocaleString('sk-SK'), { permanent: false, opacity: 1 })
+          .addTo(map);
+        lastPositionMarker.on('click', () => { highlightTableRowByCoords(p.latitude, p.longitude); });
+      } else {
+        const marker = L.circleMarker([p.latitude, p.longitude], {
+          radius: 4, fillColor: singleColor, color: '#fff', weight: 1, fillOpacity: 0.8
+        })
+        .bindTooltip(new Date(p.timestamp).toLocaleString('sk-SK'), { permanent: false, opacity: 1 })
+        .addTo(trackLayer);
+        marker.on('click', () => { highlightTableRowByCoords(p.latitude, p.longitude); highlightMarker(marker); });
+        circleMarkers.push({ marker, lat: p.latitude, lng: p.longitude, deviceColor: singleColor });
+      }
+    });
+  }
 
   // Cache data for table filtering by device
   window._lastHistoryData = data;
@@ -1662,6 +1687,95 @@ async function loadHistory(dateStr) {
 
   // Build table for active table device only
   buildTableFromData(data, dateStr);
+}
+
+// Render last position markers for each device, clustering nearby positions
+function renderLastPositionMarkers(lastPositions) {
+  if (!lastPositions.length) return;
+
+  // Store for rebuilding clusters on visibility toggle
+  window._lastPositionsForClustering = lastPositions;
+
+  // Add per-device blinking markers to their device layers
+  lastPositions.forEach(({ p, color, name, layer }) => {
+    addBlinkingLastMarker(p, color, name, layer);
+  });
+
+  // Build cluster overlays for visible devices
+  const visibleLastPos = lastPositions.filter(
+    lp => deviceVisibility[parseInt(lp.did)] !== false
+  );
+  renderClusterOverlays(visibleLastPos);
+}
+
+// Render cluster overlay markers for nearby last positions (on map layer, not device layer)
+function renderClusterOverlays(visibleLastPositions) {
+  const CLUSTER_DISTANCE = 100;
+  const clusters = [];
+  const used = new Set();
+
+  for (let i = 0; i < visibleLastPositions.length; i++) {
+    if (used.has(i)) continue;
+    const cluster = [visibleLastPositions[i]];
+    used.add(i);
+    for (let j = i + 1; j < visibleLastPositions.length; j++) {
+      if (used.has(j)) continue;
+      const d = haversineJs(visibleLastPositions[i].p.latitude, visibleLastPositions[i].p.longitude,
+                            visibleLastPositions[j].p.latitude, visibleLastPositions[j].p.longitude);
+      if (d < CLUSTER_DISTANCE) {
+        cluster.push(visibleLastPositions[j]);
+        used.add(j);
+      }
+    }
+    clusters.push(cluster);
+  }
+
+  // Only create cluster overlay markers for groups of 2+
+  clusters.forEach(cluster => {
+    if (cluster.length < 2) return;
+
+    const avgLat = cluster.reduce((s, c) => s + c.p.latitude, 0) / cluster.length;
+    const avgLng = cluster.reduce((s, c) => s + c.p.longitude, 0) / cluster.length;
+
+    const clusterHtml = `
+      <style>@keyframes blink-marker{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.3;transform:scale(1.3)}}</style>
+      <div style="width:28px;height:28px;background:linear-gradient(135deg,${cluster[0].color},${cluster[1] ? cluster[1].color : cluster[0].color});border-radius:50%;border:3px solid white;box-shadow:0 0 6px rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;color:white;font-weight:bold;font-size:13px;animation:blink-marker 1.5s ease-in-out infinite">${cluster.length}</div>`;
+    const clusterIcon = L.divIcon({ className: '', html: clusterHtml, iconSize: [34, 34], iconAnchor: [17, 17] });
+
+    const popupContent = cluster.map(c => {
+      const ts = new Date(c.p.timestamp).toLocaleString('sk-SK');
+      return `<div style="display:flex;align-items:center;gap:6px;padding:3px 0"><span style="width:10px;height:10px;border-radius:50%;background:${c.color};display:inline-block;flex-shrink:0"></span><b>${c.name}</b>&nbsp;<small>${ts}</small></div>`;
+    }).join('');
+
+    const clusterMarker = L.marker([avgLat, avgLng], { icon: clusterIcon })
+      .bindPopup(`<div style="min-width:180px">${popupContent}</div>`, { maxWidth: 300 })
+      .addTo(map);
+
+    if (!window._clusterMarkers) window._clusterMarkers = [];
+    window._clusterMarkers.push(clusterMarker);
+  });
+}
+
+function addBlinkingLastMarker(p, color, name, layer) {
+  const markerHtml = `
+    <style>@keyframes blink-marker{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.3;transform:scale(1.3)}}</style>
+    <div style="width:16px;height:16px;background:${color};border-radius:50%;border:3px solid white;box-shadow:0 0 4px rgba(0,0,0,.3);animation:blink-marker 1.5s ease-in-out infinite"></div>`;
+  const icon = L.divIcon({ className: '', html: markerHtml, iconSize: [22, 22], iconAnchor: [11, 11] });
+  const m = L.marker([p.latitude, p.longitude], { icon })
+    .bindTooltip(`${name}: ${new Date(p.timestamp).toLocaleString('sk-SK')}`, { permanent: false, opacity: 1 })
+    .addTo(layer);
+  m.on('click', () => { highlightTableRowByCoords(p.latitude, p.longitude); });
+}
+
+// Simple haversine for client-side distance check (meters)
+function haversineJs(lat1, lon1, lat2, lon2) {
+  const R = 6371000;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+            Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+            Math.sin(dLon/2) * Math.sin(dLon/2);
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
 }
 
 function buildTableFromData(data, dateStr) {
@@ -1849,17 +1963,17 @@ function renderTable(rows) {
       circleMarkers.forEach(cm => {
         const markerLatLng = cm.marker.getLatLng();
         if (Math.abs(markerLatLng.lat - lat) < 0.000001 && Math.abs(markerLatLng.lng - lng) < 0.000001) {
-          // Reset all markers to default style
+          // Reset all markers to their device color
           circleMarkers.forEach(m => {
             m.marker.setStyle({
               radius: 4,
-              fillColor: '#3388ff',
+              fillColor: m.deviceColor || '#3388ff',
               color: '#fff',
               weight: 1,
               fillOpacity: 0.8
             });
           });
-          
+
           // Highlight selected marker
           cm.marker.setStyle({
             radius: 8,
@@ -1914,11 +2028,11 @@ function highlightTableRowByCoords(lat, lng) {
 }
 
 function highlightMarker(selectedMarker) {
-  // Reset all markers to default style
+  // Reset all markers to their device color
   circleMarkers.forEach(cm => {
     cm.marker.setStyle({
       radius: 4,
-      fillColor: '#3388ff',
+      fillColor: cm.deviceColor || '#3388ff',
       color: '#fff',
       weight: 1,
       fillOpacity: 0.8
@@ -4269,6 +4383,20 @@ function updateDeviceLayerVisibility() {
       map.removeLayer(layer);
     }
   });
+
+  // Rebuild cluster markers based on visible devices
+  if (window._lastPositionsForClustering) {
+    // Remove old clusters
+    if (window._clusterMarkers) {
+      window._clusterMarkers.forEach(m => m.remove());
+      window._clusterMarkers = [];
+    }
+    // Re-render with only visible devices
+    const visibleLastPos = window._lastPositionsForClustering.filter(
+      lp => deviceVisibility[parseInt(lp.did)] !== false
+    );
+    renderClusterOverlays(visibleLastPos);
+  }
 }
 
 // ========== DEVICE MANAGEMENT (Settings) ==========

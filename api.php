@@ -1972,9 +1972,14 @@ try {
 
 if ($action === 'get_perimeters') {
     try {
-        $q = $pdo->query("SELECT id, name, polygon, alert_on_enter, alert_on_exit, notification_email, is_active, color, device_id, created_at, updated_at
-                          FROM perimeters
-                          ORDER BY id ASC");
+        // Check if device_id column exists (migration may not have run yet)
+        $hasDeviceId = false;
+        $cols = $pdo->query("PRAGMA table_info(perimeters)");
+        while ($c = $cols->fetch()) {
+            if ($c['name'] === 'device_id') { $hasDeviceId = true; break; }
+        }
+
+        $q = $pdo->query("SELECT * FROM perimeters ORDER BY id ASC");
         $out = [];
         while ($r = $q->fetch()) {
             $perimeterId = (int)$r['id'];
@@ -2008,11 +2013,11 @@ if ($action === 'get_perimeters') {
                 'polygon' => json_decode($r['polygon'], true),
                 'alert_on_enter' => (bool)$r['alert_on_enter'],
                 'alert_on_exit' => (bool)$r['alert_on_exit'],
-                'notification_email' => $r['notification_email'], // Keep for backwards compatibility
+                'notification_email' => $r['notification_email'] ?? null,
                 'emails' => $emails,
                 'is_active' => (bool)$r['is_active'],
                 'color' => $r['color'] ?? '#ff6b6b',
-                'device_id' => $r['device_id'] !== null ? (int)$r['device_id'] : null,
+                'device_id' => ($hasDeviceId && isset($r['device_id']) && $r['device_id'] !== null) ? (int)$r['device_id'] : null,
                 'created_at' => $r['created_at'],
                 'updated_at' => $r['updated_at']
             ];
@@ -2056,24 +2061,21 @@ if ($action === 'save_perimeter' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         $polygonJson = json_encode($polygon);
         $now = (new DateTimeImmutable())->format('Y-m-d H:i:s');
 
+        // Check if device_id column exists
+        $hasDeviceIdCol = false;
+        $cols = $pdo->query("PRAGMA table_info(perimeters)");
+        while ($c = $cols->fetch()) {
+            if ($c['name'] === 'device_id') { $hasDeviceIdCol = true; break; }
+        }
+
         $pdo->beginTransaction();
 
         if ($id) {
             // Update existing
-            $stmt = $pdo->prepare("
-                UPDATE perimeters SET
-                    name = :name,
-                    polygon = :polygon,
-                    alert_on_enter = :enter,
-                    alert_on_exit = :exit,
-                    notification_email = :email,
-                    is_active = :active,
-                    color = :color,
-                    device_id = :device_id,
-                    updated_at = :updated
-                WHERE id = :id
-            ");
-            $stmt->execute([
+            $sql = "UPDATE perimeters SET name = :name, polygon = :polygon, alert_on_enter = :enter, alert_on_exit = :exit, notification_email = :email, is_active = :active, color = :color, updated_at = :updated"
+                 . ($hasDeviceIdCol ? ", device_id = :device_id" : "")
+                 . " WHERE id = :id";
+            $params = [
                 ':id' => $id,
                 ':name' => $name,
                 ':polygon' => $polygonJson,
@@ -2082,17 +2084,19 @@ if ($action === 'save_perimeter' && $_SERVER['REQUEST_METHOD'] === 'POST') {
                 ':email' => $notificationEmail ?: null,
                 ':active' => $isActive,
                 ':color' => $color,
-                ':device_id' => $deviceId,
                 ':updated' => $now
-            ]);
+            ];
+            if ($hasDeviceIdCol) $params[':device_id'] = $deviceId;
+            $stmt = $pdo->prepare($sql);
+            $stmt->execute($params);
             $perimeterId = $id;
         } else {
             // Insert new
-            $stmt = $pdo->prepare("
-                INSERT INTO perimeters (name, polygon, alert_on_enter, alert_on_exit, notification_email, is_active, color, device_id, created_at, updated_at)
-                VALUES (:name, :polygon, :enter, :exit, :email, :active, :color, :device_id, :created, :updated)
-            ");
-            $stmt->execute([
+            $fields = "name, polygon, alert_on_enter, alert_on_exit, notification_email, is_active, color, created_at, updated_at"
+                    . ($hasDeviceIdCol ? ", device_id" : "");
+            $placeholders = ":name, :polygon, :enter, :exit, :email, :active, :color, :created, :updated"
+                          . ($hasDeviceIdCol ? ", :device_id" : "");
+            $params = [
                 ':name' => $name,
                 ':polygon' => $polygonJson,
                 ':enter' => $alertOnEnter,
@@ -2100,10 +2104,12 @@ if ($action === 'save_perimeter' && $_SERVER['REQUEST_METHOD'] === 'POST') {
                 ':email' => $notificationEmail ?: null,
                 ':active' => $isActive,
                 ':color' => $color,
-                ':device_id' => $deviceId,
                 ':created' => $now,
                 ':updated' => $now
-            ]);
+            ];
+            if ($hasDeviceIdCol) $params[':device_id'] = $deviceId;
+            $stmt = $pdo->prepare("INSERT INTO perimeters ($fields) VALUES ($placeholders)");
+            $stmt->execute($params);
             $perimeterId = (int)$pdo->lastInsertId();
         }
 
