@@ -1658,6 +1658,224 @@ body.authenticated .container{
   color:var(--muted-text);
 }
 
+/* Date/Time Filter */
+.log-date-filter{
+  margin-bottom:12px;
+  padding:12px;
+  background:var(--btn-bg);
+  border:1px solid var(--border);
+  border-radius:8px;
+}
+
+.log-date-filter-row{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  flex-wrap:wrap;
+}
+
+.log-date-quick-buttons{
+  display:flex;
+  gap:6px;
+  flex-wrap:wrap;
+}
+
+.log-quick-range{
+  font-size:12px !important;
+  padding:4px 10px !important;
+  border-radius:16px !important;
+  transition:all 0.15s;
+}
+
+.log-quick-range.active{
+  background:var(--primary) !important;
+  color:#fff !important;
+  border-color:var(--primary) !important;
+}
+
+.log-custom-date-range{
+  margin-top:12px;
+  padding:12px;
+  background:var(--card-bg);
+  border:1px solid var(--border);
+  border-radius:8px;
+}
+
+.log-date-inputs{
+  display:flex;
+  gap:16px;
+  flex-wrap:wrap;
+  margin-bottom:12px;
+}
+
+.log-date-input-group{
+  display:flex;
+  align-items:center;
+  gap:8px;
+}
+
+.log-date-input-group label{
+  font-size:12px;
+  color:var(--muted-text);
+  white-space:nowrap;
+}
+
+.log-date-input,
+.log-time-input{
+  padding:6px 10px;
+  border:1px solid var(--border);
+  border-radius:6px;
+  font-size:13px;
+  background:var(--btn-bg);
+  color:var(--text);
+}
+
+.log-date-input{
+  width:140px;
+}
+
+.log-time-input{
+  width:100px;
+}
+
+/* Calendar */
+.log-date-calendar{
+  margin-bottom:12px;
+}
+
+.log-calendar-header{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  margin-bottom:8px;
+}
+
+.log-cal-month-label{
+  font-size:14px;
+  font-weight:600;
+  color:var(--text);
+}
+
+.log-calendar-grid{
+  display:grid;
+  grid-template-columns:repeat(7, 1fr);
+  gap:2px;
+  margin-bottom:2px;
+}
+
+.log-cal-day-header{
+  text-align:center;
+  font-size:11px;
+  font-weight:600;
+  color:var(--muted-text);
+  padding:4px;
+}
+
+.log-calendar-days{
+  display:grid;
+  grid-template-columns:repeat(7, 1fr);
+  gap:2px;
+}
+
+.log-cal-day{
+  text-align:center;
+  padding:6px 4px;
+  font-size:13px;
+  border-radius:6px;
+  cursor:pointer;
+  transition:all 0.15s;
+  color:var(--text);
+}
+
+.log-cal-day:hover:not(.log-cal-day-disabled):not(.log-cal-day-empty){
+  background:var(--border);
+}
+
+.log-cal-day-empty{
+  cursor:default;
+}
+
+.log-cal-day-today{
+  font-weight:700;
+  border:2px solid var(--primary);
+}
+
+.log-cal-day-selected{
+  background:var(--primary) !important;
+  color:#fff !important;
+  font-weight:600;
+}
+
+.log-cal-day-disabled{
+  color:var(--muted-text);
+  opacity:0.4;
+  cursor:not-allowed;
+}
+
+.log-calendar-info{
+  font-size:11px;
+  color:var(--muted-text);
+  margin-top:6px;
+}
+
+/* Bulk Delete Section */
+.log-delete-section{
+  border-top:1px solid var(--border);
+  padding-top:16px;
+}
+
+.log-delete-description{
+  font-size:13px;
+  color:var(--muted-text);
+  margin:0 0 12px 0;
+}
+
+.log-delete-row{
+  display:flex;
+  align-items:center;
+  gap:12px;
+  flex-wrap:wrap;
+}
+
+.log-delete-row label{
+  font-size:13px;
+  color:var(--text);
+  white-space:nowrap;
+}
+
+.log-delete-info{
+  margin-top:12px;
+  padding:10px 14px;
+  border-radius:6px;
+  font-size:13px;
+  background:var(--btn-bg);
+  border:1px solid var(--border);
+}
+
+.log-delete-success{
+  background:#d1fae5;
+  color:#059669;
+  border-color:#6ee7b7;
+}
+
+.log-delete-error{
+  background:#fee2e2;
+  color:#dc2626;
+  border-color:#fca5a5;
+}
+
+[data-theme="dark"] .log-delete-success{
+  background:#064e3b;
+  color:#6ee7b7;
+  border-color:#065f46;
+}
+
+[data-theme="dark"] .log-delete-error{
+  background:#7f1d1d;
+  color:#fca5a5;
+  border-color:#991b1b;
+}
+
 /* Responsive - stack columns on mobile */
 @media (max-width:768px){
   .perimeter-edit-layout{
@@ -1737,6 +1955,20 @@ body.authenticated .container{
 
   .log-level{
     align-self:flex-start;
+  }
+
+  .log-date-inputs{
+    flex-direction:column;
+    gap:8px;
+  }
+
+  .log-date-input-group{
+    flex-wrap:wrap;
+  }
+
+  .log-delete-row{
+    flex-direction:column;
+    align-items:flex-start;
   }
 }
 

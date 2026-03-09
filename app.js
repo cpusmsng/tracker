@@ -3908,6 +3908,12 @@ let logViewerState = {
   limit: 100,
   level: '',
   search: '',
+  dateFrom: null,
+  dateTo: null,
+  quickRangeHours: 6,
+  customMode: false,
+  selectedDays: [],
+  calendarMonth: null, // Date object for current calendar view
   debounceTimer: null
 };
 
@@ -3916,7 +3922,9 @@ function openLogViewer() {
   if (overlay) {
     overlay.classList.remove('hidden');
     loadLogStats();
-    loadLogs();
+    // Default: last 6 hours
+    setQuickRange(6);
+    loadDeleteMonths();
   }
 }
 
@@ -3952,6 +3960,197 @@ async function loadLogStats() {
   }
 }
 
+function setQuickRange(hours) {
+  logViewerState.quickRangeHours = hours;
+  logViewerState.customMode = false;
+  logViewerState.offset = 0;
+
+  // Update active button
+  document.querySelectorAll('.log-quick-range').forEach(btn => btn.classList.remove('active'));
+  const activeBtn = document.querySelector(`.log-quick-range[data-hours="${hours}"]`);
+  if (activeBtn) activeBtn.classList.add('active');
+
+  // Hide custom range
+  const customPanel = $('#logCustomDateRange');
+  if (customPanel) customPanel.classList.add('hidden');
+
+  // Calculate date range
+  const now = new Date();
+  const from = new Date(now.getTime() - hours * 60 * 60 * 1000);
+  logViewerState.dateFrom = formatLocalDateTime(from);
+  logViewerState.dateTo = null; // null = up to now
+
+  // Update info
+  const rangeInfo = $('#logDateRangeInfo');
+  if (rangeInfo) {
+    rangeInfo.textContent = `Rozsah: posledných ${hours} hodín`;
+  }
+
+  loadLogs();
+}
+
+function openCustomDateRange() {
+  logViewerState.customMode = true;
+  logViewerState.selectedDays = [];
+
+  // Update active button
+  document.querySelectorAll('.log-quick-range').forEach(btn => btn.classList.remove('active'));
+  const customBtn = document.querySelector('.log-quick-range[data-custom]');
+  if (customBtn) customBtn.classList.add('active');
+
+  // Show custom range panel
+  const customPanel = $('#logCustomDateRange');
+  if (customPanel) customPanel.classList.remove('hidden');
+
+  // Set default dates to today
+  const today = new Date();
+  const todayStr = formatDateISO(today);
+  const fromEl = $('#logDateFrom');
+  const toEl = $('#logDateTo');
+  if (fromEl) fromEl.value = todayStr;
+  if (toEl) toEl.value = todayStr;
+  if ($('#logTimeFrom')) $('#logTimeFrom').value = '00:00';
+  if ($('#logTimeTo')) $('#logTimeTo').value = '23:59';
+
+  // Init calendar to current month
+  logViewerState.calendarMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+  renderLogCalendar();
+}
+
+function formatLocalDateTime(date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  const h = String(date.getHours()).padStart(2, '0');
+  const min = String(date.getMinutes()).padStart(2, '0');
+  const s = String(date.getSeconds()).padStart(2, '0');
+  return `${y}-${m}-${d}T${h}:${min}:${s}`;
+}
+
+function formatDateISO(date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+function renderLogCalendar() {
+  const container = $('#logCalDays');
+  const label = $('#logCalMonthLabel');
+  if (!container || !label) return;
+
+  const monthDate = logViewerState.calendarMonth;
+  const year = monthDate.getFullYear();
+  const month = monthDate.getMonth();
+
+  const monthNames = ['Január', 'Február', 'Marec', 'Apríl', 'Máj', 'Jún',
+    'Júl', 'August', 'September', 'Október', 'November', 'December'];
+  label.textContent = `${monthNames[month]} ${year}`;
+
+  const firstDay = new Date(year, month, 1);
+  let startDow = firstDay.getDay(); // 0=Sun
+  startDow = startDow === 0 ? 6 : startDow - 1; // Convert to Mon=0
+
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const today = formatDateISO(new Date());
+
+  let html = '';
+
+  // Empty cells before first day
+  for (let i = 0; i < startDow; i++) {
+    html += '<div class="log-cal-day log-cal-day-empty"></div>';
+  }
+
+  for (let d = 1; d <= daysInMonth; d++) {
+    const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    const isSelected = logViewerState.selectedDays.includes(dateStr);
+    const isToday = dateStr === today;
+    const isFuture = dateStr > today;
+
+    let classes = 'log-cal-day';
+    if (isSelected) classes += ' log-cal-day-selected';
+    if (isToday) classes += ' log-cal-day-today';
+    if (isFuture) classes += ' log-cal-day-disabled';
+
+    html += `<div class="${classes}" data-date="${dateStr}" ${isFuture ? '' : `onclick="toggleLogCalDay('${dateStr}')"`}>${d}</div>`;
+  }
+
+  container.innerHTML = html;
+}
+
+function toggleLogCalDay(dateStr) {
+  const idx = logViewerState.selectedDays.indexOf(dateStr);
+  if (idx >= 0) {
+    logViewerState.selectedDays.splice(idx, 1);
+  } else {
+    if (logViewerState.selectedDays.length >= 7) {
+      alert('Maximálne 7 dní je možné vybrať.');
+      return;
+    }
+    logViewerState.selectedDays.push(dateStr);
+  }
+  logViewerState.selectedDays.sort();
+
+  // Auto-update date inputs based on selected days
+  if (logViewerState.selectedDays.length > 0) {
+    const first = logViewerState.selectedDays[0];
+    const last = logViewerState.selectedDays[logViewerState.selectedDays.length - 1];
+    if ($('#logDateFrom')) $('#logDateFrom').value = first;
+    if ($('#logDateTo')) $('#logDateTo').value = last;
+  }
+
+  renderLogCalendar();
+}
+
+function logCalPrevMonth() {
+  const d = logViewerState.calendarMonth;
+  logViewerState.calendarMonth = new Date(d.getFullYear(), d.getMonth() - 1, 1);
+  renderLogCalendar();
+}
+
+function logCalNextMonth() {
+  const d = logViewerState.calendarMonth;
+  logViewerState.calendarMonth = new Date(d.getFullYear(), d.getMonth() + 1, 1);
+  renderLogCalendar();
+}
+
+function applyCustomDateRange() {
+  const dateFrom = $('#logDateFrom')?.value;
+  const dateTo = $('#logDateTo')?.value;
+  const timeFrom = $('#logTimeFrom')?.value || '00:00';
+  const timeTo = $('#logTimeTo')?.value || '23:59';
+
+  if (!dateFrom || !dateTo) {
+    alert('Prosím zvoľte dátumový rozsah.');
+    return;
+  }
+
+  // Validate max 7 days
+  const from = new Date(dateFrom);
+  const to = new Date(dateTo);
+  const diffDays = Math.ceil((to - from) / (1000 * 60 * 60 * 24)) + 1;
+  if (diffDays > 7) {
+    alert('Maximálny rozsah je 7 dní.');
+    return;
+  }
+  if (diffDays < 1) {
+    alert('Dátum "Od" musí byť pred alebo rovný dátumu "Do".');
+    return;
+  }
+
+  logViewerState.dateFrom = `${dateFrom}T${timeFrom}:00`;
+  logViewerState.dateTo = `${dateTo}T${timeTo}:59`;
+  logViewerState.offset = 0;
+
+  // Update info
+  const rangeInfo = $('#logDateRangeInfo');
+  if (rangeInfo) {
+    rangeInfo.textContent = `Rozsah: ${dateFrom} ${timeFrom} — ${dateTo} ${timeTo}`;
+  }
+
+  loadLogs();
+}
+
 async function loadLogs() {
   const container = $('#logContainer');
   if (!container) return;
@@ -3965,6 +4164,12 @@ async function loadLogs() {
       order: 'desc'
     });
 
+    if (logViewerState.dateFrom) {
+      params.append('date_from', logViewerState.dateFrom);
+    }
+    if (logViewerState.dateTo) {
+      params.append('date_to', logViewerState.dateTo);
+    }
     if (logViewerState.level) {
       params.append('level', logViewerState.level);
     }
@@ -3984,12 +4189,13 @@ async function loadLogs() {
         console.log('[Log Viewer Debug]', {
           file_path: d.file_path,
           file_size: d.file_size,
+          date_from: d.date_from,
+          date_to: d.date_to,
           total_lines_read: d.debug.total_lines_read,
           lines_matched: d.debug.lines_matched,
           lines_after_filter: d.debug.lines_after_filter,
           newest_timestamp: d.debug.newest_timestamp,
-          oldest_timestamp: d.debug.oldest_timestamp,
-          unmatched_samples: d.debug.unmatched_samples
+          oldest_timestamp: d.debug.oldest_timestamp
         });
       }
 
@@ -3997,8 +4203,7 @@ async function loadLogs() {
       const fileInfo = $('#logFileInfo');
       if (fileInfo) {
         const sizeKB = d.file_size ? (d.file_size / 1024).toFixed(1) : 0;
-        const debugInfo = d.debug ? ` | Riadkov: ${d.debug.total_lines_read} | Najnovší: ${d.debug.newest_timestamp || 'N/A'}` : '';
-        fileInfo.textContent = `Súbor: ${d.file || 'N/A'} (${sizeKB} KB)${debugInfo}`;
+        fileInfo.textContent = `Súbor: ${d.file || 'N/A'} (${sizeKB} KB)`;
       }
 
       const countInfo = $('#logCountInfo');
@@ -4123,6 +4328,91 @@ async function clearLogs() {
   }
 }
 
+async function loadDeleteMonths() {
+  const select = $('#logDeleteBeforeMonth');
+  const btn = $('#logDeleteOldBtn');
+  if (!select) return;
+
+  try {
+    const response = await apiGet(`${API}?action=get_log_date_range`);
+    if (response && response.ok && response.data && response.data.months) {
+      const months = response.data.months;
+      const monthKeys = Object.keys(months);
+
+      if (monthKeys.length === 0) {
+        select.innerHTML = '<option value="">Žiadne logy</option>';
+        if (btn) btn.disabled = true;
+        return;
+      }
+
+      const monthNames = ['Január', 'Február', 'Marec', 'Apríl', 'Máj', 'Jún',
+        'Júl', 'August', 'September', 'Október', 'November', 'December'];
+
+      let html = '<option value="">Vyberte mesiac...</option>';
+      for (const key of monthKeys) {
+        const [y, m] = key.split('-');
+        const name = `${monthNames[parseInt(m, 10) - 1]} ${y}`;
+        html += `<option value="${key}">${name} (${months[key]} záznamov)</option>`;
+      }
+      select.innerHTML = html;
+
+      select.addEventListener('change', () => {
+        if (btn) btn.disabled = !select.value;
+      });
+    }
+  } catch (err) {
+    console.error('Failed to load log date range:', err);
+    select.innerHTML = '<option value="">Chyba načítania</option>';
+  }
+}
+
+async function deleteOldLogs() {
+  const select = $('#logDeleteBeforeMonth');
+  const beforeMonth = select?.value;
+  if (!beforeMonth) return;
+
+  const [y, m] = beforeMonth.split('-');
+  const monthNames = ['Január', 'Február', 'Marec', 'Apríl', 'Máj', 'Jún',
+    'Júl', 'August', 'September', 'Október', 'November', 'December'];
+  const monthName = `${monthNames[parseInt(m, 10) - 1]} ${y}`;
+
+  if (!confirm(`Naozaj chcete zmazať všetky logy PRED mesiacom ${monthName}? Záloha bude vytvorená.`)) {
+    return;
+  }
+
+  const infoEl = $('#logDeleteInfo');
+
+  try {
+    if (infoEl) {
+      infoEl.classList.remove('hidden');
+      infoEl.textContent = 'Mazanie logov...';
+      infoEl.className = 'log-delete-info';
+    }
+
+    const response = await apiPost('delete_old_logs', { before_month: beforeMonth });
+
+    if (response && response.ok) {
+      if (infoEl) {
+        infoEl.textContent = `Zmazaných ${response.deleted} záznamov. Zostáva ${response.remaining}. Záloha: ${response.backup}`;
+        infoEl.className = 'log-delete-info log-delete-success';
+      }
+      loadLogs();
+      loadLogStats();
+      loadDeleteMonths();
+    } else {
+      if (infoEl) {
+        infoEl.textContent = `Chyba: ${response.error || 'Neznáma chyba'}`;
+        infoEl.className = 'log-delete-info log-delete-error';
+      }
+    }
+  } catch (err) {
+    if (infoEl) {
+      infoEl.textContent = `Chyba: ${err.message}`;
+      infoEl.className = 'log-delete-info log-delete-error';
+    }
+  }
+}
+
 function initLogViewer() {
   // Close button
   const closeBtn = $('#logViewerClose');
@@ -4161,6 +4451,27 @@ function initLogViewer() {
     statsDays.addEventListener('change', loadLogStats);
   }
 
+  // Quick range buttons
+  document.querySelectorAll('.log-quick-range[data-hours]').forEach(btn => {
+    btn.addEventListener('click', () => setQuickRange(parseInt(btn.dataset.hours, 10)));
+  });
+
+  // Custom range button
+  const customRangeBtn = document.querySelector('.log-quick-range[data-custom]');
+  if (customRangeBtn) {
+    customRangeBtn.addEventListener('click', openCustomDateRange);
+  }
+
+  // Calendar navigation
+  const calPrev = $('#logCalPrev');
+  if (calPrev) calPrev.addEventListener('click', logCalPrevMonth);
+  const calNext = $('#logCalNext');
+  if (calNext) calNext.addEventListener('click', logCalNextMonth);
+
+  // Apply date range
+  const applyBtn = $('#logApplyDateRange');
+  if (applyBtn) applyBtn.addEventListener('click', applyCustomDateRange);
+
   // Log refresh
   const refreshLogsBtn = $('#refreshLogs');
   if (refreshLogsBtn) {
@@ -4194,6 +4505,12 @@ function initLogViewer() {
   const nextPageBtn = $('#logNextPage');
   if (nextPageBtn) {
     nextPageBtn.addEventListener('click', goToNextPage);
+  }
+
+  // Bulk delete
+  const deleteOldBtn = $('#logDeleteOldBtn');
+  if (deleteOldBtn) {
+    deleteOldBtn.addEventListener('click', deleteOldLogs);
   }
 }
 

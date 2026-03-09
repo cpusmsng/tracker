@@ -1684,6 +1684,13 @@ if ($action === 'get_logs') {
         $level = qparam('level'); // error, info, debug, or null for all
         $search = qparam('search');
         $order = qparam('order') ?: 'desc'; // asc or desc (default newest first)
+        $dateFrom = qparam('date_from'); // ISO datetime string e.g. 2025-01-15T00:00:00
+        $dateTo = qparam('date_to');     // ISO datetime string e.g. 2025-01-15T23:59:59
+
+        // Default: last 6 hours if no date range specified
+        if ($dateFrom === null && $dateTo === null) {
+            $dateFrom = (new DateTimeImmutable('now', new DateTimeZone('Europe/Bratislava')))->sub(new DateInterval('PT6H'))->format('Y-m-d\TH:i:s');
+        }
 
         if (!is_file($logFile)) {
             respond([
@@ -1694,7 +1701,9 @@ if ($action === 'get_logs') {
                     'file' => basename($logFile),
                     'file_exists' => false,
                     'tried_path' => $logFile,
-                    'env_log_file' => getenv('LOG_FILE') ?: 'not set'
+                    'env_log_file' => getenv('LOG_FILE') ?: 'not set',
+                    'date_from' => $dateFrom,
+                    'date_to' => $dateTo
                 ]
             ]);
         }
@@ -1720,6 +1729,15 @@ if ($action === 'get_logs') {
                     'level' => strtolower($matches[2]),
                     'message' => $matches[3]
                 ];
+
+                // Filter by date range
+                $ts = substr($logEntry['timestamp'], 0, 19); // Strip timezone offset for comparison
+                if ($dateFrom !== null && $ts < $dateFrom) {
+                    continue;
+                }
+                if ($dateTo !== null && $ts > $dateTo) {
+                    continue;
+                }
 
                 // Filter by level if specified
                 if ($level !== null && $logEntry['level'] !== strtolower($level)) {
@@ -1773,9 +1791,11 @@ if ($action === 'get_logs') {
                 'file_path' => $logFile,
                 'file_exists' => true,
                 'file_size' => filesize($logFile),
+                'date_from' => $dateFrom,
+                'date_to' => $dateTo,
                 'debug' => [
                     'total_lines_read' => $totalLinesRead,
-                    'lines_matched' => count($parsedLogs) + ($level !== null || $search !== null ? 0 : 0), // before filtering
+                    'lines_matched' => $total,
                     'lines_after_filter' => $total,
                     'unmatched_samples' => $unmatchedLines,
                     'newest_timestamp' => $newestTs,
@@ -1918,6 +1938,112 @@ if ($action === 'clear_logs' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         ]);
     } catch (Throwable $e) {
         respond(['ok' => false, 'error' => 'Failed to clear logs: ' . $e->getMessage()], 500);
+    }
+}
+
+if ($action === 'delete_old_logs' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    try {
+        $j = json_body();
+        $beforeMonth = $j['before_month'] ?? null; // Format: YYYY-MM (delete everything before this month)
+
+        if (!$beforeMonth || !preg_match('/^\d{4}-\d{2}$/', $beforeMonth)) {
+            respond(['ok' => false, 'error' => 'Invalid before_month format. Use YYYY-MM.'], 400);
+        }
+
+        $logFile = get_log_file_path();
+        if (!is_file($logFile)) {
+            respond(['ok' => true, 'message' => 'Log file does not exist', 'deleted' => 0]);
+        }
+
+        $cutoffDate = $beforeMonth . '-01T00:00:00'; // First day of specified month
+
+        $allLines = file($logFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+        if ($allLines === false) {
+            respond(['ok' => false, 'error' => 'Failed to read log file'], 500);
+        }
+
+        $logPattern = '/^\[([\d\-T:+\-]+)\]\s*\[([A-Z]+)\]\s*(.*)$/';
+        $keptLines = [];
+        $deletedCount = 0;
+
+        foreach ($allLines as $line) {
+            if (preg_match($logPattern, $line, $matches)) {
+                $ts = substr($matches[1], 0, 19);
+                if ($ts < $cutoffDate) {
+                    $deletedCount++;
+                    continue;
+                }
+            }
+            $keptLines[] = $line;
+        }
+
+        if ($deletedCount === 0) {
+            respond(['ok' => true, 'message' => 'No logs found before ' . $beforeMonth, 'deleted' => 0]);
+        }
+
+        // Backup before deletion
+        $backupFile = $logFile . '.' . date('Y-m-d_H-i-s') . '.bak';
+        if (!copy($logFile, $backupFile)) {
+            respond(['ok' => false, 'error' => 'Failed to backup log file'], 500);
+        }
+
+        // Write kept lines back
+        if (file_put_contents($logFile, implode("\n", $keptLines) . "\n") === false) {
+            respond(['ok' => false, 'error' => 'Failed to write log file'], 500);
+        }
+
+        respond([
+            'ok' => true,
+            'message' => "Deleted $deletedCount log entries before $beforeMonth",
+            'deleted' => $deletedCount,
+            'remaining' => count($keptLines),
+            'backup' => basename($backupFile)
+        ]);
+    } catch (Throwable $e) {
+        respond(['ok' => false, 'error' => 'Failed to delete old logs: ' . $e->getMessage()], 500);
+    }
+}
+
+if ($action === 'get_log_date_range') {
+    try {
+        $logFile = get_log_file_path();
+        if (!is_file($logFile)) {
+            respond(['ok' => true, 'data' => ['oldest' => null, 'newest' => null]]);
+        }
+
+        $allLines = file($logFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+        if ($allLines === false) {
+            respond(['ok' => false, 'error' => 'Failed to read log file'], 500);
+        }
+
+        $logPattern = '/^\[([\d\-T:+\-]+)\]\s*\[([A-Z]+)\]\s*(.*)$/';
+        $oldest = null;
+        $newest = null;
+        $months = [];
+
+        foreach ($allLines as $line) {
+            if (preg_match($logPattern, $line, $matches)) {
+                $ts = substr($matches[1], 0, 19);
+                if ($oldest === null || $ts < $oldest) $oldest = $ts;
+                if ($newest === null || $ts > $newest) $newest = $ts;
+                $month = substr($ts, 0, 7);
+                if (!isset($months[$month])) $months[$month] = 0;
+                $months[$month]++;
+            }
+        }
+
+        ksort($months);
+
+        respond([
+            'ok' => true,
+            'data' => [
+                'oldest' => $oldest,
+                'newest' => $newest,
+                'months' => $months
+            ]
+        ]);
+    } catch (Throwable $e) {
+        respond(['ok' => false, 'error' => $e->getMessage()], 500);
     }
 }
 
