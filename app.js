@@ -4035,9 +4035,9 @@ function formatDateISO(date) {
 }
 
 function renderLogCalendar() {
-  const container = $('#logCalDays');
+  const grid = $('#logCalGrid');
   const label = $('#logCalMonthLabel');
-  if (!container || !label) return;
+  if (!grid || !label) return;
 
   const monthDate = logViewerState.calendarMonth;
   const year = monthDate.getFullYear();
@@ -4054,7 +4054,10 @@ function renderLogCalendar() {
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const today = formatDateISO(new Date());
 
-  let html = '';
+  // Day headers
+  let html = ['Po','Ut','St','Št','Pi','So','Ne'].map(d =>
+    `<div class="log-cal-day-header">${d}</div>`
+  ).join('');
 
   // Empty cells before first day
   for (let i = 0; i < startDow; i++) {
@@ -4072,10 +4075,17 @@ function renderLogCalendar() {
     if (isToday) classes += ' log-cal-day-today';
     if (isFuture) classes += ' log-cal-day-disabled';
 
-    html += `<div class="${classes}" data-date="${dateStr}" ${isFuture ? '' : `onclick="toggleLogCalDay('${dateStr}')"`}>${d}</div>`;
+    html += `<div class="${classes}" data-date="${dateStr}">${d}</div>`;
   }
 
-  container.innerHTML = html;
+  grid.innerHTML = html;
+
+  // Event delegation for day clicks
+  grid.querySelectorAll('.log-cal-day[data-date]').forEach(el => {
+    if (!el.classList.contains('log-cal-day-disabled') && !el.classList.contains('log-cal-day-empty')) {
+      el.addEventListener('click', () => toggleLogCalDay(el.dataset.date));
+    }
+  });
 }
 
 function toggleLogCalDay(dateStr) {
@@ -4309,7 +4319,7 @@ function searchLogs() {
 }
 
 async function clearLogs() {
-  if (!confirm('Naozaj chcete vymazať všetky logy? Záloha bude vytvorená.')) {
+  if (!confirm('Naozaj chcete vymazať všetky logy?')) {
     return;
   }
 
@@ -4317,7 +4327,7 @@ async function clearLogs() {
     const response = await apiPost('clear_logs', {});
 
     if (response && response.ok) {
-      alert(`Logy boli vymazané. Záloha: ${response.backup}`);
+      alert('Logy boli vymazané.');
       loadLogs();
       loadLogStats();
     } else {
@@ -4376,7 +4386,7 @@ async function deleteOldLogs() {
     'Júl', 'August', 'September', 'Október', 'November', 'December'];
   const monthName = `${monthNames[parseInt(m, 10) - 1]} ${y}`;
 
-  if (!confirm(`Naozaj chcete zmazať všetky logy PRED mesiacom ${monthName}? Záloha bude vytvorená.`)) {
+  if (!confirm(`Naozaj chcete zmazať všetky logy za mesiac ${monthName} a staršie?`)) {
     return;
   }
 
@@ -4393,7 +4403,7 @@ async function deleteOldLogs() {
 
     if (response && response.ok) {
       if (infoEl) {
-        infoEl.textContent = `Zmazaných ${response.deleted} záznamov. Zostáva ${response.remaining}. Záloha: ${response.backup}`;
+        infoEl.textContent = `Zmazaných ${response.deleted || 0} záznamov. Zostáva ${response.remaining || 0}.`;
         infoEl.className = 'log-delete-info log-delete-success';
       }
       loadLogs();

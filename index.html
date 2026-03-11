@@ -1041,16 +1041,7 @@
                   <span id="logCalMonthLabel" class="log-cal-month-label"></span>
                   <button type="button" id="logCalNext" class="btn-small btn-secondary">&raquo;</button>
                 </div>
-                <div class="log-calendar-grid">
-                  <div class="log-cal-day-header">Po</div>
-                  <div class="log-cal-day-header">Ut</div>
-                  <div class="log-cal-day-header">St</div>
-                  <div class="log-cal-day-header">Št</div>
-                  <div class="log-cal-day-header">Pi</div>
-                  <div class="log-cal-day-header">So</div>
-                  <div class="log-cal-day-header">Ne</div>
-                </div>
-                <div id="logCalDays" class="log-calendar-days"></div>
+                <div id="logCalGrid" class="log-calendar-grid"></div>
                 <div class="log-calendar-info">Kliknite na dni (max. 7 dní). Klik = vybrať/zrušiť deň.</div>
               </div>
               <button type="button" id="logApplyDateRange" class="btn-small btn-primary">Použiť rozsah</button>
@@ -1090,7 +1081,7 @@
           <div class="log-delete-controls">
             <p class="log-delete-description">Zmazať všetky logy staršie ako zvolený mesiac. Pred zmazaním sa automaticky vytvorí záloha.</p>
             <div class="log-delete-row">
-              <label for="logDeleteBeforeMonth">Zmazať logy pred mesiacom:</label>
+              <label for="logDeleteBeforeMonth">Zmazať logy od mesiaca a staršie:</label>
               <select id="logDeleteBeforeMonth" class="log-filter-select">
                 <option value="">Načítavam...</option>
               </select>

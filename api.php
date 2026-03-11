@@ -1920,12 +1920,6 @@ if ($action === 'clear_logs' && $_SERVER['REQUEST_METHOD'] === 'POST') {
             respond(['ok' => true, 'message' => 'Log file does not exist']);
         }
 
-        // Backup old log with timestamp
-        $backupFile = $logFile . '.' . date('Y-m-d_H-i-s') . '.bak';
-        if (!copy($logFile, $backupFile)) {
-            respond(['ok' => false, 'error' => 'Failed to backup log file'], 500);
-        }
-
         // Clear the log file
         if (file_put_contents($logFile, '') === false) {
             respond(['ok' => false, 'error' => 'Failed to clear log file'], 500);
@@ -1933,8 +1927,7 @@ if ($action === 'clear_logs' && $_SERVER['REQUEST_METHOD'] === 'POST') {
 
         respond([
             'ok' => true,
-            'message' => 'Log file cleared',
-            'backup' => basename($backupFile)
+            'message' => 'Log file cleared'
         ]);
     } catch (Throwable $e) {
         respond(['ok' => false, 'error' => 'Failed to clear logs: ' . $e->getMessage()], 500);
@@ -1944,7 +1937,7 @@ if ($action === 'clear_logs' && $_SERVER['REQUEST_METHOD'] === 'POST') {
 if ($action === 'delete_old_logs' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     try {
         $j = json_body();
-        $beforeMonth = $j['before_month'] ?? null; // Format: YYYY-MM (delete everything before this month)
+        $beforeMonth = $j['before_month'] ?? null; // Format: YYYY-MM (delete this month and everything older)
 
         if (!$beforeMonth || !preg_match('/^\d{4}-\d{2}$/', $beforeMonth)) {
             respond(['ok' => false, 'error' => 'Invalid before_month format. Use YYYY-MM.'], 400);
@@ -1952,10 +1945,13 @@ if ($action === 'delete_old_logs' && $_SERVER['REQUEST_METHOD'] === 'POST') {
 
         $logFile = get_log_file_path();
         if (!is_file($logFile)) {
-            respond(['ok' => true, 'message' => 'Log file does not exist', 'deleted' => 0]);
+            respond(['ok' => true, 'deleted' => 0, 'remaining' => 0]);
         }
 
-        $cutoffDate = $beforeMonth . '-01T00:00:00'; // First day of specified month
+        // Cutoff = first day of NEXT month (so the selected month is included in deletion)
+        $cutoffObj = new DateTimeImmutable($beforeMonth . '-01');
+        $nextMonth = $cutoffObj->modify('+1 month');
+        $cutoffDate = $nextMonth->format('Y-m-d') . 'T00:00:00';
 
         $allLines = file($logFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
         if ($allLines === false) {
@@ -1978,13 +1974,7 @@ if ($action === 'delete_old_logs' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         if ($deletedCount === 0) {
-            respond(['ok' => true, 'message' => 'No logs found before ' . $beforeMonth, 'deleted' => 0]);
-        }
-
-        // Backup before deletion
-        $backupFile = $logFile . '.' . date('Y-m-d_H-i-s') . '.bak';
-        if (!copy($logFile, $backupFile)) {
-            respond(['ok' => false, 'error' => 'Failed to backup log file'], 500);
+            respond(['ok' => true, 'deleted' => 0, 'remaining' => count($keptLines)]);
         }
 
         // Write kept lines back
@@ -1994,10 +1984,8 @@ if ($action === 'delete_old_logs' && $_SERVER['REQUEST_METHOD'] === 'POST') {
 
         respond([
             'ok' => true,
-            'message' => "Deleted $deletedCount log entries before $beforeMonth",
             'deleted' => $deletedCount,
-            'remaining' => count($keptLines),
-            'backup' => basename($backupFile)
+            'remaining' => count($keptLines)
         ]);
     } catch (Throwable $e) {
         respond(['ok' => false, 'error' => 'Failed to delete old logs: ' . $e->getMessage()], 500);
