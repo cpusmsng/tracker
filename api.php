@@ -1674,135 +1674,79 @@ if ($action === 'delete_mac_coordinates' && $_SERVER['REQUEST_METHOD'] === 'POST
     }
 }
 
-// ========== LOG VIEWER ==========
+// ========== LOG VIEWER (streaming - line by line) ==========
 
 if ($action === 'get_logs') {
     try {
         $logFile = get_log_file_path();
         $limit = min((int)(qparam('limit') ?: 200), 2000);
         $offset = (int)(qparam('offset') ?: 0);
-        $level = qparam('level'); // error, info, debug, or null for all
+        $level = qparam('level');
         $search = qparam('search');
-        $order = qparam('order') ?: 'desc'; // asc or desc (default newest first)
-        $dateFrom = qparam('date_from'); // ISO datetime string e.g. 2025-01-15T00:00:00
-        $dateTo = qparam('date_to');     // ISO datetime string e.g. 2025-01-15T23:59:59
+        $order = qparam('order') ?: 'desc';
+        $dateFrom = qparam('date_from');
+        $dateTo = qparam('date_to');
 
-        // Default: last 6 hours if no date range specified
         if ($dateFrom === null && $dateTo === null) {
             $dateFrom = (new DateTimeImmutable('now', new DateTimeZone('Europe/Bratislava')))->sub(new DateInterval('PT6H'))->format('Y-m-d\TH:i:s');
         }
 
         if (!is_file($logFile)) {
-            respond([
-                'ok' => true,
-                'data' => [
-                    'logs' => [],
-                    'total' => 0,
-                    'file' => basename($logFile),
-                    'file_exists' => false,
-                    'tried_path' => $logFile,
-                    'env_log_file' => getenv('LOG_FILE') ?: 'not set',
-                    'date_from' => $dateFrom,
-                    'date_to' => $dateTo
-                ]
-            ]);
+            respond(['ok' => true, 'data' => [
+                'logs' => [], 'total' => 0, 'file' => basename($logFile),
+                'file_exists' => false, 'date_from' => $dateFrom, 'date_to' => $dateTo
+            ]]);
         }
 
-        // Read file and parse lines
-        $allLines = file($logFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
-        if ($allLines === false) {
-            respond(['ok' => false, 'error' => 'Failed to read log file'], 500);
-        }
-
-        $totalLinesRead = count($allLines);
-
-        // Parse log lines with format: [timestamp] [LEVEL] message
-        $parsedLogs = [];
-        $unmatchedLines = [];
-        // Updated pattern to handle timezone offsets (both + and -)
         $logPattern = '/^\[([\d\-T:+\-]+)\]\s*\[([A-Z]+)\]\s*(.*)$/';
+        $parsedLogs = [];
+        $totalLinesRead = 0;
 
-        foreach ($allLines as $lineNum => $line) {
-            if (preg_match($logPattern, $line, $matches)) {
-                $logEntry = [
-                    'timestamp' => $matches[1],
-                    'level' => strtolower($matches[2]),
-                    'message' => $matches[3]
-                ];
-
-                // Filter by date range
-                $ts = substr($logEntry['timestamp'], 0, 19); // Strip timezone offset for comparison
-                if ($dateFrom !== null && $ts < $dateFrom) {
-                    continue;
-                }
-                if ($dateTo !== null && $ts > $dateTo) {
-                    continue;
-                }
-
-                // Filter by level if specified
-                if ($level !== null && $logEntry['level'] !== strtolower($level)) {
-                    continue;
-                }
-
-                // Filter by search term if specified
-                if ($search !== null && $search !== '') {
-                    if (stripos($logEntry['message'], $search) === false &&
-                        stripos($logEntry['timestamp'], $search) === false) {
-                        continue;
-                    }
-                }
-
-                $parsedLogs[] = $logEntry;
-            } else if (count($unmatchedLines) < 5 && trim($line) !== '') {
-                // Collect a few unmatched lines for debugging
-                $unmatchedLines[] = ['line' => $lineNum + 1, 'content' => substr($line, 0, 150)];
-            }
+        $fh = fopen($logFile, 'r');
+        if ($fh === false) {
+            respond(['ok' => false, 'error' => 'Failed to open log file'], 500);
         }
+
+        while (($line = fgets($fh)) !== false) {
+            $line = rtrim($line, "\r\n");
+            if ($line === '') continue;
+            $totalLinesRead++;
+
+            if (!preg_match($logPattern, $line, $matches)) continue;
+
+            $ts = substr($matches[1], 0, 19);
+            if ($dateFrom !== null && $ts < $dateFrom) continue;
+            if ($dateTo !== null && $ts > $dateTo) continue;
+
+            $lvl = strtolower($matches[2]);
+            if ($level !== null && $lvl !== strtolower($level)) continue;
+
+            $msg = $matches[3];
+            if ($search !== null && $search !== '') {
+                if (stripos($msg, $search) === false && stripos($matches[1], $search) === false) continue;
+            }
+
+            $parsedLogs[] = ['timestamp' => $matches[1], 'level' => $lvl, 'message' => $msg];
+        }
+        fclose($fh);
 
         $total = count($parsedLogs);
 
-        // Sort by timestamp
         usort($parsedLogs, function($a, $b) use ($order) {
             $cmp = strcmp($a['timestamp'], $b['timestamp']);
             return $order === 'desc' ? -$cmp : $cmp;
         });
 
-        // Apply pagination
         $paginatedLogs = array_slice($parsedLogs, $offset, $limit);
 
-        // Get newest and oldest timestamps for debugging
-        $newestTs = null;
-        $oldestTs = null;
-        if (!empty($parsedLogs)) {
-            $timestamps = array_column($parsedLogs, 'timestamp');
-            sort($timestamps);
-            $oldestTs = $timestamps[0] ?? null;
-            $newestTs = $timestamps[count($timestamps) - 1] ?? null;
-        }
-
-        respond([
-            'ok' => true,
-            'data' => [
-                'logs' => $paginatedLogs,
-                'total' => $total,
-                'offset' => $offset,
-                'limit' => $limit,
-                'file' => basename($logFile),
-                'file_path' => $logFile,
-                'file_exists' => true,
-                'file_size' => filesize($logFile),
-                'date_from' => $dateFrom,
-                'date_to' => $dateTo,
-                'debug' => [
-                    'total_lines_read' => $totalLinesRead,
-                    'lines_matched' => $total,
-                    'lines_after_filter' => $total,
-                    'unmatched_samples' => $unmatchedLines,
-                    'newest_timestamp' => $newestTs,
-                    'oldest_timestamp' => $oldestTs
-                ]
-            ]
-        ]);
+        respond(['ok' => true, 'data' => [
+            'logs' => $paginatedLogs, 'total' => $total,
+            'offset' => $offset, 'limit' => $limit,
+            'file' => basename($logFile), 'file_exists' => true,
+            'file_size' => filesize($logFile),
+            'date_from' => $dateFrom, 'date_to' => $dateTo,
+            'debug' => ['total_lines_read' => $totalLinesRead, 'lines_after_filter' => $total]
+        ]]);
     } catch (Throwable $e) {
         respond(['ok' => false, 'error' => 'Failed to read logs: ' . $e->getMessage()], 500);
     }
@@ -1814,99 +1758,64 @@ if ($action === 'get_log_stats') {
         $days = min((int)(qparam('days') ?: 7), 90);
 
         if (!is_file($logFile)) {
-            respond([
-                'ok' => true,
-                'data' => [
-                    'file_exists' => false,
-                    'counts' => ['error' => 0, 'info' => 0, 'debug' => 0],
-                    'google_api_calls' => 0,
-                    'positions_inserted' => 0,
-                    'perimeter_alerts' => 0,
-                    'fetch_runs' => 0
-                ]
-            ]);
+            respond(['ok' => true, 'data' => [
+                'file_exists' => false,
+                'counts' => ['error' => 0, 'info' => 0, 'debug' => 0],
+                'google_api_calls' => 0, 'positions_inserted' => 0,
+                'perimeter_alerts' => 0, 'fetch_runs' => 0
+            ]]);
         }
 
-        $allLines = file($logFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
-        if ($allLines === false) {
-            respond(['ok' => false, 'error' => 'Failed to read log file'], 500);
-        }
-
-        // Calculate cutoff date for filtering
-        $cutoffDate = (new DateTimeImmutable())->sub(new DateInterval("P{$days}D"))->format('Y-m-d');
+        $cutoffDate = (new DateTimeImmutable('now', new DateTimeZone('Europe/Bratislava')))->sub(new DateInterval("P{$days}D"))->format('Y-m-d');
 
         $stats = [
             'counts' => ['error' => 0, 'info' => 0, 'debug' => 0],
-            'google_api_calls' => 0,
-            'google_api_success' => 0,
-            'google_api_failed' => 0,
-            'positions_inserted' => 0,
-            'cache_hits' => 0,
-            'ibeacon_hits' => 0,
-            'perimeter_alerts' => 0,
-            'fetch_runs' => 0,
-            'total_lines' => count($allLines),
-            'lines_in_range' => 0
+            'google_api_calls' => 0, 'google_api_success' => 0, 'google_api_failed' => 0,
+            'positions_inserted' => 0, 'cache_hits' => 0, 'ibeacon_hits' => 0,
+            'perimeter_alerts' => 0, 'fetch_runs' => 0,
+            'total_lines' => 0, 'lines_in_range' => 0
         ];
 
-        $logPattern = '/^\[([\d\-T:+]+)\]\s*\[([A-Z]+)\]\s*(.*)$/';
+        $logPattern = '/^\[([\d\-T:+\-]+)\]\s*\[([A-Z]+)\]\s*(.*)$/';
 
-        foreach ($allLines as $line) {
-            if (preg_match($logPattern, $line, $matches)) {
-                $timestamp = $matches[1];
-                $level = strtolower($matches[2]);
-                $message = $matches[3];
-
-                // Filter by date range
-                $lineDate = substr($timestamp, 0, 10);
-                if ($lineDate < $cutoffDate) {
-                    continue;
-                }
-
-                $stats['lines_in_range']++;
-
-                // Count by level
-                if (isset($stats['counts'][$level])) {
-                    $stats['counts'][$level]++;
-                }
-
-                // Count specific events
-                if (strpos($message, 'GOOGLE REQUEST:') !== false) {
-                    $stats['google_api_calls']++;
-                }
-                if (strpos($message, 'GOOGLE SUCCESS:') !== false) {
-                    $stats['google_api_success']++;
-                }
-                if (strpos($message, 'GOOGLE ERROR:') !== false || strpos($message, 'GOOGLE FAILED') !== false) {
-                    $stats['google_api_failed']++;
-                }
-                if (strpos($message, 'INSERT SUCCESS:') !== false) {
-                    $stats['positions_inserted']++;
-                }
-                if (strpos($message, 'USING CACHE:') !== false || strpos($message, 'CACHE [+] HIT:') !== false) {
-                    $stats['cache_hits']++;
-                }
-                if (strpos($message, 'IBEACON MATCH') !== false) {
-                    $stats['ibeacon_hits']++;
-                }
-                if (strpos($message, 'PERIMETER BREACH DETECTED:') !== false) {
-                    $stats['perimeter_alerts']++;
-                }
-                if ($message === '=== FETCH START ===') {
-                    $stats['fetch_runs']++;
-                }
-            }
+        $fh = fopen($logFile, 'r');
+        if ($fh === false) {
+            respond(['ok' => false, 'error' => 'Failed to open log file'], 500);
         }
+
+        while (($line = fgets($fh)) !== false) {
+            $line = rtrim($line, "\r\n");
+            if ($line === '') continue;
+            $stats['total_lines']++;
+
+            if (!preg_match($logPattern, $line, $matches)) continue;
+
+            $lineDate = substr($matches[1], 0, 10);
+            if ($lineDate < $cutoffDate) continue;
+
+            $stats['lines_in_range']++;
+            $level = strtolower($matches[2]);
+            $message = $matches[3];
+
+            if (isset($stats['counts'][$level])) $stats['counts'][$level]++;
+
+            if (strpos($message, 'GOOGLE REQUEST:') !== false) $stats['google_api_calls']++;
+            if (strpos($message, 'GOOGLE SUCCESS:') !== false) $stats['google_api_success']++;
+            if (strpos($message, 'GOOGLE ERROR:') !== false || strpos($message, 'GOOGLE FAILED') !== false) $stats['google_api_failed']++;
+            if (strpos($message, 'INSERT SUCCESS:') !== false) $stats['positions_inserted']++;
+            if (strpos($message, 'USING CACHE:') !== false || strpos($message, 'CACHE [+] HIT:') !== false) $stats['cache_hits']++;
+            if (strpos($message, 'IBEACON MATCH') !== false) $stats['ibeacon_hits']++;
+            if (strpos($message, 'PERIMETER BREACH DETECTED:') !== false) $stats['perimeter_alerts']++;
+            if ($message === '=== FETCH START ===') $stats['fetch_runs']++;
+        }
+        fclose($fh);
 
         $stats['file_exists'] = true;
         $stats['file_size'] = filesize($logFile);
         $stats['days_filter'] = $days;
         $stats['cutoff_date'] = $cutoffDate;
 
-        respond([
-            'ok' => true,
-            'data' => $stats
-        ]);
+        respond(['ok' => true, 'data' => $stats]);
     } catch (Throwable $e) {
         respond(['ok' => false, 'error' => 'Failed to get log stats: ' . $e->getMessage()], 500);
     }
@@ -1937,7 +1846,7 @@ if ($action === 'clear_logs' && $_SERVER['REQUEST_METHOD'] === 'POST') {
 if ($action === 'delete_old_logs' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     try {
         $j = json_body();
-        $beforeMonth = $j['before_month'] ?? null; // Format: YYYY-MM (delete this month and everything older)
+        $beforeMonth = $j['before_month'] ?? null;
 
         if (!$beforeMonth || !preg_match('/^\d{4}-\d{2}$/', $beforeMonth)) {
             respond(['ok' => false, 'error' => 'Invalid before_month format. Use YYYY-MM.'], 400);
@@ -1948,45 +1857,50 @@ if ($action === 'delete_old_logs' && $_SERVER['REQUEST_METHOD'] === 'POST') {
             respond(['ok' => true, 'deleted' => 0, 'remaining' => 0]);
         }
 
-        // Cutoff = first day of NEXT month (so the selected month is included in deletion)
+        // Cutoff = first day of NEXT month (selected month is included in deletion)
         $cutoffObj = new DateTimeImmutable($beforeMonth . '-01');
         $nextMonth = $cutoffObj->modify('+1 month');
         $cutoffDate = $nextMonth->format('Y-m-d') . 'T00:00:00';
 
-        $allLines = file($logFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
-        if ($allLines === false) {
-            respond(['ok' => false, 'error' => 'Failed to read log file'], 500);
+        $logPattern = '/^\[([\d\-T:+\-]+)\]\s*\[([A-Z]+)\]\s*(.*)$/';
+        $tmpFile = $logFile . '.tmp';
+        $deletedCount = 0;
+        $keptCount = 0;
+
+        $fhIn = fopen($logFile, 'r');
+        $fhOut = fopen($tmpFile, 'w');
+        if ($fhIn === false || $fhOut === false) {
+            respond(['ok' => false, 'error' => 'Failed to open log file'], 500);
         }
 
-        $logPattern = '/^\[([\d\-T:+\-]+)\]\s*\[([A-Z]+)\]\s*(.*)$/';
-        $keptLines = [];
-        $deletedCount = 0;
+        while (($line = fgets($fhIn)) !== false) {
+            $trimmed = rtrim($line, "\r\n");
+            if ($trimmed === '') continue;
 
-        foreach ($allLines as $line) {
-            if (preg_match($logPattern, $line, $matches)) {
+            if (preg_match($logPattern, $trimmed, $matches)) {
                 $ts = substr($matches[1], 0, 19);
                 if ($ts < $cutoffDate) {
                     $deletedCount++;
                     continue;
                 }
             }
-            $keptLines[] = $line;
+            fwrite($fhOut, $trimmed . "\n");
+            $keptCount++;
         }
+        fclose($fhIn);
+        fclose($fhOut);
 
         if ($deletedCount === 0) {
-            respond(['ok' => true, 'deleted' => 0, 'remaining' => count($keptLines)]);
+            unlink($tmpFile);
+            respond(['ok' => true, 'deleted' => 0, 'remaining' => $keptCount]);
         }
 
-        // Write kept lines back
-        if (file_put_contents($logFile, implode("\n", $keptLines) . "\n") === false) {
-            respond(['ok' => false, 'error' => 'Failed to write log file'], 500);
+        if (!rename($tmpFile, $logFile)) {
+            unlink($tmpFile);
+            respond(['ok' => false, 'error' => 'Failed to replace log file'], 500);
         }
 
-        respond([
-            'ok' => true,
-            'deleted' => $deletedCount,
-            'remaining' => count($keptLines)
-        ]);
+        respond(['ok' => true, 'deleted' => $deletedCount, 'remaining' => $keptCount]);
     } catch (Throwable $e) {
         respond(['ok' => false, 'error' => 'Failed to delete old logs: ' . $e->getMessage()], 500);
     }
@@ -1996,12 +1910,7 @@ if ($action === 'get_log_date_range') {
     try {
         $logFile = get_log_file_path();
         if (!is_file($logFile)) {
-            respond(['ok' => true, 'data' => ['oldest' => null, 'newest' => null]]);
-        }
-
-        $allLines = file($logFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
-        if ($allLines === false) {
-            respond(['ok' => false, 'error' => 'Failed to read log file'], 500);
+            respond(['ok' => true, 'data' => ['oldest' => null, 'newest' => null, 'months' => new \stdClass()]]);
         }
 
         $logPattern = '/^\[([\d\-T:+\-]+)\]\s*\[([A-Z]+)\]\s*(.*)$/';
@@ -2009,7 +1918,15 @@ if ($action === 'get_log_date_range') {
         $newest = null;
         $months = [];
 
-        foreach ($allLines as $line) {
+        $fh = fopen($logFile, 'r');
+        if ($fh === false) {
+            respond(['ok' => false, 'error' => 'Failed to open log file'], 500);
+        }
+
+        while (($line = fgets($fh)) !== false) {
+            $line = rtrim($line, "\r\n");
+            if ($line === '') continue;
+
             if (preg_match($logPattern, $line, $matches)) {
                 $ts = substr($matches[1], 0, 19);
                 if ($oldest === null || $ts < $oldest) $oldest = $ts;
@@ -2019,17 +1936,15 @@ if ($action === 'get_log_date_range') {
                 $months[$month]++;
             }
         }
+        fclose($fh);
 
         ksort($months);
 
-        respond([
-            'ok' => true,
-            'data' => [
-                'oldest' => $oldest,
-                'newest' => $newest,
-                'months' => $months
-            ]
-        ]);
+        respond(['ok' => true, 'data' => [
+            'oldest' => $oldest,
+            'newest' => $newest,
+            'months' => empty($months) ? new \stdClass() : $months
+        ]]);
     } catch (Throwable $e) {
         respond(['ok' => false, 'error' => $e->getMessage()], 500);
     }
