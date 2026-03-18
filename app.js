@@ -1110,9 +1110,7 @@ async function loadIBeaconsIntoOverlay() {
 
 // --------- Settings Overlay ---------
 async function openSettingsOverlay() {
-  console.log('openSettingsOverlay called');
   const overlay = $('#settingsOverlay');
-  console.log('Settings overlay element:', overlay);
 
   if (!overlay) {
     console.error('Settings overlay not found in DOM!');
@@ -1120,12 +1118,14 @@ async function openSettingsOverlay() {
   }
 
   overlay.classList.remove('hidden');
-  console.log('Overlay should now be visible');
 
-  // Inicializuj accordion sekcie
-  initSettingsTabs();
+  // Initialize tabs only once
+  if (!overlay._tabsInitialized) {
+    initSettingsTabs();
+    overlay._tabsInitialized = true;
+  }
 
-  // Načítaj aktuálne nastavenia
+  // Load current settings
   try {
     await loadCurrentSettings();
   } catch (err) {
@@ -1141,14 +1141,10 @@ function initSettingsTabs() {
     tab.addEventListener('click', () => {
       const targetSection = tab.dataset.tab;
 
-      // Deaktivuj všetky taby
       tabs.forEach(t => t.classList.remove('active'));
-      // Aktivuj kliknutý tab
       tab.classList.add('active');
 
-      // Skry všetky sekcie
       sections.forEach(s => s.classList.remove('open'));
-      // Zobraz cieľovú sekciu
       const target = document.querySelector(`.settings-section[data-section="${targetSection}"]`);
       if (target) {
         target.classList.add('open');
@@ -1156,11 +1152,10 @@ function initSettingsTabs() {
     });
   });
 
-  // Otvor prvú sekciu ako default
+  // Default first tab
   if (sections.length > 0 && !document.querySelector('.settings-section.open')) {
     sections[0].classList.add('open');
   }
-  // Aktivuj prvý tab ako default
   if (tabs.length > 0 && !document.querySelector('.settings-tab.active')) {
     tabs[0].classList.add('active');
   }
