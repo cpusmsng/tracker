@@ -4035,9 +4035,15 @@ function formatDateISO(date) {
 }
 
 function renderLogCalendar() {
-  const grid = $('#logCalGrid');
+  const grid = $('#logCalGrid') || $('#logCalDays');
   const label = $('#logCalMonthLabel');
   if (!grid || !label) return;
+
+  // Initialize calendarMonth if not set
+  if (!logViewerState.calendarMonth) {
+    const now = new Date();
+    logViewerState.calendarMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  }
 
   const monthDate = logViewerState.calendarMonth;
   const year = monthDate.getFullYear();
@@ -4113,12 +4119,20 @@ function toggleLogCalDay(dateStr) {
 }
 
 function logCalPrevMonth() {
+  if (!logViewerState.calendarMonth) {
+    const now = new Date();
+    logViewerState.calendarMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  }
   const d = logViewerState.calendarMonth;
   logViewerState.calendarMonth = new Date(d.getFullYear(), d.getMonth() - 1, 1);
   renderLogCalendar();
 }
 
 function logCalNextMonth() {
+  if (!logViewerState.calendarMonth) {
+    const now = new Date();
+    logViewerState.calendarMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  }
   const d = logViewerState.calendarMonth;
   logViewerState.calendarMonth = new Date(d.getFullYear(), d.getMonth() + 1, 1);
   renderLogCalendar();
