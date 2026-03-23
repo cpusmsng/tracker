@@ -28,8 +28,9 @@ function applyTheme(theme) {
   } else if (theme === 'light') {
     root.setAttribute('data-theme', 'light');
   } else {
-    // Auto - remove attribute to let CSS media query handle it
-    root.removeAttribute('data-theme');
+    // Auto - detect system preference and set attribute so component overrides work
+    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    root.setAttribute('data-theme', prefersDark ? 'dark' : 'light');
   }
 }
 
@@ -37,6 +38,11 @@ function applyTheme(theme) {
 (function() {
   const savedTheme = localStorage.getItem('tracker_theme') || 'auto';
   applyTheme(savedTheme);
+  // Listen for system theme changes when in auto mode
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+    const current = localStorage.getItem('tracker_theme') || 'auto';
+    if (current === 'auto') applyTheme('auto');
+  });
 })();
 
 // --------- Authentication (SSO + PIN) ---------

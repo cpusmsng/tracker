@@ -21,6 +21,7 @@
   --table-last-known-hover:#fed7aa;
   --overlay-backdrop:rgba(0,0,0,0.5);
   --shadow-color:rgba(0,0,0,0.15);
+  --surface:#fff;
 }
 
 /* Dark mode */
@@ -47,6 +48,7 @@
   --table-last-known-hover:#4d4530;
   --overlay-backdrop:rgba(0,0,0,0.7);
   --shadow-color:rgba(0,0,0,0.4);
+  --surface:#1e1e1e;
 }
 
 /* Auto dark mode based on system preference */
@@ -74,6 +76,7 @@
     --table-last-known-hover:#4d4530;
     --overlay-backdrop:rgba(0,0,0,0.7);
     --shadow-color:rgba(0,0,0,0.4);
+    --surface:#1e1e1e;
   }
 }
 
@@ -156,6 +159,9 @@
   margin-bottom:16px;padding:8px;
   background:#fef2f2;border-radius:8px;
   animation:shake 0.4s;
+}
+[data-theme="dark"] .pin-error{
+  background:#450a0a;color:#fca5a5;
 }
 
 .pin-error.hidden{
@@ -804,6 +810,9 @@ body.authenticated .container{
   background:#eff6ff;border:1px solid #bfdbfe;
   border-radius:8px;color:#1e40af;font-size:13px;
 }
+[data-theme="dark"] .map-help{
+  background:#1e3a5f;border-color:#1e3a8a;color:#93c5fd;
+}
 
 #selectorMap{
   height:400px;border-radius:8px;
@@ -1147,7 +1156,7 @@ body.authenticated .container{
 /* Reset all button */
 .btn-reset{
   padding:10px 20px;border:1px solid #ef4444;
-  background:#fff;border-radius:8px;cursor:pointer;
+  background:var(--surface);border-radius:8px;cursor:pointer;
   color:#ef4444;font-weight:500;
   transition:all 0.2s;display:flex;align-items:center;gap:8px;
 }
@@ -2025,6 +2034,11 @@ body.authenticated .container{
 .perimeter-badge.exit{background:#fee2e2;color:#991b1b;}
 .perimeter-badge.inactive{background:#fef3c7;color:#92400e;}
 
+[data-theme="dark"] .perimeter-badge{background:#374151;color:#d1d5db;}
+[data-theme="dark"] .perimeter-badge.enter{background:#064e3b;color:#6ee7b7;}
+[data-theme="dark"] .perimeter-badge.exit{background:#7f1d1d;color:#fca5a5;}
+[data-theme="dark"] .perimeter-badge.inactive{background:#78350f;color:#fcd34d;}
+
 .perimeter-actions{
   display:flex;gap:8px;flex-shrink:0;
 }
@@ -2146,6 +2160,13 @@ body.authenticated .container{
   background:#fecaca;
 }
 
+[data-theme="dark"] .btn-remove-email{
+  background:#7f1d1d;color:#fca5a5;border-color:#991b1b;
+}
+[data-theme="dark"] .btn-remove-email:hover{
+  background:#991b1b;
+}
+
 .perimeter-emails-empty{
   padding:16px;text-align:center;
   color:var(--muted-text);font-size:13px;
@@ -2163,6 +2184,9 @@ body.authenticated .container{
   margin:0 0 12px;padding:12px;
   background:#eff6ff;border:1px solid #bfdbfe;
   border-radius:8px;color:#1e40af;font-size:13px;
+}
+[data-theme="dark"] .perimeter-map-section .map-help{
+  background:#1e3a5f;border-color:#1e3a8a;color:#93c5fd;
 }
 
 #perimeterDrawMap{
@@ -2237,6 +2261,16 @@ body.authenticated .container{
 
 .test-email-result.loading{
   display:block;background:#eff6ff;border:1px solid #bfdbfe;color:#1e40af;
+}
+
+[data-theme="dark"] .test-email-result.success{
+  background:#064e3b;border-color:#065f46;color:#6ee7b7;
+}
+[data-theme="dark"] .test-email-result.error{
+  background:#7f1d1d;border-color:#991b1b;color:#fca5a5;
+}
+[data-theme="dark"] .test-email-result.loading{
+  background:#1e3a8a;border-color:#1e40af;color:#93c5fd;
 }
 
 /* Empty state */
@@ -3306,4 +3340,31 @@ body.authenticated .container{
     width:100%;
     text-align:center;
   }
+}
+
+/* ========== GLOBAL: Dark mode for overlay form elements ========== */
+.overlay input[type="text"],
+.overlay input[type="email"],
+.overlay input[type="number"],
+.overlay input[type="date"],
+.overlay input[type="time"],
+.overlay input[type="url"],
+.overlay input[type="tel"],
+.overlay input[type="password"],
+.overlay select,
+.overlay textarea{
+  background:var(--btn-bg);
+  color:var(--text);
+  border-color:var(--border);
+}
+.overlay input[type="text"]:focus,
+.overlay input[type="email"]:focus,
+.overlay input[type="number"]:focus,
+.overlay select:focus,
+.overlay textarea:focus{
+  border-color:var(--primary);
+  outline:none;
+}
+.overlay label{
+  color:var(--text);
 }

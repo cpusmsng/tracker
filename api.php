@@ -2396,7 +2396,7 @@ if ($action === 'test_email' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         $ch = curl_init($emailServiceUrl);
         curl_setopt_array($ch, [
             CURLOPT_POST => true,
-            CURLOPT_POSTFIELDS => json_encode($payload),
+            CURLOPT_POSTFIELDS => json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
             CURLOPT_HTTPHEADER => ['Content-Type: application/json'],
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_TIMEOUT => 30,
@@ -2409,15 +2409,23 @@ if ($action === 'test_email' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         curl_close($ch);
 
         if ($curlError) {
-            respond(['ok' => false, 'error' => 'Chyba pripojenia k email službe: ' . $curlError, 'debug' => ['url' => $emailServiceUrl]], 500);
+            respond(['ok' => false, 'error' => 'Chyba pripojenia k email službe: ' . $curlError, 'debug' => ['url' => $emailServiceUrl, 'api_key_status' => $apiKeyDebug]], 500);
         }
 
         $responseData = json_decode($response, true);
 
         if ($httpCode >= 200 && $httpCode < 300) {
             respond(['ok' => true, 'message' => 'Testovací e-mail bol odoslaný na ' . $testEmail, 'debug' => ['http_code' => $httpCode, 'response' => $responseData, 'api_key_status' => $apiKeyDebug]]);
+        } elseif ($httpCode === 0) {
+            respond(['ok' => false, 'error' => 'Email služba nie je dostupná (skontrolujte EMAIL_SERVICE_URL)', 'debug' => ['url' => $emailServiceUrl, 'response' => $response, 'api_key_status' => $apiKeyDebug]], 500);
         } else {
-            respond(['ok' => false, 'error' => 'Email služba vrátila chybu (HTTP ' . $httpCode . ')', 'debug' => ['http_code' => $httpCode, 'response' => $responseData, 'url' => $emailServiceUrl, 'api_key_status' => $apiKeyDebug]], 500);
+            $serviceError = '';
+            if (is_array($responseData) && isset($responseData['error'])) {
+                $serviceError = ' - ' . $responseData['error'];
+            } elseif (is_array($responseData) && isset($responseData['message'])) {
+                $serviceError = ' - ' . $responseData['message'];
+            }
+            respond(['ok' => false, 'error' => 'Email služba vrátila chybu (HTTP ' . $httpCode . ')' . $serviceError, 'debug' => ['http_code' => $httpCode, 'response' => $responseData, 'url' => $emailServiceUrl, 'api_key_status' => $apiKeyDebug]], 500);
         }
 
     } catch (Throwable $e) {
