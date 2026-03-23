@@ -1390,6 +1390,52 @@
     </div>
   </div>
 
+  <!-- Data Browser Overlay -->
+  <div id="dataBrowserOverlay" class="overlay hidden">
+    <div class="overlay-content overlay-wide" style="max-width:900px;">
+      <div class="overlay-header">
+        <h2 id="dataBrowserTitle">Dáta zariadenia</h2>
+        <button class="overlay-close-btn" onclick="closeDataBrowser()">&times;</button>
+      </div>
+      <div class="overlay-body">
+        <div class="data-browser-controls">
+          <div class="data-browser-filters">
+            <input type="date" id="dataBrowserDate" onchange="dataBrowserDateChanged()">
+            <select id="dataBrowserSourceFilter" onchange="dataBrowserFilterChanged()">
+              <option value="all">Všetky zdroje</option>
+              <option value="gnss">GNSS</option>
+              <option value="wifi-google">WiFi Google</option>
+              <option value="wifi-cache">WiFi Cache</option>
+              <option value="ibeacon">iBeacon</option>
+            </select>
+          </div>
+        </div>
+        <div class="data-browser-table-wrap">
+          <table class="data-browser-table">
+            <thead>
+              <tr>
+                <th>Čas</th>
+                <th>Lat</th>
+                <th>Lng</th>
+                <th>Zdroj</th>
+                <th>MAC adresy</th>
+                <th>Primárny MAC</th>
+                <th>Akcie</th>
+              </tr>
+            </thead>
+            <tbody id="dataBrowserBody">
+            </tbody>
+          </table>
+        </div>
+        <div class="data-browser-pagination">
+          <button class="btn-sm" id="dataBrowserPrev" onclick="dataBrowserPrevPage()" disabled>&laquo; Predošlá</button>
+          <span id="dataBrowserPaginationInfo">Strana 1</span>
+          <button class="btn-sm" id="dataBrowserNext" onclick="dataBrowserNextPage()">Nasledujúca &raquo;</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
   <script src="app.js?v=20260105a" defer></script>

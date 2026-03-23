@@ -406,6 +406,187 @@ if ($action === 'get_history_range') {
 }
 
 // NOVÃ ENDPOINT: refetch_day
+// Raw sensor data browser (like SenseCAP portal's "Sensor Node - Data" view)
+if ($action === 'get_raw_records' && $_SERVER['REQUEST_METHOD'] === 'GET') {
+    $deviceId     = qparam('device_id');
+    $localDate    = qparam('date');
+    $page         = max(1, (int)(qparam('page') ?? '1'));
+    $perPage      = max(1, min(200, (int)(qparam('per_page') ?? '50')));
+    $sourceFilter = qparam('source_filter');
+
+    // Build WHERE conditions
+    $where  = [];
+    $params = [];
+
+    if ($deviceId) {
+        $where[]        = 'td.device_id = :did';
+        $params[':did'] = (int)$deviceId;
+    }
+
+    if ($localDate) {
+        $startLocal = new DateTimeImmutable($localDate . ' 00:00:00', new DateTimeZone('Europe/Bratislava'));
+        $endLocal   = new DateTimeImmutable($localDate . ' 23:59:59', new DateTimeZone('Europe/Bratislava'));
+        $where[]          = 'td.timestamp BETWEEN :start AND :end';
+        $params[':start'] = $startLocal->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d H:i:s');
+        $params[':end']   = $endLocal->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d H:i:s');
+    }
+
+    if ($sourceFilter && $sourceFilter !== 'all') {
+        $where[]           = 'td.source = :src';
+        $params[':src']    = $sourceFilter;
+    }
+
+    $whereSql = $where ? 'WHERE ' . implode(' AND ', $where) : '';
+
+    // Total count
+    $countStmt = $pdo->prepare("SELECT COUNT(*) FROM tracker_data td $whereSql");
+    $countStmt->execute($params);
+    $totalCount = (int)$countStmt->fetchColumn();
+    $totalPages = max(1, (int)ceil($totalCount / $perPage));
+    $offset     = ($page - 1) * $perPage;
+
+    // Fetch records
+    $sql = "
+        SELECT td.id, td.timestamp, td.latitude, td.longitude, td.source,
+               td.device_id, td.raw_wifi_macs, td.primary_mac,
+               d.name as device_name
+        FROM tracker_data td
+        LEFT JOIN devices d ON td.device_id = d.id
+        $whereSql
+        ORDER BY td.timestamp DESC
+        LIMIT :limit OFFSET :offset
+    ";
+    $stmt = $pdo->prepare($sql);
+    foreach ($params as $k => $v) {
+        $stmt->bindValue($k, $v);
+    }
+    $stmt->bindValue(':limit',  $perPage, PDO::PARAM_INT);
+    $stmt->bindValue(':offset', $offset,  PDO::PARAM_INT);
+    $stmt->execute();
+    $rows = $stmt->fetchAll();
+
+    // Collect all MAC addresses from results to batch-check mac_locations
+    $allMacs = [];
+    foreach ($rows as $r) {
+        if (!empty($r['raw_wifi_macs'])) {
+            foreach (explode(',', $r['raw_wifi_macs']) as $mac) {
+                $mac = trim($mac);
+                if ($mac !== '') $allMacs[$mac] = true;
+            }
+        }
+    }
+
+    // Batch lookup which MACs have been queried in mac_locations
+    $macQueried = [];
+    if ($allMacs) {
+        $placeholders = implode(',', array_fill(0, count($allMacs), '?'));
+        $mlStmt = $pdo->prepare("SELECT mac_address, latitude, longitude, last_queried FROM mac_locations WHERE mac_address IN ($placeholders)");
+        $mlStmt->execute(array_keys($allMacs));
+        while ($ml = $mlStmt->fetch()) {
+            $macQueried[$ml['mac_address']] = [
+                'has_location' => ($ml['latitude'] !== null && $ml['longitude'] !== null),
+                'last_queried' => $ml['last_queried'] ? utc_to_local($ml['last_queried']) : null,
+            ];
+        }
+    }
+
+    // Build output
+    $out = [];
+    foreach ($rows as $r) {
+        $record = [
+            'id'            => (int)$r['id'],
+            'timestamp'     => utc_to_local($r['timestamp']),
+            'latitude'      => $r['latitude'] !== null ? (float)$r['latitude'] : null,
+            'longitude'     => $r['longitude'] !== null ? (float)$r['longitude'] : null,
+            'source'        => (string)$r['source'],
+            'device_id'     => $r['device_id'] ? (int)$r['device_id'] : null,
+            'device_name'   => $r['device_name'] ?? null,
+            'raw_wifi_macs' => $r['raw_wifi_macs'] ?: null,
+            'primary_mac'   => $r['primary_mac'] ?: null,
+            'mac_details'   => null,
+        ];
+
+        if (!empty($r['raw_wifi_macs'])) {
+            $macDetails = [];
+            foreach (explode(',', $r['raw_wifi_macs']) as $mac) {
+                $mac = trim($mac);
+                if ($mac === '') continue;
+                $info = $macQueried[$mac] ?? null;
+                $macDetails[] = [
+                    'mac'          => $mac,
+                    'queried'      => $info !== null,
+                    'has_location' => $info['has_location'] ?? false,
+                    'last_queried' => $info['last_queried'] ?? null,
+                ];
+            }
+            $record['mac_details'] = $macDetails;
+        }
+
+        $out[] = $record;
+    }
+
+    respond([
+        'ok'          => true,
+        'records'     => $out,
+        'pagination'  => [
+            'total_count' => $totalCount,
+            'page'        => $page,
+            'per_page'    => $perPage,
+            'total_pages' => $totalPages,
+        ],
+    ]);
+}
+
+// GET /api.php?action=get_record_macs&id=X - Get MAC details for a specific record
+if ($action === 'get_record_macs') {
+    try {
+        $id = qparam('id');
+        if (!$id) {
+            respond(['ok' => false, 'error' => 'Record ID is required'], 400);
+        }
+
+        $stmt = $pdo->prepare("SELECT raw_wifi_macs, primary_mac FROM tracker_data WHERE id = ?");
+        $stmt->execute([(int)$id]);
+        $record = $stmt->fetch();
+
+        if (!$record) {
+            respond(['ok' => false, 'error' => 'Record not found'], 404);
+        }
+
+        $macs = [];
+        if (!empty($record['raw_wifi_macs'])) {
+            $macList = array_filter(array_map('trim', explode(',', $record['raw_wifi_macs'])));
+
+            if (!empty($macList)) {
+                $placeholders = implode(',', array_fill(0, count($macList), '?'));
+                $mlStmt = $pdo->prepare("SELECT mac_address, latitude, longitude, last_queried FROM mac_locations WHERE mac_address IN ($placeholders)");
+                $mlStmt->execute(array_values($macList));
+                $macInfo = [];
+                while ($ml = $mlStmt->fetch()) {
+                    $macInfo[$ml['mac_address']] = $ml;
+                }
+
+                foreach ($macList as $mac) {
+                    $info = $macInfo[$mac] ?? null;
+                    $macs[] = [
+                        'mac' => $mac,
+                        'is_primary' => ($mac === $record['primary_mac']),
+                        'has_coords' => ($info && $info['latitude'] !== null && $info['longitude'] !== null),
+                        'negative' => ($info && $info['latitude'] === null && $info['longitude'] === null),
+                        'lat' => $info && $info['latitude'] !== null ? (float)$info['latitude'] : null,
+                        'lng' => $info && $info['longitude'] !== null ? (float)$info['longitude'] : null,
+                        'last_queried' => $info && $info['last_queried'] ? utc_to_local($info['last_queried']) : null,
+                    ];
+                }
+            }
+        }
+
+        respond(['ok' => true, 'data' => ['macs' => $macs, 'primary_mac' => $record['primary_mac']]]);
+    } catch (Throwable $e) {
+        respond(['ok' => false, 'error' => $e->getMessage()], 500);
+    }
+}
+
 if ($action === 'refetch_day' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     $j = json_body();
     $date = trim((string)($j['date'] ?? ''));
@@ -3104,6 +3285,102 @@ if ($action === 'toggle_device' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         ]);
 
         respond(['ok' => true, 'message' => $isActive ? 'Zariadenie aktivované' : 'Zariadenie deaktivované']);
+    } catch (Throwable $e) {
+        respond(['ok' => false, 'error' => $e->getMessage()], 500);
+    }
+}
+
+// POST /api.php?action=send_device_command
+if ($action === 'send_device_command' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    try {
+        $j = json_body();
+        $deviceId = isset($j['device_id']) ? (int)$j['device_id'] : null;
+        $command = $j['command'] ?? '';
+
+        if (!$deviceId) {
+            respond(['ok' => false, 'error' => 'Missing device_id'], 400);
+        }
+        if (!in_array($command, ['buzzer_on', 'buzzer_off'], true)) {
+            respond(['ok' => false, 'error' => 'Invalid command. Supported: buzzer_on, buzzer_off'], 400);
+        }
+
+        // Look up device EUI
+        $stmt = $pdo->prepare("SELECT device_eui FROM devices WHERE id = :id LIMIT 1");
+        $stmt->execute([':id' => $deviceId]);
+        $device = $stmt->fetch();
+        if (!$device) {
+            respond(['ok' => false, 'error' => 'Device not found'], 404);
+        }
+
+        $eui = $device['device_eui'];
+        $payloadHex = ($command === 'buzzer_on') ? '8201' : '8200';
+
+        $aid = getenv('SENSECAP_ACCESS_ID') ?: '';
+        $akey = getenv('SENSECAP_ACCESS_KEY') ?: '';
+        if (!$aid || !$akey) {
+            respond(['ok' => false, 'error' => 'SenseCAP credentials not configured'], 500);
+        }
+
+        $url = 'https://sensecap.seeed.cc/openapi/send_cmd';
+        $payload = json_encode([
+            'device_eui' => $eui,
+            'port' => 5,
+            'confirmed' => false,
+            'payload_hex' => $payloadHex
+        ], JSON_UNESCAPED_SLASHES);
+
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_POST => true,
+            CURLOPT_POSTFIELDS => $payload,
+            CURLOPT_HTTPAUTH => CURLAUTH_BASIC,
+            CURLOPT_USERPWD => $aid . ':' . $akey,
+            CURLOPT_TIMEOUT => 10,
+            CURLOPT_CONNECTTIMEOUT => 5,
+            CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_HTTPHEADER => [
+                'Content-Type: application/json; charset=utf-8',
+                'Accept: application/json'
+            ]
+        ]);
+
+        $body = curl_exec($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $curlErr = curl_error($ch);
+        curl_close($ch);
+
+        if ($body === false) {
+            respond(['ok' => false, 'error' => 'SenseCAP API request failed: ' . $curlErr], 502);
+        }
+        if ($httpCode !== 200) {
+            respond(['ok' => false, 'error' => 'SenseCAP API returned HTTP ' . $httpCode, 'detail' => $body], 502);
+        }
+
+        $json = json_decode($body, true);
+        if (!is_array($json) || ($json['code'] ?? '') !== '0') {
+            respond(['ok' => false, 'error' => 'SenseCAP API error: ' . ($json['msg'] ?? 'Unknown error')], 502);
+        }
+
+        // Try to get upload interval from device status for ETA
+        $uploadInterval = null;
+        $stmtStatus = $pdo->prepare("SELECT latest_message_time FROM device_status WHERE device_eui = :eui LIMIT 1");
+        $stmtStatus->execute([':eui' => $eui]);
+        $statusRow = $stmtStatus->fetch();
+
+        $response = [
+            'ok' => true,
+            'message' => ($command === 'buzzer_on') ? 'Buzzer command sent' : 'Buzzer off command sent',
+            'command' => $command,
+            'device_eui' => $eui
+        ];
+
+        // Include upload interval from API response if available
+        if (isset($json['data']['upload_interval'])) {
+            $response['upload_interval_seconds'] = (int)$json['data']['upload_interval'];
+        }
+
+        respond($response);
     } catch (Throwable $e) {
         respond(['ok' => false, 'error' => $e->getMessage()], 500);
     }

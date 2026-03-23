@@ -3114,6 +3114,150 @@ body.authenticated .container{
   color:#fff;
 }
 
+/* ========== DEVICE: Buzzer Button ========== */
+.btn-sm.btn-buzzer{
+  border-color:#8b5cf6;
+  color:#8b5cf6;
+}
+.btn-sm.btn-buzzer:hover{
+  background:#8b5cf6;
+  color:#fff;
+}
+.btn-sm.btn-success{
+  border-color:var(--highlight);
+  color:var(--highlight);
+}
+.btn-sm.btn-data{
+  border-color:#6366f1;
+  color:#6366f1;
+}
+.btn-sm.btn-data:hover{
+  background:#6366f1;
+  color:#fff;
+}
+
+/* ========== DATA BROWSER ========== */
+.data-browser-controls{
+  display:flex;
+  gap:12px;
+  align-items:center;
+  margin-bottom:12px;
+  flex-wrap:wrap;
+}
+.data-browser-filters{
+  display:flex;
+  gap:8px;
+  align-items:center;
+  flex-wrap:wrap;
+}
+.data-browser-filters input,
+.data-browser-filters select{
+  padding:6px 10px;
+  border:1px solid var(--border);
+  border-radius:6px;
+  background:var(--btn-bg);
+  color:var(--text);
+  font-size:13px;
+}
+.data-browser-table-wrap{
+  overflow-x:auto;
+  max-height:55vh;
+  overflow-y:auto;
+  border:1px solid var(--border);
+  border-radius:8px;
+}
+.data-browser-table{
+  width:100%;
+  border-collapse:collapse;
+  font-size:13px;
+}
+.data-browser-table th{
+  background:var(--muted-bg);
+  padding:8px 10px;
+  text-align:left;
+  font-weight:600;
+  position:sticky;
+  top:0;
+  z-index:1;
+  border-bottom:1px solid var(--border);
+}
+.data-browser-table td{
+  padding:6px 10px;
+  border-bottom:1px solid var(--border);
+  white-space:nowrap;
+}
+.data-browser-table tr:hover{
+  background:var(--table-hover);
+}
+.data-browser-pagination{
+  display:flex;
+  gap:12px;
+  align-items:center;
+  justify-content:center;
+  margin-top:12px;
+  font-size:13px;
+}
+.source-badge{
+  display:inline-block;
+  padding:2px 8px;
+  border-radius:4px;
+  font-size:11px;
+  font-weight:600;
+  background:var(--muted-bg);
+  color:var(--muted-text);
+}
+.source-badge.gnss{
+  background:#dcfce7;
+  color:#166534;
+}
+.source-badge.wifi{
+  background:#dbeafe;
+  color:#1e40af;
+}
+.source-badge.wifi-cache{
+  background:#e0e7ff;
+  color:#3730a3;
+}
+.source-badge.ibeacon{
+  background:#fce7f3;
+  color:#9d174d;
+}
+[data-theme="dark"] .source-badge.gnss{
+  background:#14532d;
+  color:#86efac;
+}
+[data-theme="dark"] .source-badge.wifi{
+  background:#1e3a5f;
+  color:#93c5fd;
+}
+[data-theme="dark"] .source-badge.wifi-cache{
+  background:#312e81;
+  color:#a5b4fc;
+}
+[data-theme="dark"] .source-badge.ibeacon{
+  background:#831843;
+  color:#f9a8d4;
+}
+.mac-badge{
+  display:inline-block;
+  padding:2px 8px;
+  border-radius:4px;
+  font-size:11px;
+  background:#fef3c7;
+  color:#92400e;
+  cursor:pointer;
+}
+.mac-badge:hover{
+  background:#fde68a;
+}
+[data-theme="dark"] .mac-badge{
+  background:#3d3520;
+  color:#fbbf24;
+}
+[data-theme="dark"] .mac-badge:hover{
+  background:#4d4530;
+}
+
 /* ========== MULTI-DEVICE: Comparison Panel ========== */
 .comparison-panel{
   background:var(--card-bg);
