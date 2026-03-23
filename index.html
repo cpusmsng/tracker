@@ -1010,8 +1010,47 @@
               </div>
             </div>
           </div>
+
+          <!-- Date/Time Filter -->
+          <div class="log-date-filter">
+            <div class="log-date-filter-row">
+              <div class="log-date-quick-buttons">
+                <button type="button" class="btn-small btn-secondary log-quick-range active" data-hours="6">6h</button>
+                <button type="button" class="btn-small btn-secondary log-quick-range" data-hours="12">12h</button>
+                <button type="button" class="btn-small btn-secondary log-quick-range" data-hours="24">24h</button>
+                <button type="button" class="btn-small btn-secondary log-quick-range" data-hours="48">48h</button>
+                <button type="button" class="btn-small btn-secondary log-quick-range" data-custom="true">Vlastný rozsah</button>
+              </div>
+            </div>
+            <div id="logCustomDateRange" class="log-custom-date-range hidden">
+              <div class="log-date-inputs">
+                <div class="log-date-input-group">
+                  <label>Od dátumu:</label>
+                  <input type="date" id="logDateFrom" class="log-date-input">
+                  <input type="time" id="logTimeFrom" class="log-time-input" value="00:00">
+                </div>
+                <div class="log-date-input-group">
+                  <label>Do dátumu:</label>
+                  <input type="date" id="logDateTo" class="log-date-input">
+                  <input type="time" id="logTimeTo" class="log-time-input" value="23:59">
+                </div>
+              </div>
+              <div class="log-date-calendar">
+                <div class="log-calendar-header">
+                  <button type="button" id="logCalPrev" class="btn-small btn-secondary">&laquo;</button>
+                  <span id="logCalMonthLabel" class="log-cal-month-label"></span>
+                  <button type="button" id="logCalNext" class="btn-small btn-secondary">&raquo;</button>
+                </div>
+                <div id="logCalGrid" class="log-calendar-grid"></div>
+                <div class="log-calendar-info">Kliknite na dni (max. 7 dní). Klik = vybrať/zrušiť deň.</div>
+              </div>
+              <button type="button" id="logApplyDateRange" class="btn-small btn-primary">Použiť rozsah</button>
+            </div>
+          </div>
+
           <div class="log-info-bar">
             <span id="logFileInfo">Súbor: -</span>
+            <span id="logDateRangeInfo">Rozsah: posledných 6 hodín</span>
             <span id="logCountInfo">Záznamov: -</span>
           </div>
           <div id="logContainer" class="log-container">
@@ -1031,6 +1070,30 @@
                 <polyline points="9 18 15 12 9 6"/>
               </svg>
             </button>
+          </div>
+        </div>
+
+        <!-- Bulk Delete Section -->
+        <div class="log-section log-delete-section">
+          <div class="log-section-header">
+            <h3>Hromadné mazanie logov</h3>
+          </div>
+          <div class="log-delete-controls">
+            <p class="log-delete-description">Zmazať všetky logy staršie ako zvolený mesiac. Pred zmazaním sa automaticky vytvorí záloha.</p>
+            <div class="log-delete-row">
+              <label for="logDeleteBeforeMonth">Zmazať logy od mesiaca a staršie:</label>
+              <select id="logDeleteBeforeMonth" class="log-filter-select">
+                <option value="">Načítavam...</option>
+              </select>
+              <button type="button" id="logDeleteOldBtn" class="btn-small btn-reset" disabled>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                  <polyline points="3 6 5 6 21 6"/>
+                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                </svg>
+                Zmazať staré logy
+              </button>
+            </div>
+            <div id="logDeleteInfo" class="log-delete-info hidden"></div>
           </div>
         </div>
       </div>
