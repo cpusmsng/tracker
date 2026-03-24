@@ -4753,7 +4753,7 @@ async function loadDeviceManagementList() {
       </div>
       <div class="device-card-actions">
         <button class="btn-sm btn-edit" onclick="editDevice(${d.id})">Upraviť</button>
-        <button class="btn-sm btn-buzzer" onclick="sendBuzzerCommand(${d.id}, '${d.name}')" title="Zapnúť pípanie na zariadení">Pípanie</button>
+        <button class="btn-sm btn-buzzer" onclick="sendBuzzerCommand(${d.id}, '${d.name}', event)" title="Zapnúť pípanie na zariadení">Pípanie</button>
         <button class="btn-sm btn-data" onclick="openDataBrowser(${d.id}, '${d.name}')" title="Prehliadač dát zariadenia">Dáta</button>
         <button class="btn-sm btn-toggle" onclick="toggleDevice(${d.id}, ${d.is_active ? 0 : 1})">${d.is_active ? 'Deaktivovať' : 'Aktivovať'}</button>
         <button class="btn-sm btn-danger" onclick="deleteDevice(${d.id}, '${d.name}')">Zmazať</button>
@@ -4857,38 +4857,35 @@ async function deleteDevice(id, name) {
 
 // ========== BUZZER COMMAND ==========
 
-async function sendBuzzerCommand(deviceId, deviceName) {
-  // Get device upload interval info
-  const dev = getDeviceById(deviceId);
+async function sendBuzzerCommand(deviceId, deviceName, evt) {
   const intervalNote = 'Zariadenie začne pípať po najbližšom spojení so sieťou Helium (zvyčajne do 5 minút).';
   const disclaimer = 'Pípanie funguje len ak má zariadenie pokrytie konektivitou Helium.';
 
   if (!confirm(`Zapnúť pípanie na zariadení "${deviceName}"?\n\n${intervalNote}\n\n${disclaimer}`)) return;
 
+  const btn = evt ? evt.target : null;
   try {
-    const btn = event.target;
-    btn.disabled = true;
-    btn.textContent = 'Odosielam...';
+    if (btn) { btn.disabled = true; btn.textContent = 'Odosielam...'; }
 
     const res = await apiPost('send_device_command', { device_id: deviceId, command: 'buzzer_on' });
 
     if (res.ok) {
-      btn.textContent = 'Odoslané';
-      btn.classList.add('btn-success');
-      setTimeout(() => {
-        btn.disabled = false;
-        btn.textContent = 'Pípanie';
-        btn.classList.remove('btn-success');
-      }, 5000);
+      if (btn) {
+        btn.textContent = 'Odoslané';
+        btn.classList.add('btn-success');
+        setTimeout(() => {
+          btn.disabled = false;
+          btn.textContent = 'Pípanie';
+          btn.classList.remove('btn-success');
+        }, 5000);
+      }
       alert(`Príkaz na pípanie odoslaný zariadeniu "${deviceName}".\n\n${intervalNote}\n\nPre vypnutie pípania použite tlačidlo znova.`);
     } else {
-      btn.disabled = false;
-      btn.textContent = 'Pípanie';
+      if (btn) { btn.disabled = false; btn.textContent = 'Pípanie'; }
       alert(res.error || 'Chyba pri odosielaní príkazu');
     }
   } catch (e) {
-    event.target.disabled = false;
-    event.target.textContent = 'Pípanie';
+    if (btn) { btn.disabled = false; btn.textContent = 'Pípanie'; }
     alert('Chyba: ' + e.message);
   }
 }
