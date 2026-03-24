@@ -2880,6 +2880,8 @@ let macManagementMap = null;
 let macManagementMarker = null;
 let macManagementData = [];
 let selectedMacAddress = null;
+let macEditMarker = null;       // Marker on the main map for MAC editing
+let macEditMode = false;        // Whether we're in MAC location editing mode
 
 function initMacManagement() {
   // Filter apply button
@@ -2966,6 +2968,16 @@ function initMacManagement() {
     });
     observer.observe(macSection, { attributes: true });
   }
+
+  // MAC edit panel buttons (floating panel on main map)
+  const panelClose = $('#macEditPanelClose');
+  if (panelClose) panelClose.addEventListener('click', () => closeMacEditPanel());
+
+  const panelCancel = $('#macEditPanelCancel');
+  if (panelCancel) panelCancel.addEventListener('click', () => closeMacEditPanel());
+
+  const panelSave = $('#macEditPanelSave');
+  if (panelSave) panelSave.addEventListener('click', saveMacFromPanel);
 }
 
 function initMacManagementMap() {
@@ -3072,13 +3084,13 @@ function selectMacForEdit(mac) {
 
   selectedMacAddress = mac;
 
-  // Show edit section
+  // Show edit section in overlay (keep for inline editing)
   $('#macSelectedInfo').style.display = 'block';
   $('#macSelectedAddress').textContent = mac;
   $('#macEditLat').value = macData.lat !== null ? macData.lat : '';
   $('#macEditLng').value = macData.lng !== null ? macData.lng : '';
 
-  // Update map
+  // Update inline map
   initMacManagementMap();
   if (macData.lat !== null && macData.lng !== null) {
     updateMacManagementMarker(macData.lat, macData.lng);
@@ -3093,6 +3105,129 @@ function selectMacForEdit(mac) {
   document.querySelectorAll('#macManagementBody tr').forEach(tr => {
     tr.classList.toggle('selected', tr.dataset.mac === mac);
   });
+
+  // If MAC has coordinates, zoom main map to it and show edit panel
+  openMacEditOnMainMap(macData);
+}
+
+function openMacEditOnMainMap(macData) {
+  if (!map) return;
+
+  // Close settings overlay to reveal the main map
+  closeSettingsOverlay();
+
+  // Enable MAC edit mode
+  macEditMode = true;
+
+  // Populate the floating panel
+  const panel = $('#macEditPanel');
+  $('#macEditPanelAddress').textContent = macData.mac;
+  $('#macEditPanelLat').value = macData.lat !== null ? macData.lat : '';
+  $('#macEditPanelLng').value = macData.lng !== null ? macData.lng : '';
+  panel.classList.remove('hidden');
+
+  // Remove previous edit marker
+  if (macEditMarker) {
+    map.removeLayer(macEditMarker);
+    macEditMarker = null;
+  }
+
+  // Set view and add draggable marker if coords exist
+  if (macData.lat !== null && macData.lng !== null) {
+    map.setView([macData.lat, macData.lng], 17);
+    placeMacEditMarker(macData.lat, macData.lng);
+  } else {
+    // No coords - keep current view, user will click to set
+    map.setView(map.getCenter(), map.getZoom());
+  }
+
+  // Add map click handler for picking location
+  map.on('click', onMacEditMapClick);
+}
+
+function onMacEditMapClick(e) {
+  if (!macEditMode) return;
+  const { lat, lng } = e.latlng;
+  $('#macEditPanelLat').value = lat.toFixed(6);
+  $('#macEditPanelLng').value = lng.toFixed(6);
+  placeMacEditMarker(lat, lng);
+}
+
+function placeMacEditMarker(lat, lng) {
+  if (!map) return;
+  if (macEditMarker) {
+    macEditMarker.setLatLng([lat, lng]);
+  } else {
+    macEditMarker = L.marker([lat, lng], { draggable: true }).addTo(map);
+    macEditMarker.on('dragend', () => {
+      const pos = macEditMarker.getLatLng();
+      $('#macEditPanelLat').value = pos.lat.toFixed(6);
+      $('#macEditPanelLng').value = pos.lng.toFixed(6);
+    });
+  }
+  macEditMarker.bindPopup(`MAC: ${selectedMacAddress}`).openPopup();
+}
+
+async function saveMacFromPanel() {
+  if (!selectedMacAddress) return;
+
+  const lat = parseFloat($('#macEditPanelLat').value);
+  const lng = parseFloat($('#macEditPanelLng').value);
+
+  if (isNaN(lat) || isNaN(lng)) {
+    alert('Zadajte platné súradnice');
+    return;
+  }
+
+  try {
+    const result = await apiPost('update_mac_coordinates', {
+      mac: selectedMacAddress,
+      lat,
+      lng
+    });
+
+    if (result.ok) {
+      alert('Súradnice uložené');
+      closeMacEditPanel();  // This reopens settings on MAC tab
+      loadMacLocations();
+    } else {
+      alert(`Chyba: ${result.error}`);
+    }
+  } catch (err) {
+    alert(`Chyba: ${err.message}`);
+  }
+}
+
+function closeMacEditPanel(reopenSettings = true) {
+  macEditMode = false;
+
+  // Hide floating panel
+  const panel = $('#macEditPanel');
+  if (panel) panel.classList.add('hidden');
+
+  // Remove edit marker from main map
+  if (macEditMarker && map) {
+    map.removeLayer(macEditMarker);
+    macEditMarker = null;
+  }
+
+  // Remove map click handler
+  if (map) {
+    map.off('click', onMacEditMapClick);
+  }
+
+  // Reopen settings overlay on the MAC tab
+  if (reopenSettings) {
+    openSettingsOverlay();
+    switchToSettingsTab('mac-management');
+  }
+}
+
+function switchToSettingsTab(tabName) {
+  const tabs = document.querySelectorAll('.settings-tab');
+  const sections = document.querySelectorAll('.settings-section');
+  tabs.forEach(t => t.classList.toggle('active', t.dataset.tab === tabName));
+  sections.forEach(s => s.classList.toggle('open', s.dataset.section === tabName));
 }
 
 async function saveMacCoordinates() {

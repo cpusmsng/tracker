@@ -876,6 +876,32 @@ body.authenticated .container{
 
 /* Map */
 .map-wrap{position:relative}
+
+/* MAC edit panel floating over map */
+.mac-edit-panel{
+  position:absolute;bottom:10px;left:10px;right:10px;z-index:1000;
+  background:var(--card-bg);border:1px solid var(--border);border-radius:10px;
+  box-shadow:0 4px 20px rgba(0,0,0,0.15);max-width:520px;
+}
+.mac-edit-panel.hidden{display:none;}
+.mac-edit-panel-header{
+  display:flex;justify-content:space-between;align-items:center;
+  padding:8px 12px;border-bottom:1px solid var(--border);
+  font-size:0.9em;
+}
+.mac-edit-panel-close{
+  background:none;border:none;font-size:1.3em;cursor:pointer;
+  color:var(--text);padding:0 4px;line-height:1;
+}
+.mac-edit-panel-body{padding:10px 12px;}
+.mac-edit-panel-body input[type="number"]{
+  background:var(--card-bg);color:var(--text);border:1px solid var(--border);border-radius:4px;
+}
+
+/* MAC table row clickable styling */
+#macManagementBody tr{cursor:pointer;transition:background 0.15s;}
+#macManagementBody tr:hover{background:var(--muted-bg);}
+#macManagementBody tr.selected{background:var(--accent-light, rgba(59,130,246,0.1));}
 #map{
   height:60vh;width:100%;
   border-radius:10px;border:1px solid var(--border);background:var(--card-bg);

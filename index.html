@@ -156,6 +156,29 @@
 
     <div class="map-wrap">
       <div id="map" role="region" aria-label="Mapa s trasou a polohami"></div>
+
+      <!-- MAC location edit panel (floating over map) -->
+      <div id="macEditPanel" class="mac-edit-panel hidden">
+        <div class="mac-edit-panel-header">
+          <span>Úprava polohy MAC: <strong id="macEditPanelAddress"></strong></span>
+          <button type="button" id="macEditPanelClose" class="mac-edit-panel-close">&times;</button>
+        </div>
+        <div class="mac-edit-panel-body">
+          <p style="margin:0 0 8px 0;font-size:0.85em;color:var(--muted-text);">Kliknite na mapu pre výber novej polohy alebo zadajte súradnice:</p>
+          <div style="display:flex;gap:8px;align-items:end;flex-wrap:wrap;">
+            <div style="flex:1;min-width:120px;">
+              <label for="macEditPanelLat" style="font-size:0.8em;">Latitude</label>
+              <input type="number" id="macEditPanelLat" step="0.000001" placeholder="48.1486" style="width:100%;padding:4px 6px;font-size:0.9em;">
+            </div>
+            <div style="flex:1;min-width:120px;">
+              <label for="macEditPanelLng" style="font-size:0.8em;">Longitude</label>
+              <input type="number" id="macEditPanelLng" step="0.000001" placeholder="17.1077" style="width:100%;padding:4px 6px;font-size:0.9em;">
+            </div>
+            <button type="button" id="macEditPanelSave" class="btn-primary btn-small">Uložiť</button>
+            <button type="button" id="macEditPanelCancel" class="btn-secondary btn-small">Späť</button>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- Device tabs + table -->
