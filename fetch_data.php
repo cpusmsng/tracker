@@ -394,6 +394,51 @@ function is_valid_mac(string $mac): bool {
     return !in_array($mac, $invalid, true);
 }
 
+function ensure_wifi_scans_table(PDO $pdo): void {
+    static $created = false;
+    if ($created) return;
+    $pdo->exec("CREATE TABLE IF NOT EXISTS wifi_scans (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp TEXT NOT NULL,
+        device_id INTEGER NOT NULL DEFAULT 1,
+        macs_json TEXT NOT NULL,
+        mac_count INTEGER NOT NULL DEFAULT 0,
+        resolved INTEGER NOT NULL DEFAULT 0,
+        latitude REAL,
+        longitude REAL,
+        source TEXT,
+        tracker_data_id INTEGER,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (device_id) REFERENCES devices(id)
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_wifi_scans_device_ts ON wifi_scans(device_id, timestamp)");
+    $created = true;
+}
+
+function insert_wifi_scan(PDO $pdo, string $iso, int $deviceId, array $aps): int {
+    ensure_wifi_scans_table($pdo);
+    $dt = new DateTimeImmutable($iso);
+    $ts = $dt->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d H:i:s');
+    $macsJson = json_encode($aps, JSON_UNESCAPED_UNICODE);
+
+    // Check for duplicate (same timestamp + device)
+    $chk = $pdo->prepare("SELECT id FROM wifi_scans WHERE timestamp = :ts AND device_id = :did LIMIT 1");
+    $chk->execute([':ts' => $ts, ':did' => $deviceId]);
+    $existing = $chk->fetchColumn();
+    if ($existing !== false) {
+        return (int)$existing;
+    }
+
+    $stmt = $pdo->prepare("INSERT INTO wifi_scans (timestamp, device_id, macs_json, mac_count) VALUES (:ts, :did, :macs, :cnt)");
+    $stmt->execute([':ts' => $ts, ':did' => $deviceId, ':macs' => $macsJson, ':cnt' => count($aps)]);
+    return (int)$pdo->lastInsertId();
+}
+
+function resolve_wifi_scan(PDO $pdo, int $scanId, float $lat, float $lng, string $source, ?int $trackerDataId = null): void {
+    $stmt = $pdo->prepare("UPDATE wifi_scans SET resolved = 1, latitude = :lat, longitude = :lng, source = :src, tracker_data_id = :tid WHERE id = :id");
+    $stmt->execute([':lat' => $lat, ':lng' => $lng, ':src' => $source, ':tid' => $trackerDataId, ':id' => $scanId]);
+}
+
 function google_geolocate(string $apiKey, array $aps, int $minAps, string $timestamp, int $maxAps = 6, int $rssiFloor = -95): ?array {
     if (!$apiKey || empty($aps)) {
         debug_log("  GOOGLE SKIP: apiKey=".($apiKey?'SET':'EMPTY')." aps_count=".count($aps));
@@ -1758,35 +1803,41 @@ try {
         // Priorita 3: Wi-Fi
         $wifiForTs = null;
         foreach ($wifiBuckets as $w) {
-            if ($w['iso'] === $iso) { 
-                $wifiForTs = $w['aps']; 
-                break; 
+            if ($w['iso'] === $iso) {
+                $wifiForTs = $w['aps'];
+                break;
             }
         }
-        
-        if (!$wifiForTs || count($wifiForTs) === 0) { 
+
+        if (!$wifiForTs || count($wifiForTs) === 0) {
             debug_log("  -> NO WIFI APs");
-            $skipped++; 
-            continue; 
+            $skipped++;
+            continue;
         }
 
         debug_log("  -> WIFI: ".count($wifiForTs)." APs available");
+
+        // Store raw WiFi scan (all MACs) regardless of geolocation outcome
+        $wifiScanId = insert_wifi_scan($pdo, $iso, $DEVICE_ID, $wifiForTs);
+        debug_log("  -> WIFI SCAN stored: id=$wifiScanId, macs=".count($wifiForTs));
 
         // Wi-Fi môže tiež obsahovať iBeacony (fallback)
         $matchedLatLng = null;
         foreach ($wifiForTs as $ap) {
             $mac = $ap['mac'];
-            if (isset($ibeaconMap[$mac])) { 
-                $matchedLatLng = $ibeaconMap[$mac]; 
-                break; 
+            if (isset($ibeaconMap[$mac])) {
+                $matchedLatLng = $ibeaconMap[$mac];
+                break;
             }
         }
-        
+
         if ($matchedLatLng) {
             debug_log("  -> IBEACON MATCH (Wi-Fi fallback)");
             $result = insert_position_with_hysteresis($pdo, $iso, $matchedLatLng[0], $matchedLatLng[1], 'ibeacon', $HYSTERESIS_METERS, $lastInsertedPos, null, null, $DEVICE_ID);
             if ($result['inserted']) {
                 $inserted++; $ibeaconHits++;
+                $tdId = (int)$pdo->lastInsertId();
+                resolve_wifi_scan($pdo, $wifiScanId, $matchedLatLng[0], $matchedLatLng[1], 'ibeacon', $tdId);
                 $checkPerimetersAfterInsert($matchedLatLng[0], $matchedLatLng[1], $iso);
             } else {
                 $skipped++;
@@ -1798,14 +1849,14 @@ try {
 
         // MAC cache check
         debug_log("  -> CACHE CHECK: looking up ".count($wifiForTs)." MACs");
-        
+
         $positiveCache = null;
         $negativeCacheMacs = [];
         $unknownAps = [];
-        
+
         foreach ($wifiForTs as $ap) {
             $mac = $ap['mac'];
-            
+
             if (array_key_exists($mac, $macCache)) {
                 if ($macCache[$mac] !== null) {
                     if ($positiveCache === null) {
@@ -1822,7 +1873,7 @@ try {
                 debug_log("    CACHE MISS: $mac");
             }
         }
-        
+
         if ($positiveCache !== null) {
             debug_log("  -> USING CACHE: MAC=".$positiveCache['mac']);
             $allMacs = implode(',', array_map(fn($ap) => $ap['mac'], $wifiForTs));
@@ -1830,22 +1881,28 @@ try {
             $result = insert_position_with_hysteresis($pdo, $iso, $positiveCache['lat'], $positiveCache['lng'], 'wifi-cache', $HYSTERESIS_METERS, $lastInsertedPos, $allMacs, $primaryMac, $DEVICE_ID);
             if ($result['inserted']) {
                 $inserted++; $cacheHits++;
+                $tdId = (int)$pdo->lastInsertId();
+                resolve_wifi_scan($pdo, $wifiScanId, $positiveCache['lat'], $positiveCache['lng'], 'wifi-cache', $tdId);
                 $checkPerimetersAfterInsert($positiveCache['lat'], $positiveCache['lng'], $iso);
             } else {
+                // Hysteresis skip - scan is still resolved (has coords), just not inserted
+                if ($result['reason'] === 'hysteresis') {
+                    resolve_wifi_scan($pdo, $wifiScanId, $positiveCache['lat'], $positiveCache['lng'], 'wifi-cache', null);
+                }
                 $skipped++;
                 if ($result['reason'] === 'hysteresis') $hysteresisSkips++;
                 if ($result['reason'] === 'db_error') $dbErrors++;
             }
             continue;
         }
-        
+
         if (count($negativeCacheMacs) > 0) {
             $cachedFails += count($negativeCacheMacs);
             debug_log("  -> NEGATIVE CACHE: ".count($negativeCacheMacs)." MACs previously failed");
         }
-        
+
         if (count($unknownAps) === 0) {
-            debug_log("  -> NO UNKNOWN MACs - skipping Google API");
+            debug_log("  -> NO UNKNOWN MACs - skipping Google API (wifi_scan id=$wifiScanId stays unresolved)");
             $skipped++;
             continue;
         }
@@ -1858,8 +1915,13 @@ try {
             $result = insert_position_with_hysteresis($pdo, $iso, $lat, $lng, 'wifi-google', $HYSTERESIS_METERS, $lastInsertedPos, $allMacs, null, $DEVICE_ID);
             if ($result['inserted']) {
                 $inserted++;
+                $tdId = (int)$pdo->lastInsertId();
+                resolve_wifi_scan($pdo, $wifiScanId, $lat, $lng, 'wifi-google', $tdId);
                 $checkPerimetersAfterInsert($lat, $lng, $iso);
             } else {
+                if ($result['reason'] === 'hysteresis') {
+                    resolve_wifi_scan($pdo, $wifiScanId, $lat, $lng, 'wifi-google', null);
+                }
                 $skipped++;
                 if ($result['reason'] === 'hysteresis') $hysteresisSkips++;
                 if ($result['reason'] === 'db_error') $dbErrors++;
@@ -1871,7 +1933,7 @@ try {
             }
             $googled++;
         } else {
-            debug_log("  -> GOOGLE FAILED - caching negative results");
+            debug_log("  -> GOOGLE FAILED - caching negative results (wifi_scan id=$wifiScanId stays unresolved)");
             foreach ($unknownAps as $ap) {
                 if (is_valid_mac($ap['mac'])) {
                     if (cache_failed_mac($pdo, $ap['mac'], $iso)) {

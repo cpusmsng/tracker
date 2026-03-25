@@ -5096,31 +5096,42 @@ async function loadDataBrowserRecords() {
       const time = r.timestamp ? new Date(r.timestamp).toLocaleTimeString('sk-SK', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—';
       const lat = r.latitude ? r.latitude.toFixed(5) : '—';
       const lng = r.longitude ? r.longitude.toFixed(5) : '—';
-      const sourceLabel = formatSource(r.source);
+      const sourceLabel = formatSource(r.source, r.resolved);
+      const isWifiScan = r.record_type === 'wifi_scan';
+      const isUnresolved = isWifiScan && !r.resolved;
+      const rowClass = isUnresolved ? 'unresolved-row' : '';
 
       // MAC addresses info
       let macInfo = '';
-      if (r.raw_wifi_macs) {
-        const macs = r.raw_wifi_macs.split(',').map(m => m.trim()).filter(Boolean);
-        const queriedCount = r.mac_details ? r.mac_details.filter(m => m.has_location).length : 0;
-        const totalMacs = macs.length;
-        macInfo = `<span class="mac-badge" onclick="showRecordMacs(${r.id})" title="Kliknutím zobrazíte detaily">${totalMacs} MAC${totalMacs > 1 ? 's' : ''} (${queriedCount} s polohou)</span>`;
+      const macCount = r.mac_count || (r.mac_details ? r.mac_details.length : 0);
+      if (r.mac_details && r.mac_details.length > 0) {
+        const withLocation = r.mac_details.filter(m => m.has_location).length;
+        const recordRef = isWifiScan ? `'ws_${r.id}'` : `${r.id}`;
+        macInfo = `<span class="mac-badge" onclick="showRecordMacs(${recordRef})" title="Kliknutím zobrazíte detaily">${macCount} MAC${macCount > 1 ? 's' : ''} (${withLocation} s polohou)</span>`;
       } else if (r.source === 'gnss') {
         macInfo = '<span class="source-badge gnss">GNSS</span>';
       } else if (r.source === 'ibeacon') {
         macInfo = '<span class="source-badge ibeacon">iBeacon</span>';
       }
 
-      return `<tr data-record-id="${r.id}">
+      // Actions
+      let actions = '';
+      if (isWifiScan && !r.resolved) {
+        actions = `<button class="btn-sm btn-edit" onclick="retryGoogleForWifiScan(${r.id})" title="Skúsiť Google API pre tento sken">Google</button>`;
+      } else if (r.raw_wifi_macs || isWifiScan) {
+        const retryId = isWifiScan ? r.id : r.id;
+        const retryFn = isWifiScan ? 'retryGoogleForWifiScan' : 'retryGoogleForRecord';
+        actions = `<button class="btn-sm btn-edit" onclick="${retryFn}(${retryId})" title="Zavolať Google API">Google</button>`;
+      }
+
+      return `<tr data-record-id="${r.id}" data-record-type="${r.record_type || 'tracker'}" class="${rowClass}">
         <td>${time}</td>
         <td>${lat}</td>
         <td>${lng}</td>
         <td>${sourceLabel}</td>
         <td>${macInfo}</td>
         <td>${r.primary_mac || '—'}</td>
-        <td>
-          ${r.raw_wifi_macs ? `<button class="btn-sm btn-edit" onclick="retryGoogleForRecord(${r.id})" title="Zavolať Google API pre tento záznam">Google</button>` : ''}
-        </td>
+        <td>${actions}</td>
       </tr>`;
     }).join('');
 
@@ -5130,14 +5141,17 @@ async function loadDataBrowserRecords() {
   }
 }
 
-function formatSource(source) {
+function formatSource(source, resolved) {
+  if (!source && resolved === false) {
+    return '<span class="source-badge unresolved">Nerozpoznané</span>';
+  }
   const map = {
     'gnss': '<span class="source-badge gnss">GNSS</span>',
     'wifi-google': '<span class="source-badge wifi">WiFi Google</span>',
     'wifi-cache': '<span class="source-badge wifi-cache">WiFi Cache</span>',
     'ibeacon': '<span class="source-badge ibeacon">iBeacon</span>'
   };
-  return map[source] || `<span class="source-badge">${source}</span>`;
+  return map[source] || `<span class="source-badge">${source || '—'}</span>`;
 }
 
 function updateDataBrowserPagination(pagination) {
@@ -5178,6 +5192,30 @@ function dataBrowserFilterChanged() {
 }
 
 async function showRecordMacs(recordId) {
+  // Handle wifi_scan records (prefixed with 'ws_')
+  if (typeof recordId === 'string' && recordId.startsWith('ws_')) {
+    const wsId = parseInt(recordId.substring(3));
+    try {
+      const params = new URLSearchParams({ action: 'get_wifi_scan_macs', id: wsId });
+      const result = await apiGet(`${API}?${params}`);
+      if (!result.ok) {
+        alert('Chyba: ' + (result.error || 'Nepodarilo sa načítať MAC adresy'));
+        return;
+      }
+      const macs = result.macs || [];
+      let msg = `WiFi sken #${wsId} - ${macs.length} MAC adries:\n\n`;
+      macs.forEach(m => {
+        const rssiStr = m.rssi ? ` (${m.rssi} dBm)` : '';
+        const status = m.has_location ? `[${m.lat.toFixed(4)}, ${m.lng.toFixed(4)}]` : (m.queried ? '[negatívny]' : '[neotestovaný]');
+        msg += `${m.mac}${rssiStr} ${status}\n`;
+      });
+      alert(msg);
+    } catch (e) {
+      alert('Chyba: ' + e.message);
+    }
+    return;
+  }
+
   try {
     const params = new URLSearchParams({ action: 'get_record_macs', id: recordId });
     const result = await apiGet(`${API}?${params}`);
@@ -5221,6 +5259,30 @@ async function retryGoogleForRecord(recordId) {
         }
       } else {
         msg += 'Žiadna poloha vrátená';
+      }
+      alert(msg);
+      loadDataBrowserRecords();
+    } else {
+      alert(res.error || 'Chyba pri volaní Google API');
+    }
+  } catch (e) {
+    alert('Chyba: ' + e.message);
+  }
+}
+
+async function retryGoogleForWifiScan(scanId) {
+  if (!confirm('Zavolať Google Geolocation API pre tento WiFi sken?')) return;
+
+  try {
+    const res = await apiPost('retry_google_wifi_scan', { scan_id: scanId });
+    if (res.ok) {
+      let msg = 'Google API odpoveď:\n';
+      if (res.latitude !== undefined && res.latitude !== null) {
+        msg += `Poloha: ${res.latitude.toFixed(5)}, ${res.longitude.toFixed(5)}\n`;
+        msg += `Presnosť: ${res.accuracy || '—'} m\n`;
+        msg += `Aktualizovaných MAC: ${res.macs_updated || 0}`;
+      } else {
+        msg += 'Žiadna poloha vrátená - Google nerozpoznal tieto WiFi siete';
       }
       alert(msg);
       loadDataBrowserRecords();

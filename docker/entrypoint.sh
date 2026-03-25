@@ -169,6 +169,22 @@ if [ ! -f "${SQLITE_PATH}" ]; then
             FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE CASCADE
         )');
 
+        // Raw WiFi scans - stores every WiFi observation regardless of geolocation success
+        \$pdo->exec('CREATE TABLE IF NOT EXISTS wifi_scans (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT NOT NULL,
+            device_id INTEGER NOT NULL DEFAULT 1,
+            macs_json TEXT NOT NULL,
+            mac_count INTEGER NOT NULL DEFAULT 0,
+            resolved INTEGER NOT NULL DEFAULT 0,
+            latitude REAL,
+            longitude REAL,
+            source TEXT,
+            tracker_data_id INTEGER,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (device_id) REFERENCES devices(id)
+        )');
+
         // Create default device from .env
         \$eui = getenv(\"SENSECAP_DEVICE_EUI\") ?: \"UNKNOWN\";
         \$deviceName = getenv(\"DEVICE_NAME\") ?: \"Predvolené zariadenie\";
@@ -184,6 +200,8 @@ if [ ! -f "${SQLITE_PATH}" ]; then
         \$pdo->exec('CREATE INDEX IF NOT EXISTS idx_device_perimeters_device ON device_perimeters(device_id)');
         \$pdo->exec('CREATE INDEX IF NOT EXISTS idx_perimeters_device ON perimeters(device_id)');
         \$pdo->exec('CREATE INDEX IF NOT EXISTS idx_perimeter_alerts_sent ON perimeter_alerts(sent_at)');
+        \$pdo->exec('CREATE INDEX IF NOT EXISTS idx_wifi_scans_device_ts ON wifi_scans(device_id, timestamp)');
+        \$pdo->exec('CREATE INDEX IF NOT EXISTS idx_wifi_scans_resolved ON wifi_scans(resolved)');
 
         echo 'Database initialized successfully.';
     "

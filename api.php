@@ -414,58 +414,153 @@ if ($action === 'get_raw_records' && $_SERVER['REQUEST_METHOD'] === 'GET') {
     $perPage      = max(1, min(200, (int)(qparam('per_page') ?? '50')));
     $sourceFilter = qparam('source_filter');
 
-    // Build WHERE conditions
-    $where  = [];
-    $params = [];
+    // Check if wifi_scans table exists
+    $hasWifiScans = false;
+    try {
+        $pdo->query("SELECT 1 FROM wifi_scans LIMIT 0");
+        $hasWifiScans = true;
+    } catch (Throwable $e) {}
 
-    if ($deviceId) {
-        $where[]        = 'td.device_id = :did';
-        $params[':did'] = (int)$deviceId;
-    }
-
+    // Date range in UTC
+    $utcStart = null; $utcEnd = null;
     if ($localDate) {
         $startLocal = new DateTimeImmutable($localDate . ' 00:00:00', new DateTimeZone('Europe/Bratislava'));
         $endLocal   = new DateTimeImmutable($localDate . ' 23:59:59', new DateTimeZone('Europe/Bratislava'));
-        $where[]          = 'td.timestamp BETWEEN :start AND :end';
-        $params[':start'] = $startLocal->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d H:i:s');
-        $params[':end']   = $endLocal->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d H:i:s');
+        $utcStart   = $startLocal->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d H:i:s');
+        $utcEnd     = $endLocal->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d H:i:s');
     }
 
-    if ($sourceFilter && $sourceFilter !== 'all') {
-        $where[]           = 'td.source = :src';
-        $params[':src']    = $sourceFilter;
+    // Build unified query using UNION of tracker_data (non-wifi) and wifi_scans (all wifi)
+    if ($hasWifiScans) {
+        // Part 1: Non-WiFi records from tracker_data (GNSS, iBeacon)
+        // Part 2: All WiFi scans from wifi_scans (resolved + unresolved)
+        $whereTd  = ["td.source NOT LIKE 'wifi%'"];
+        $whereWs  = [];
+        $paramsTd = [];
+        $paramsWs = [];
+
+        if ($deviceId) {
+            $whereTd[]          = 'td.device_id = :did';
+            $paramsTd[':did']   = (int)$deviceId;
+            $whereWs[]          = 'ws.device_id = :did2';
+            $paramsWs[':did2']  = (int)$deviceId;
+        }
+
+        if ($utcStart && $utcEnd) {
+            $whereTd[]            = 'td.timestamp BETWEEN :start AND :end';
+            $paramsTd[':start']   = $utcStart;
+            $paramsTd[':end']     = $utcEnd;
+            $whereWs[]            = 'ws.timestamp BETWEEN :start2 AND :end2';
+            $paramsWs[':start2']  = $utcStart;
+            $paramsWs[':end2']    = $utcEnd;
+        }
+
+        if ($sourceFilter && $sourceFilter !== 'all') {
+            if (str_starts_with($sourceFilter, 'wifi')) {
+                // WiFi filter - only show wifi_scans
+                $whereWs[]          = 'ws.source = :src2';
+                $paramsWs[':src2']  = $sourceFilter;
+                // Exclude all tracker_data (non-wifi)
+                $whereTd[] = '0 = 1';
+            } else if ($sourceFilter === 'unresolved') {
+                // Special filter: show only unresolved wifi scans
+                $whereWs[]  = 'ws.resolved = 0';
+                $whereTd[]  = '0 = 1';
+            } else {
+                // Non-wifi filter (gnss, ibeacon)
+                $whereTd[]          = 'td.source = :src';
+                $paramsTd[':src']   = $sourceFilter;
+                // Exclude wifi_scans
+                $whereWs[] = '0 = 1';
+            }
+        }
+
+        $whereTdSql = 'WHERE ' . implode(' AND ', $whereTd);
+        $whereWsSql = $whereWs ? 'WHERE ' . implode(' AND ', $whereWs) : '';
+
+        // Count total
+        $countSql = "
+            SELECT (SELECT COUNT(*) FROM tracker_data td $whereTdSql)
+                 + (SELECT COUNT(*) FROM wifi_scans ws $whereWsSql)
+        ";
+        $countStmt = $pdo->prepare($countSql);
+        foreach ($paramsTd as $k => $v) $countStmt->bindValue($k, $v);
+        foreach ($paramsWs as $k => $v) $countStmt->bindValue($k, $v);
+        $countStmt->execute();
+        $totalCount = (int)$countStmt->fetchColumn();
+        $totalPages = max(1, (int)ceil($totalCount / $perPage));
+        $offset     = ($page - 1) * $perPage;
+
+        // Fetch unified records
+        $sql = "
+            SELECT 'tracker' as record_type, td.id, td.timestamp, td.latitude, td.longitude, td.source,
+                   td.device_id, td.raw_wifi_macs, td.primary_mac,
+                   d.name as device_name, NULL as macs_json, 0 as mac_count, 1 as resolved
+            FROM tracker_data td
+            LEFT JOIN devices d ON td.device_id = d.id
+            $whereTdSql
+            UNION ALL
+            SELECT 'wifi_scan' as record_type, ws.id, ws.timestamp, ws.latitude, ws.longitude, ws.source,
+                   ws.device_id, NULL as raw_wifi_macs, NULL as primary_mac,
+                   d.name as device_name, ws.macs_json, ws.mac_count, ws.resolved
+            FROM wifi_scans ws
+            LEFT JOIN devices d ON ws.device_id = d.id
+            $whereWsSql
+            ORDER BY timestamp DESC
+            LIMIT :limit OFFSET :offset
+        ";
+        $stmt = $pdo->prepare($sql);
+        foreach ($paramsTd as $k => $v) $stmt->bindValue($k, $v);
+        foreach ($paramsWs as $k => $v) $stmt->bindValue($k, $v);
+        $stmt->bindValue(':limit',  $perPage, PDO::PARAM_INT);
+        $stmt->bindValue(':offset', $offset,  PDO::PARAM_INT);
+        $stmt->execute();
+        $rows = $stmt->fetchAll();
+    } else {
+        // Fallback: no wifi_scans table yet, use original logic
+        $where  = [];
+        $params = [];
+
+        if ($deviceId) {
+            $where[]        = 'td.device_id = :did';
+            $params[':did'] = (int)$deviceId;
+        }
+        if ($utcStart && $utcEnd) {
+            $where[]          = 'td.timestamp BETWEEN :start AND :end';
+            $params[':start'] = $utcStart;
+            $params[':end']   = $utcEnd;
+        }
+        if ($sourceFilter && $sourceFilter !== 'all') {
+            $where[]           = 'td.source = :src';
+            $params[':src']    = $sourceFilter;
+        }
+        $whereSql = $where ? 'WHERE ' . implode(' AND ', $where) : '';
+
+        $countStmt = $pdo->prepare("SELECT COUNT(*) FROM tracker_data td $whereSql");
+        $countStmt->execute($params);
+        $totalCount = (int)$countStmt->fetchColumn();
+        $totalPages = max(1, (int)ceil($totalCount / $perPage));
+        $offset     = ($page - 1) * $perPage;
+
+        $sql = "
+            SELECT 'tracker' as record_type, td.id, td.timestamp, td.latitude, td.longitude, td.source,
+                   td.device_id, td.raw_wifi_macs, td.primary_mac,
+                   d.name as device_name, NULL as macs_json, 0 as mac_count, 1 as resolved
+            FROM tracker_data td
+            LEFT JOIN devices d ON td.device_id = d.id
+            $whereSql
+            ORDER BY td.timestamp DESC
+            LIMIT :limit OFFSET :offset
+        ";
+        $stmt = $pdo->prepare($sql);
+        foreach ($params as $k => $v) $stmt->bindValue($k, $v);
+        $stmt->bindValue(':limit',  $perPage, PDO::PARAM_INT);
+        $stmt->bindValue(':offset', $offset,  PDO::PARAM_INT);
+        $stmt->execute();
+        $rows = $stmt->fetchAll();
     }
 
-    $whereSql = $where ? 'WHERE ' . implode(' AND ', $where) : '';
-
-    // Total count
-    $countStmt = $pdo->prepare("SELECT COUNT(*) FROM tracker_data td $whereSql");
-    $countStmt->execute($params);
-    $totalCount = (int)$countStmt->fetchColumn();
-    $totalPages = max(1, (int)ceil($totalCount / $perPage));
-    $offset     = ($page - 1) * $perPage;
-
-    // Fetch records
-    $sql = "
-        SELECT td.id, td.timestamp, td.latitude, td.longitude, td.source,
-               td.device_id, td.raw_wifi_macs, td.primary_mac,
-               d.name as device_name
-        FROM tracker_data td
-        LEFT JOIN devices d ON td.device_id = d.id
-        $whereSql
-        ORDER BY td.timestamp DESC
-        LIMIT :limit OFFSET :offset
-    ";
-    $stmt = $pdo->prepare($sql);
-    foreach ($params as $k => $v) {
-        $stmt->bindValue($k, $v);
-    }
-    $stmt->bindValue(':limit',  $perPage, PDO::PARAM_INT);
-    $stmt->bindValue(':offset', $offset,  PDO::PARAM_INT);
-    $stmt->execute();
-    $rows = $stmt->fetchAll();
-
-    // Collect all MAC addresses from results to batch-check mac_locations
+    // Collect all MAC addresses for batch lookup
     $allMacs = [];
     foreach ($rows as $r) {
         if (!empty($r['raw_wifi_macs'])) {
@@ -474,9 +569,17 @@ if ($action === 'get_raw_records' && $_SERVER['REQUEST_METHOD'] === 'GET') {
                 if ($mac !== '') $allMacs[$mac] = true;
             }
         }
+        if (!empty($r['macs_json'])) {
+            $parsed = json_decode($r['macs_json'], true);
+            if (is_array($parsed)) {
+                foreach ($parsed as $ap) {
+                    if (!empty($ap['mac'])) $allMacs[$ap['mac']] = true;
+                }
+            }
+        }
     }
 
-    // Batch lookup which MACs have been queried in mac_locations
+    // Batch lookup mac_locations
     $macQueried = [];
     if ($allMacs) {
         $placeholders = implode(',', array_fill(0, count($allMacs), '?'));
@@ -485,6 +588,8 @@ if ($action === 'get_raw_records' && $_SERVER['REQUEST_METHOD'] === 'GET') {
         while ($ml = $mlStmt->fetch()) {
             $macQueried[$ml['mac_address']] = [
                 'has_location' => ($ml['latitude'] !== null && $ml['longitude'] !== null),
+                'lat'          => $ml['latitude'] !== null ? (float)$ml['latitude'] : null,
+                'lng'          => $ml['longitude'] !== null ? (float)$ml['longitude'] : null,
                 'last_queried' => $ml['last_queried'] ? utc_to_local($ml['last_queried']) : null,
             ];
         }
@@ -493,20 +598,47 @@ if ($action === 'get_raw_records' && $_SERVER['REQUEST_METHOD'] === 'GET') {
     // Build output
     $out = [];
     foreach ($rows as $r) {
+        $recordType = $r['record_type'] ?? 'tracker';
+
         $record = [
             'id'            => (int)$r['id'],
+            'record_type'   => $recordType,
             'timestamp'     => utc_to_local($r['timestamp']),
             'latitude'      => $r['latitude'] !== null ? (float)$r['latitude'] : null,
             'longitude'     => $r['longitude'] !== null ? (float)$r['longitude'] : null,
-            'source'        => (string)$r['source'],
+            'source'        => $r['source'] ?: null,
+            'resolved'      => (bool)$r['resolved'],
             'device_id'     => $r['device_id'] ? (int)$r['device_id'] : null,
             'device_name'   => $r['device_name'] ?? null,
             'raw_wifi_macs' => $r['raw_wifi_macs'] ?: null,
             'primary_mac'   => $r['primary_mac'] ?: null,
+            'mac_count'     => (int)($r['mac_count'] ?? 0),
             'mac_details'   => null,
         ];
 
-        if (!empty($r['raw_wifi_macs'])) {
+        // Build mac_details from raw_wifi_macs (tracker_data) or macs_json (wifi_scans)
+        if ($recordType === 'wifi_scan' && !empty($r['macs_json'])) {
+            $parsed = json_decode($r['macs_json'], true);
+            if (is_array($parsed)) {
+                $macDetails = [];
+                foreach ($parsed as $ap) {
+                    $mac = $ap['mac'] ?? '';
+                    if ($mac === '') continue;
+                    $info = $macQueried[$mac] ?? null;
+                    $macDetails[] = [
+                        'mac'          => $mac,
+                        'rssi'         => (int)($ap['rssi'] ?? -200),
+                        'queried'      => $info !== null,
+                        'has_location' => $info['has_location'] ?? false,
+                        'lat'          => $info['lat'] ?? null,
+                        'lng'          => $info['lng'] ?? null,
+                        'last_queried' => $info['last_queried'] ?? null,
+                    ];
+                }
+                $record['mac_details'] = $macDetails;
+                $record['mac_count'] = count($macDetails);
+            }
+        } else if (!empty($r['raw_wifi_macs'])) {
             $macDetails = [];
             foreach (explode(',', $r['raw_wifi_macs']) as $mac) {
                 $mac = trim($mac);
@@ -516,6 +648,8 @@ if ($action === 'get_raw_records' && $_SERVER['REQUEST_METHOD'] === 'GET') {
                     'mac'          => $mac,
                     'queried'      => $info !== null,
                     'has_location' => $info['has_location'] ?? false,
+                    'lat'          => $info['lat'] ?? null,
+                    'lng'          => $info['lng'] ?? null,
                     'last_queried' => $info['last_queried'] ?? null,
                 ];
             }
@@ -582,6 +716,145 @@ if ($action === 'get_record_macs') {
         }
 
         respond(['ok' => true, 'data' => ['macs' => $macs, 'primary_mac' => $record['primary_mac']]]);
+    } catch (Throwable $e) {
+        respond(['ok' => false, 'error' => $e->getMessage()], 500);
+    }
+}
+
+// GET /api.php?action=get_wifi_scan_macs&id=X - Get MAC details for a wifi_scan record
+if ($action === 'get_wifi_scan_macs') {
+    try {
+        $id = qparam('id');
+        if (!$id) respond(['ok' => false, 'error' => 'Scan ID is required'], 400);
+
+        $stmt = $pdo->prepare("SELECT macs_json FROM wifi_scans WHERE id = ?");
+        $stmt->execute([(int)$id]);
+        $scan = $stmt->fetch();
+        if (!$scan) respond(['ok' => false, 'error' => 'Scan not found'], 404);
+
+        $parsed = json_decode($scan['macs_json'], true);
+        if (!is_array($parsed)) respond(['ok' => true, 'macs' => []]);
+
+        // Batch lookup mac_locations
+        $macAddresses = array_filter(array_map(fn($ap) => $ap['mac'] ?? '', $parsed));
+        $macInfo = [];
+        if ($macAddresses) {
+            $ph = implode(',', array_fill(0, count($macAddresses), '?'));
+            $ml = $pdo->prepare("SELECT mac_address, latitude, longitude, last_queried FROM mac_locations WHERE mac_address IN ($ph)");
+            $ml->execute(array_values($macAddresses));
+            while ($r = $ml->fetch()) $macInfo[$r['mac_address']] = $r;
+        }
+
+        $macs = [];
+        foreach ($parsed as $ap) {
+            $mac = $ap['mac'] ?? '';
+            if ($mac === '') continue;
+            $info = $macInfo[$mac] ?? null;
+            $macs[] = [
+                'mac'          => $mac,
+                'rssi'         => (int)($ap['rssi'] ?? -200),
+                'queried'      => $info !== null,
+                'has_location' => ($info && $info['latitude'] !== null && $info['longitude'] !== null),
+                'lat'          => $info && $info['latitude'] !== null ? (float)$info['latitude'] : null,
+                'lng'          => $info && $info['longitude'] !== null ? (float)$info['longitude'] : null,
+                'last_queried' => $info && $info['last_queried'] ? utc_to_local($info['last_queried']) : null,
+            ];
+        }
+        respond(['ok' => true, 'macs' => $macs]);
+    } catch (Throwable $e) {
+        respond(['ok' => false, 'error' => $e->getMessage()], 500);
+    }
+}
+
+// POST /api.php?action=retry_google_wifi_scan - Retry Google API for a wifi_scan
+if ($action === 'retry_google_wifi_scan' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    try {
+        $j = json_body();
+        $scanId = (int)($j['scan_id'] ?? 0);
+        if (!$scanId) respond(['ok' => false, 'error' => 'scan_id is required'], 400);
+
+        $stmt = $pdo->prepare("SELECT id, macs_json, device_id, timestamp FROM wifi_scans WHERE id = ?");
+        $stmt->execute([$scanId]);
+        $scan = $stmt->fetch();
+        if (!$scan) respond(['ok' => false, 'error' => 'Scan not found'], 404);
+
+        $parsed = json_decode($scan['macs_json'], true);
+        if (!is_array($parsed) || empty($parsed)) respond(['ok' => false, 'error' => 'No MACs in scan']);
+
+        $GKEY = $CFG['GOOGLE_API_KEY'] ?? '';
+        if (!$GKEY) respond(['ok' => false, 'error' => 'Google API key not configured']);
+
+        // Build WiFi access points for Google
+        $wifiAps = [];
+        foreach ($parsed as $ap) {
+            $mac = strtoupper(str_replace('-', ':', $ap['mac'] ?? ''));
+            if (strlen($mac) !== 17) continue;
+            $wifiAps[] = [
+                'macAddress'         => $mac,
+                'signalStrength'     => (int)($ap['rssi'] ?? -70),
+                'channel'            => 0,
+                'signalToNoiseRatio' => 0,
+            ];
+        }
+
+        if (count($wifiAps) < 2) respond(['ok' => false, 'error' => 'Need at least 2 valid MACs']);
+
+        // Sort by signal strength, take top 6
+        usort($wifiAps, fn($a, $b) => $b['signalStrength'] <=> $a['signalStrength']);
+        $wifiAps = array_slice($wifiAps, 0, 6);
+
+        // Call Google Geolocation API
+        $payload = json_encode(['wifiAccessPoints' => $wifiAps]);
+        $ch = curl_init("https://www.googleapis.com/geolocation/v1/geolocate?key=$GKEY");
+        curl_setopt_array($ch, [
+            CURLOPT_POST           => true,
+            CURLOPT_POSTFIELDS     => $payload,
+            CURLOPT_HTTPHEADER     => ['Content-Type: application/json'],
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_TIMEOUT        => 10,
+        ]);
+        $resp = curl_exec($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+
+        if ($httpCode !== 200 || !$resp) {
+            respond(['ok' => true, 'latitude' => null, 'longitude' => null, 'message' => 'Google API returned no result']);
+        }
+
+        $geoResult = json_decode($resp, true);
+        $lat = $geoResult['location']['lat'] ?? null;
+        $lng = $geoResult['location']['lng'] ?? null;
+        $acc = $geoResult['accuracy'] ?? null;
+
+        if ($lat === null || $lng === null) {
+            respond(['ok' => true, 'latitude' => null, 'longitude' => null, 'message' => 'No location in response']);
+        }
+
+        // Update wifi_scan as resolved
+        $upd = $pdo->prepare("UPDATE wifi_scans SET resolved = 1, latitude = :lat, longitude = :lng, source = 'wifi-google' WHERE id = :id");
+        $upd->execute([':lat' => $lat, ':lng' => $lng, ':id' => $scanId]);
+
+        // Update mac_locations for all MACs in this scan
+        $macsUpdated = 0;
+        foreach ($parsed as $ap) {
+            $mac = strtoupper(str_replace('-', ':', $ap['mac'] ?? ''));
+            if (strlen($mac) !== 17) continue;
+            $upsert = $pdo->prepare("
+                INSERT INTO mac_locations (mac_address, latitude, longitude, last_queried)
+                VALUES (:m, :la, :lo, :ts)
+                ON CONFLICT(mac_address) DO UPDATE SET latitude=excluded.latitude, longitude=excluded.longitude, last_queried=excluded.last_queried
+            ");
+            $upsert->execute([':m' => $mac, ':la' => $lat, ':lo' => $lng, ':ts' => $scan['timestamp']]);
+            $macsUpdated++;
+        }
+
+        respond([
+            'ok'           => true,
+            'latitude'     => (float)$lat,
+            'longitude'    => (float)$lng,
+            'accuracy'     => $acc ? (float)$acc : null,
+            'macs_updated' => $macsUpdated,
+        ]);
     } catch (Throwable $e) {
         respond(['ok' => false, 'error' => $e->getMessage()], 500);
     }
@@ -3084,6 +3357,22 @@ try {
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE CASCADE
     )");
+    $pdo->exec("CREATE TABLE IF NOT EXISTS wifi_scans (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp TEXT NOT NULL,
+        device_id INTEGER NOT NULL DEFAULT 1,
+        macs_json TEXT NOT NULL,
+        mac_count INTEGER NOT NULL DEFAULT 0,
+        resolved INTEGER NOT NULL DEFAULT 0,
+        latitude REAL,
+        longitude REAL,
+        source TEXT,
+        tracker_data_id INTEGER,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (device_id) REFERENCES devices(id)
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_wifi_scans_device_ts ON wifi_scans(device_id, timestamp)");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_wifi_scans_resolved ON wifi_scans(resolved)");
 } catch (Throwable $e) {
     // Tables may already exist
 }
