@@ -10,11 +10,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-GPS/Location Tracker application with Wi-Fi geolocation, GNSS positioning, and iBeacon support. Built with vanilla JavaScript (no frameworks), PHP backend, and SQLite database. Uses SenseCAP IoT device for data collection.
+GPS/Location Tracker application with Wi-Fi geolocation, GNSS positioning, and iBeacon support. Built with vanilla JavaScript (no frameworks), PHP backend, and PostgreSQL database. Uses SenseCAP IoT device for data collection.
 
 **Tech Stack:**
 - Frontend: Vanilla JavaScript + Leaflet.js maps + Leaflet.draw (polygon drawing)
-- Backend: PHP 8.2+ with SQLite
+- Backend: PHP 8.2+ with PostgreSQL 16
 - Docker with Apache, Supervisor, and cron
 - No build process or transpilation required
 - Direct file serving (no bundling)
@@ -280,8 +280,8 @@ curl -X POST "http://localhost:8080/api.php?action=verify_pin" \
 docker exec -it gps-tracker tail -f /var/log/tracker/fetch.log
 
 # Database query
-docker exec -it gps-tracker sqlite3 /var/www/html/data/tracker_database.sqlite \
-  "SELECT COUNT(*) FROM tracker_data"
+docker exec -it gps-tracker-db psql -U tracker tracker \
+  -c "SELECT COUNT(*) FROM tracker_data"
 ```
 
 ```javascript
@@ -324,7 +324,7 @@ curl "http://localhost:8080/api.php?action=n8n_events&type=entered&since=2025-01
 `.htaccess` blocks:
 - `.env` - Environment config
 - `config.php` - Config loader
-- `*.sqlite` - Database files
+- `*.sqlite`, `*.sql` - Database files
 - `*.log` - Log files
 - `fetch_data.php`, `smart_refetch_v2.php` - CLI only
 

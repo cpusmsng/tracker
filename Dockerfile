@@ -1,5 +1,5 @@
 # GPS/Location Tracker - Docker Image
-# PHP 8.2 with Apache, SQLite, and cron support
+# PHP 8.2 with Apache, PostgreSQL, and cron support
 
 FROM php:8.2-apache
 
@@ -9,15 +9,15 @@ LABEL description="GPS/Location Tracker with Wi-Fi geolocation, GNSS, and iBeaco
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     cron \
-    sqlite3 \
-    libsqlite3-dev \
+    libpq-dev \
     supervisor \
     curl \
     procps \
+    postgresql-client \
     && rm -rf /var/lib/apt/lists/*
 
 # Install PHP extensions
-RUN docker-php-ext-install pdo pdo_sqlite
+RUN docker-php-ext-install pdo pdo_pgsql
 
 # Enable Apache modules
 RUN a2enmod rewrite headers
@@ -52,7 +52,7 @@ RUN chmod 0644 /etc/cron.d/tracker-cron \
 EXPOSE 80
 
 # Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
     CMD curl -f http://localhost/api.php?action=health || exit 1
 
 # Use supervisor to run Apache and cron

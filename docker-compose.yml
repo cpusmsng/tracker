@@ -12,23 +12,46 @@
 version: '3.8'
 
 services:
+  db:
+    image: postgres:16-alpine
+    container_name: gps-tracker-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-tracker}
+      POSTGRES_USER: ${POSTGRES_USER:-tracker}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-tracker_secret}
+    volumes:
+      - tracker-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-tracker}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - tracker-internal
+
   tracker:
     build:
       context: .
       dockerfile: Dockerfile
     container_name: gps-tracker
     restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
     ports:
       - "${TRACKER_PORT:-8080}:80"
     environment:
-      # Internal paths (don't change)
-      - SQLITE_PATH=/var/www/html/data/tracker_database.sqlite
+      - DB_HOST=db
+      - DB_PORT=5432
+      - DB_NAME=${POSTGRES_DB:-tracker}
+      - DB_USER=${POSTGRES_USER:-tracker}
+      - DB_PASSWORD=${POSTGRES_PASSWORD:-tracker_secret}
       - LOG_FILE=/var/log/tracker/fetch.log
     volumes:
       # .env file - all configuration is read from here (writable for settings UI)
       - ./.env:/var/www/html/.env
-      # Persistent data storage
-      - tracker-data:/var/www/html/data
       # Logs
       - tracker-logs:/var/log/tracker
 
@@ -37,9 +60,10 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 10s
+      start_period: 15s
 
     networks:
+      - tracker-internal
       - tracker-network
       - bagron-network
 
@@ -50,12 +74,15 @@ services:
         max-file: "3"
 
 volumes:
-  tracker-data:
-    name: gps-tracker-data
+  tracker-pgdata:
+    name: gps-tracker-pgdata
   tracker-logs:
     name: gps-tracker-logs
 
 networks:
+  tracker-internal:
+    name: gps-tracker-internal
+    driver: bridge
   tracker-network:
     name: gps-tracker-network
     driver: bridge

@@ -29,7 +29,7 @@ define('BATTERY_ALERT_EMAIL', getenv('BATTERY_ALERT_EMAIL') ?: '');
 
 // Log file path - from env, or Docker default, or local fallback
 $LOG_FILE = getenv('LOG_FILE') ?: (is_dir('/var/log/tracker') ? '/var/log/tracker/fetch.log' : __DIR__ . '/fetch.log');
-const FETCH_LOCK_FILE = __DIR__ . '/fetch_data.lock';
+const FETCH_LOCK_FILE = '/tmp/tracker_fetch.lock';
 
 // LOG LEVEL: "error", "info", "debug" (from env or default to "info")
 $LOG_LEVEL = strtolower(getenv('LOG_LEVEL') ?: 'info');
@@ -69,13 +69,8 @@ function debug_log(string $msg): void {
 }
 
 function db(): PDO {
-    $path = getenv('SQLITE_PATH') ?: (__DIR__ . '/tracker_database.sqlite');
-    $pdo = new PDO('sqlite:' . $path, null, null, [
-        PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-    ]);
-    $pdo->exec('PRAGMA foreign_keys = ON;');
-    return $pdo;
+    require_once __DIR__ . '/config.php';
+    return get_pdo();
 }
 
 function norm_mac(string $mac): string {
@@ -394,6 +389,51 @@ function is_valid_mac(string $mac): bool {
     return !in_array($mac, $invalid, true);
 }
 
+function ensure_wifi_scans_table(PDO $pdo): void {
+    static $created = false;
+    if ($created) return;
+    $pdo->exec("CREATE TABLE IF NOT EXISTS wifi_scans (
+        id SERIAL PRIMARY KEY,
+        timestamp TIMESTAMP NOT NULL,
+        device_id INTEGER NOT NULL DEFAULT 1,
+        macs_json TEXT NOT NULL,
+        mac_count INTEGER NOT NULL DEFAULT 0,
+        resolved INTEGER NOT NULL DEFAULT 0,
+        latitude DOUBLE PRECISION,
+        longitude DOUBLE PRECISION,
+        source TEXT,
+        tracker_data_id INTEGER,
+        created_at TIMESTAMP DEFAULT NOW(),
+        FOREIGN KEY (device_id) REFERENCES devices(id)
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_wifi_scans_device_ts ON wifi_scans(device_id, timestamp)");
+    $created = true;
+}
+
+function insert_wifi_scan(PDO $pdo, string $iso, int $deviceId, array $aps): int {
+    ensure_wifi_scans_table($pdo);
+    $dt = new DateTimeImmutable($iso);
+    $ts = $dt->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d H:i:s');
+    $macsJson = json_encode($aps, JSON_UNESCAPED_UNICODE);
+
+    // Check for duplicate (same timestamp + device)
+    $chk = $pdo->prepare("SELECT id FROM wifi_scans WHERE timestamp = :ts AND device_id = :did LIMIT 1");
+    $chk->execute([':ts' => $ts, ':did' => $deviceId]);
+    $existing = $chk->fetchColumn();
+    if ($existing !== false) {
+        return (int)$existing;
+    }
+
+    $stmt = $pdo->prepare("INSERT INTO wifi_scans (timestamp, device_id, macs_json, mac_count) VALUES (:ts, :did, :macs, :cnt)");
+    $stmt->execute([':ts' => $ts, ':did' => $deviceId, ':macs' => $macsJson, ':cnt' => count($aps)]);
+    return (int)$pdo->lastInsertId();
+}
+
+function resolve_wifi_scan(PDO $pdo, int $scanId, float $lat, float $lng, string $source, ?int $trackerDataId = null): void {
+    $stmt = $pdo->prepare("UPDATE wifi_scans SET resolved = 1, latitude = :lat, longitude = :lng, source = :src, tracker_data_id = :tid WHERE id = :id");
+    $stmt->execute([':lat' => $lat, ':lng' => $lng, ':src' => $source, ':tid' => $trackerDataId, ':id' => $scanId]);
+}
+
 function google_geolocate(string $apiKey, array $aps, int $minAps, string $timestamp, int $maxAps = 6, int $rssiFloor = -95): ?array {
     if (!$apiKey || empty($aps)) {
         debug_log("  GOOGLE SKIP: apiKey=".($apiKey?'SET':'EMPTY')." aps_count=".count($aps));
@@ -505,9 +545,9 @@ function load_active_perimeters(PDO $pdo, ?int $deviceId = null): array {
     try {
         // Check if device_id column exists
         $hasDeviceIdCol = false;
-        $cols = $pdo->query("PRAGMA table_info(perimeters)");
+        $cols = $pdo->query("SELECT column_name FROM information_schema.columns WHERE table_name = 'perimeters'");
         while ($c = $cols->fetch()) {
-            if ($c['name'] === 'device_id') { $hasDeviceIdCol = true; break; }
+            if ($c['column_name'] === 'device_id') { $hasDeviceIdCol = true; break; }
         }
 
         // Load perimeters: global (device_id IS NULL) + device-specific
@@ -1171,9 +1211,9 @@ function send_battery_alert_email(PDO $pdo, ?string $deviceName = null): bool {
         try {
             $pdo->exec("
                 CREATE TABLE IF NOT EXISTS battery_alert_log (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    sent_at TEXT NOT NULL,
-                    email TEXT NOT NULL
+                    id SERIAL PRIMARY KEY,
+                    sent_at TIMESTAMP NOT NULL,
+                    email VARCHAR(255) NOT NULL
                 )
             ");
             $stmt = $pdo->prepare("INSERT INTO battery_alert_log (sent_at, email) VALUES (:sent, :email)");
@@ -1200,9 +1240,9 @@ function should_send_battery_alert(PDO $pdo): bool {
         // Create table if not exists
         $pdo->exec("
             CREATE TABLE IF NOT EXISTS battery_alert_log (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                sent_at TEXT NOT NULL,
-                email TEXT NOT NULL
+                id SERIAL PRIMARY KEY,
+                sent_at TIMESTAMP NOT NULL,
+                email VARCHAR(255) NOT NULL
             )
         ");
 
@@ -1411,8 +1451,8 @@ try {
     $activeDevices = [];
     try {
         $tables = [];
-        $tq = $pdo->query("SELECT name FROM sqlite_master WHERE type='table' AND name='devices'");
-        while ($tr = $tq->fetch()) $tables[] = $tr['name'];
+        $tq = $pdo->query("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'devices'");
+        while ($tr = $tq->fetch()) $tables[] = $tr['table_name'];
 
         if (in_array('devices', $tables)) {
             $dq = $pdo->query("SELECT id, name, device_eui FROM devices WHERE is_active = 1 ORDER BY id ASC");
@@ -1758,35 +1798,41 @@ try {
         // Priorita 3: Wi-Fi
         $wifiForTs = null;
         foreach ($wifiBuckets as $w) {
-            if ($w['iso'] === $iso) { 
-                $wifiForTs = $w['aps']; 
-                break; 
+            if ($w['iso'] === $iso) {
+                $wifiForTs = $w['aps'];
+                break;
             }
         }
-        
-        if (!$wifiForTs || count($wifiForTs) === 0) { 
+
+        if (!$wifiForTs || count($wifiForTs) === 0) {
             debug_log("  -> NO WIFI APs");
-            $skipped++; 
-            continue; 
+            $skipped++;
+            continue;
         }
 
         debug_log("  -> WIFI: ".count($wifiForTs)." APs available");
+
+        // Store raw WiFi scan (all MACs) regardless of geolocation outcome
+        $wifiScanId = insert_wifi_scan($pdo, $iso, $DEVICE_ID, $wifiForTs);
+        debug_log("  -> WIFI SCAN stored: id=$wifiScanId, macs=".count($wifiForTs));
 
         // Wi-Fi môže tiež obsahovať iBeacony (fallback)
         $matchedLatLng = null;
         foreach ($wifiForTs as $ap) {
             $mac = $ap['mac'];
-            if (isset($ibeaconMap[$mac])) { 
-                $matchedLatLng = $ibeaconMap[$mac]; 
-                break; 
+            if (isset($ibeaconMap[$mac])) {
+                $matchedLatLng = $ibeaconMap[$mac];
+                break;
             }
         }
-        
+
         if ($matchedLatLng) {
             debug_log("  -> IBEACON MATCH (Wi-Fi fallback)");
             $result = insert_position_with_hysteresis($pdo, $iso, $matchedLatLng[0], $matchedLatLng[1], 'ibeacon', $HYSTERESIS_METERS, $lastInsertedPos, null, null, $DEVICE_ID);
             if ($result['inserted']) {
                 $inserted++; $ibeaconHits++;
+                $tdId = (int)$pdo->lastInsertId();
+                resolve_wifi_scan($pdo, $wifiScanId, $matchedLatLng[0], $matchedLatLng[1], 'ibeacon', $tdId);
                 $checkPerimetersAfterInsert($matchedLatLng[0], $matchedLatLng[1], $iso);
             } else {
                 $skipped++;
@@ -1798,14 +1844,14 @@ try {
 
         // MAC cache check
         debug_log("  -> CACHE CHECK: looking up ".count($wifiForTs)." MACs");
-        
+
         $positiveCache = null;
         $negativeCacheMacs = [];
         $unknownAps = [];
-        
+
         foreach ($wifiForTs as $ap) {
             $mac = $ap['mac'];
-            
+
             if (array_key_exists($mac, $macCache)) {
                 if ($macCache[$mac] !== null) {
                     if ($positiveCache === null) {
@@ -1822,7 +1868,7 @@ try {
                 debug_log("    CACHE MISS: $mac");
             }
         }
-        
+
         if ($positiveCache !== null) {
             debug_log("  -> USING CACHE: MAC=".$positiveCache['mac']);
             $allMacs = implode(',', array_map(fn($ap) => $ap['mac'], $wifiForTs));
@@ -1830,22 +1876,28 @@ try {
             $result = insert_position_with_hysteresis($pdo, $iso, $positiveCache['lat'], $positiveCache['lng'], 'wifi-cache', $HYSTERESIS_METERS, $lastInsertedPos, $allMacs, $primaryMac, $DEVICE_ID);
             if ($result['inserted']) {
                 $inserted++; $cacheHits++;
+                $tdId = (int)$pdo->lastInsertId();
+                resolve_wifi_scan($pdo, $wifiScanId, $positiveCache['lat'], $positiveCache['lng'], 'wifi-cache', $tdId);
                 $checkPerimetersAfterInsert($positiveCache['lat'], $positiveCache['lng'], $iso);
             } else {
+                // Hysteresis skip - scan is still resolved (has coords), just not inserted
+                if ($result['reason'] === 'hysteresis') {
+                    resolve_wifi_scan($pdo, $wifiScanId, $positiveCache['lat'], $positiveCache['lng'], 'wifi-cache', null);
+                }
                 $skipped++;
                 if ($result['reason'] === 'hysteresis') $hysteresisSkips++;
                 if ($result['reason'] === 'db_error') $dbErrors++;
             }
             continue;
         }
-        
+
         if (count($negativeCacheMacs) > 0) {
             $cachedFails += count($negativeCacheMacs);
             debug_log("  -> NEGATIVE CACHE: ".count($negativeCacheMacs)." MACs previously failed");
         }
-        
+
         if (count($unknownAps) === 0) {
-            debug_log("  -> NO UNKNOWN MACs - skipping Google API");
+            debug_log("  -> NO UNKNOWN MACs - skipping Google API (wifi_scan id=$wifiScanId stays unresolved)");
             $skipped++;
             continue;
         }
@@ -1858,8 +1910,13 @@ try {
             $result = insert_position_with_hysteresis($pdo, $iso, $lat, $lng, 'wifi-google', $HYSTERESIS_METERS, $lastInsertedPos, $allMacs, null, $DEVICE_ID);
             if ($result['inserted']) {
                 $inserted++;
+                $tdId = (int)$pdo->lastInsertId();
+                resolve_wifi_scan($pdo, $wifiScanId, $lat, $lng, 'wifi-google', $tdId);
                 $checkPerimetersAfterInsert($lat, $lng, $iso);
             } else {
+                if ($result['reason'] === 'hysteresis') {
+                    resolve_wifi_scan($pdo, $wifiScanId, $lat, $lng, 'wifi-google', null);
+                }
                 $skipped++;
                 if ($result['reason'] === 'hysteresis') $hysteresisSkips++;
                 if ($result['reason'] === 'db_error') $dbErrors++;
@@ -1871,7 +1928,7 @@ try {
             }
             $googled++;
         } else {
-            debug_log("  -> GOOGLE FAILED - caching negative results");
+            debug_log("  -> GOOGLE FAILED - caching negative results (wifi_scan id=$wifiScanId stays unresolved)");
             foreach ($unknownAps as $ap) {
                 if (is_valid_mac($ap['mac'])) {
                     if (cache_failed_mac($pdo, $ap['mac'], $iso)) {
@@ -1891,11 +1948,11 @@ try {
             // Vytvor tabuľku ak neexistuje (používame latest_message_time ako názov stĺpca)
             $pdo->exec("
                 CREATE TABLE IF NOT EXISTS device_status (
-                    device_eui TEXT PRIMARY KEY,
-                    battery_state INTEGER,
-                    latest_message_time TEXT,
-                    online_status INTEGER,
-                    last_update TEXT NOT NULL,
+                    device_eui VARCHAR(64) PRIMARY KEY,
+                    battery_state SMALLINT,
+                    latest_message_time VARCHAR(64),
+                    online_status SMALLINT,
+                    last_update TIMESTAMP NOT NULL,
                     CONSTRAINT battery_state_check CHECK (battery_state IS NULL OR battery_state IN (0, 1)),
                     CONSTRAINT online_status_check CHECK (online_status IS NULL OR online_status IN (0, 1))
                 )

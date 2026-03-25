@@ -3,9 +3,10 @@
 declare(strict_types=1);
 
 /**
- * migrate_multi_device.php - Migration script for multi-device support
+ * DEPRECATED: This script was for SQLite→multi-device migration.
+ * The application now uses PostgreSQL. Schema is created by entrypoint.sh.
  *
- * This script:
+ * Original purpose:
  * 1. Backs up the database
  * 2. Creates the `devices` table
  * 3. Creates the `device_perimeters` table

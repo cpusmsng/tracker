@@ -2880,6 +2880,8 @@ let macManagementMap = null;
 let macManagementMarker = null;
 let macManagementData = [];
 let selectedMacAddress = null;
+let macEditMarker = null;       // Marker on the main map for MAC editing
+let macEditMode = false;        // Whether we're in MAC location editing mode
 
 function initMacManagement() {
   // Filter apply button
@@ -2966,6 +2968,16 @@ function initMacManagement() {
     });
     observer.observe(macSection, { attributes: true });
   }
+
+  // MAC edit panel buttons (floating panel on main map)
+  const panelClose = $('#macEditPanelClose');
+  if (panelClose) panelClose.addEventListener('click', () => closeMacEditPanel());
+
+  const panelCancel = $('#macEditPanelCancel');
+  if (panelCancel) panelCancel.addEventListener('click', () => closeMacEditPanel());
+
+  const panelSave = $('#macEditPanelSave');
+  if (panelSave) panelSave.addEventListener('click', saveMacFromPanel);
 }
 
 function initMacManagementMap() {
@@ -3072,13 +3084,13 @@ function selectMacForEdit(mac) {
 
   selectedMacAddress = mac;
 
-  // Show edit section
+  // Show edit section in overlay (keep for inline editing)
   $('#macSelectedInfo').style.display = 'block';
   $('#macSelectedAddress').textContent = mac;
   $('#macEditLat').value = macData.lat !== null ? macData.lat : '';
   $('#macEditLng').value = macData.lng !== null ? macData.lng : '';
 
-  // Update map
+  // Update inline map
   initMacManagementMap();
   if (macData.lat !== null && macData.lng !== null) {
     updateMacManagementMarker(macData.lat, macData.lng);
@@ -3093,6 +3105,129 @@ function selectMacForEdit(mac) {
   document.querySelectorAll('#macManagementBody tr').forEach(tr => {
     tr.classList.toggle('selected', tr.dataset.mac === mac);
   });
+
+  // If MAC has coordinates, zoom main map to it and show edit panel
+  openMacEditOnMainMap(macData);
+}
+
+function openMacEditOnMainMap(macData) {
+  if (!map) return;
+
+  // Close settings overlay to reveal the main map
+  closeSettingsOverlay();
+
+  // Enable MAC edit mode
+  macEditMode = true;
+
+  // Populate the floating panel
+  const panel = $('#macEditPanel');
+  $('#macEditPanelAddress').textContent = macData.mac;
+  $('#macEditPanelLat').value = macData.lat !== null ? macData.lat : '';
+  $('#macEditPanelLng').value = macData.lng !== null ? macData.lng : '';
+  panel.classList.remove('hidden');
+
+  // Remove previous edit marker
+  if (macEditMarker) {
+    map.removeLayer(macEditMarker);
+    macEditMarker = null;
+  }
+
+  // Set view and add draggable marker if coords exist
+  if (macData.lat !== null && macData.lng !== null) {
+    map.setView([macData.lat, macData.lng], 17);
+    placeMacEditMarker(macData.lat, macData.lng);
+  } else {
+    // No coords - keep current view, user will click to set
+    map.setView(map.getCenter(), map.getZoom());
+  }
+
+  // Add map click handler for picking location
+  map.on('click', onMacEditMapClick);
+}
+
+function onMacEditMapClick(e) {
+  if (!macEditMode) return;
+  const { lat, lng } = e.latlng;
+  $('#macEditPanelLat').value = lat.toFixed(6);
+  $('#macEditPanelLng').value = lng.toFixed(6);
+  placeMacEditMarker(lat, lng);
+}
+
+function placeMacEditMarker(lat, lng) {
+  if (!map) return;
+  if (macEditMarker) {
+    macEditMarker.setLatLng([lat, lng]);
+  } else {
+    macEditMarker = L.marker([lat, lng], { draggable: true }).addTo(map);
+    macEditMarker.on('dragend', () => {
+      const pos = macEditMarker.getLatLng();
+      $('#macEditPanelLat').value = pos.lat.toFixed(6);
+      $('#macEditPanelLng').value = pos.lng.toFixed(6);
+    });
+  }
+  macEditMarker.bindPopup(`MAC: ${selectedMacAddress}`).openPopup();
+}
+
+async function saveMacFromPanel() {
+  if (!selectedMacAddress) return;
+
+  const lat = parseFloat($('#macEditPanelLat').value);
+  const lng = parseFloat($('#macEditPanelLng').value);
+
+  if (isNaN(lat) || isNaN(lng)) {
+    alert('Zadajte platné súradnice');
+    return;
+  }
+
+  try {
+    const result = await apiPost('update_mac_coordinates', {
+      mac: selectedMacAddress,
+      lat,
+      lng
+    });
+
+    if (result.ok) {
+      alert('Súradnice uložené');
+      closeMacEditPanel();  // This reopens settings on MAC tab
+      loadMacLocations();
+    } else {
+      alert(`Chyba: ${result.error}`);
+    }
+  } catch (err) {
+    alert(`Chyba: ${err.message}`);
+  }
+}
+
+function closeMacEditPanel(reopenSettings = true) {
+  macEditMode = false;
+
+  // Hide floating panel
+  const panel = $('#macEditPanel');
+  if (panel) panel.classList.add('hidden');
+
+  // Remove edit marker from main map
+  if (macEditMarker && map) {
+    map.removeLayer(macEditMarker);
+    macEditMarker = null;
+  }
+
+  // Remove map click handler
+  if (map) {
+    map.off('click', onMacEditMapClick);
+  }
+
+  // Reopen settings overlay on the MAC tab
+  if (reopenSettings) {
+    openSettingsOverlay();
+    switchToSettingsTab('mac-management');
+  }
+}
+
+function switchToSettingsTab(tabName) {
+  const tabs = document.querySelectorAll('.settings-tab');
+  const sections = document.querySelectorAll('.settings-section');
+  tabs.forEach(t => t.classList.toggle('active', t.dataset.tab === tabName));
+  sections.forEach(s => s.classList.toggle('open', s.dataset.section === tabName));
 }
 
 async function saveMacCoordinates() {
@@ -4753,6 +4888,8 @@ async function loadDeviceManagementList() {
       </div>
       <div class="device-card-actions">
         <button class="btn-sm btn-edit" onclick="editDevice(${d.id})">Upraviť</button>
+        <button class="btn-sm btn-buzzer" onclick="sendBuzzerCommand(${d.id}, '${d.name}', event)" title="Zapnúť pípanie na zariadení">Pípanie</button>
+        <button class="btn-sm btn-data" onclick="openDataBrowser(${d.id}, '${d.name}')" title="Prehliadač dát zariadenia">Dáta</button>
         <button class="btn-sm btn-toggle" onclick="toggleDevice(${d.id}, ${d.is_active ? 0 : 1})">${d.is_active ? 'Deaktivovať' : 'Aktivovať'}</button>
         <button class="btn-sm btn-danger" onclick="deleteDevice(${d.id}, '${d.name}')">Zmazať</button>
       </div>
@@ -4847,6 +4984,310 @@ async function deleteDevice(id, name) {
       refresh();
     } else {
       alert(res.error || 'Chyba pri mazaní');
+    }
+  } catch (e) {
+    alert('Chyba: ' + e.message);
+  }
+}
+
+// ========== BUZZER COMMAND ==========
+
+async function sendBuzzerCommand(deviceId, deviceName, evt) {
+  const intervalNote = 'Zariadenie začne pípať po najbližšom spojení so sieťou Helium (zvyčajne do 5 minút).';
+  const disclaimer = 'Pípanie funguje len ak má zariadenie pokrytie konektivitou Helium.';
+
+  if (!confirm(`Zapnúť pípanie na zariadení "${deviceName}"?\n\n${intervalNote}\n\n${disclaimer}`)) return;
+
+  const btn = evt ? evt.target : null;
+  try {
+    if (btn) { btn.disabled = true; btn.textContent = 'Odosielam...'; }
+
+    const res = await apiPost('send_device_command', { device_id: deviceId, command: 'buzzer_on' });
+
+    if (res.ok) {
+      if (btn) {
+        btn.textContent = 'Odoslané';
+        btn.classList.add('btn-success');
+        setTimeout(() => {
+          btn.disabled = false;
+          btn.textContent = 'Pípanie';
+          btn.classList.remove('btn-success');
+        }, 5000);
+      }
+      alert(`Príkaz na pípanie odoslaný zariadeniu "${deviceName}".\n\n${intervalNote}\n\nPre vypnutie pípania použite tlačidlo znova.`);
+    } else {
+      if (btn) { btn.disabled = false; btn.textContent = 'Pípanie'; }
+      alert(res.error || 'Chyba pri odosielaní príkazu');
+    }
+  } catch (e) {
+    if (btn) { btn.disabled = false; btn.textContent = 'Pípanie'; }
+    alert('Chyba: ' + e.message);
+  }
+}
+
+// ========== DATA BROWSER ==========
+
+let dataBrowserDeviceId = null;
+let dataBrowserDeviceName = '';
+let dataBrowserPage = 1;
+const dataBrowserPerPage = 50;
+
+function openDataBrowser(deviceId, deviceName) {
+  dataBrowserDeviceId = deviceId;
+  dataBrowserDeviceName = deviceName;
+  dataBrowserPage = 1;
+
+  const overlay = $('#dataBrowserOverlay');
+  if (!overlay) return;
+
+  overlay.querySelector('#dataBrowserTitle').textContent = `Dáta: ${deviceName}`;
+  overlay.querySelector('#dataBrowserDate').value = fmt(new Date());
+  overlay.querySelector('#dataBrowserSourceFilter').value = 'all';
+  overlay.classList.remove('hidden');
+
+  overlay.onclick = (e) => {
+    if (e.target === overlay) closeDataBrowser();
+  };
+
+  loadDataBrowserRecords();
+}
+
+function closeDataBrowser() {
+  const overlay = $('#dataBrowserOverlay');
+  if (overlay) overlay.classList.add('hidden');
+}
+
+async function loadDataBrowserRecords() {
+  const tbody = $('#dataBrowserBody');
+  if (!tbody) return;
+
+  tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:20px;">Načítavam...</td></tr>';
+
+  const date = $('#dataBrowserDate')?.value || '';
+  const sourceFilter = $('#dataBrowserSourceFilter')?.value || 'all';
+
+  try {
+    const params = new URLSearchParams({
+      action: 'get_raw_records',
+      device_id: dataBrowserDeviceId,
+      page: dataBrowserPage,
+      per_page: dataBrowserPerPage
+    });
+    if (date) params.append('date', date);
+    if (sourceFilter && sourceFilter !== 'all') params.append('source_filter', sourceFilter);
+
+    const result = await apiGet(`${API}?${params}`);
+
+    if (!result.ok || (!result.data && !result.records)) {
+      tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#ef4444;">Chyba načítania</td></tr>';
+      return;
+    }
+
+    const records = result.records || result.data || [];
+    const pagination = result.pagination || {};
+
+    if (records.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--muted-text);">Žiadne záznamy</td></tr>';
+      updateDataBrowserPagination(pagination);
+      return;
+    }
+
+    tbody.innerHTML = records.map(r => {
+      const time = r.timestamp ? new Date(r.timestamp).toLocaleTimeString('sk-SK', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—';
+      const lat = r.latitude ? r.latitude.toFixed(5) : '—';
+      const lng = r.longitude ? r.longitude.toFixed(5) : '—';
+      const sourceLabel = formatSource(r.source, r.resolved);
+      const isWifiScan = r.record_type === 'wifi_scan';
+      const isUnresolved = isWifiScan && !r.resolved;
+      const rowClass = isUnresolved ? 'unresolved-row' : '';
+
+      // MAC addresses info
+      let macInfo = '';
+      const macCount = r.mac_count || (r.mac_details ? r.mac_details.length : 0);
+      if (r.mac_details && r.mac_details.length > 0) {
+        const withLocation = r.mac_details.filter(m => m.has_location).length;
+        const recordRef = isWifiScan ? `'ws_${r.id}'` : `${r.id}`;
+        macInfo = `<span class="mac-badge" onclick="showRecordMacs(${recordRef})" title="Kliknutím zobrazíte detaily">${macCount} MAC${macCount > 1 ? 's' : ''} (${withLocation} s polohou)</span>`;
+      } else if (r.source === 'gnss') {
+        macInfo = '<span class="source-badge gnss">GNSS</span>';
+      } else if (r.source === 'ibeacon') {
+        macInfo = '<span class="source-badge ibeacon">iBeacon</span>';
+      }
+
+      // Actions
+      let actions = '';
+      if (isWifiScan && !r.resolved) {
+        actions = `<button class="btn-sm btn-edit" onclick="retryGoogleForWifiScan(${r.id})" title="Skúsiť Google API pre tento sken">Google</button>`;
+      } else if (r.raw_wifi_macs || isWifiScan) {
+        const retryId = isWifiScan ? r.id : r.id;
+        const retryFn = isWifiScan ? 'retryGoogleForWifiScan' : 'retryGoogleForRecord';
+        actions = `<button class="btn-sm btn-edit" onclick="${retryFn}(${retryId})" title="Zavolať Google API">Google</button>`;
+      }
+
+      return `<tr data-record-id="${r.id}" data-record-type="${r.record_type || 'tracker'}" class="${rowClass}">
+        <td>${time}</td>
+        <td>${lat}</td>
+        <td>${lng}</td>
+        <td>${sourceLabel}</td>
+        <td>${macInfo}</td>
+        <td>${r.primary_mac || '—'}</td>
+        <td>${actions}</td>
+      </tr>`;
+    }).join('');
+
+    updateDataBrowserPagination(pagination);
+  } catch (err) {
+    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#ef4444;">Chyba: ' + err.message + '</td></tr>';
+  }
+}
+
+function formatSource(source, resolved) {
+  if (!source && resolved === false) {
+    return '<span class="source-badge unresolved">Nerozpoznané</span>';
+  }
+  const map = {
+    'gnss': '<span class="source-badge gnss">GNSS</span>',
+    'wifi-google': '<span class="source-badge wifi">WiFi Google</span>',
+    'wifi-cache': '<span class="source-badge wifi-cache">WiFi Cache</span>',
+    'ibeacon': '<span class="source-badge ibeacon">iBeacon</span>'
+  };
+  return map[source] || `<span class="source-badge">${source || '—'}</span>`;
+}
+
+function updateDataBrowserPagination(pagination) {
+  const info = $('#dataBrowserPaginationInfo');
+  const prevBtn = $('#dataBrowserPrev');
+  const nextBtn = $('#dataBrowserNext');
+
+  if (info) {
+    const totalCount = pagination.total_count || 0;
+    const totalPages = pagination.total_pages || 1;
+    info.textContent = `Strana ${dataBrowserPage} z ${totalPages} (${totalCount} záznamov)`;
+  }
+
+  if (prevBtn) prevBtn.disabled = dataBrowserPage <= 1;
+  if (nextBtn) nextBtn.disabled = dataBrowserPage >= (pagination.total_pages || 1);
+}
+
+function dataBrowserPrevPage() {
+  if (dataBrowserPage > 1) {
+    dataBrowserPage--;
+    loadDataBrowserRecords();
+  }
+}
+
+function dataBrowserNextPage() {
+  dataBrowserPage++;
+  loadDataBrowserRecords();
+}
+
+function dataBrowserDateChanged() {
+  dataBrowserPage = 1;
+  loadDataBrowserRecords();
+}
+
+function dataBrowserFilterChanged() {
+  dataBrowserPage = 1;
+  loadDataBrowserRecords();
+}
+
+async function showRecordMacs(recordId) {
+  // Handle wifi_scan records (prefixed with 'ws_')
+  if (typeof recordId === 'string' && recordId.startsWith('ws_')) {
+    const wsId = parseInt(recordId.substring(3));
+    try {
+      const params = new URLSearchParams({ action: 'get_wifi_scan_macs', id: wsId });
+      const result = await apiGet(`${API}?${params}`);
+      if (!result.ok) {
+        alert('Chyba: ' + (result.error || 'Nepodarilo sa načítať MAC adresy'));
+        return;
+      }
+      const macs = result.macs || [];
+      let msg = `WiFi sken #${wsId} - ${macs.length} MAC adries:\n\n`;
+      macs.forEach(m => {
+        const rssiStr = m.rssi ? ` (${m.rssi} dBm)` : '';
+        const status = m.has_location ? `[${m.lat.toFixed(4)}, ${m.lng.toFixed(4)}]` : (m.queried ? '[negatívny]' : '[neotestovaný]');
+        msg += `${m.mac}${rssiStr} ${status}\n`;
+      });
+      alert(msg);
+    } catch (e) {
+      alert('Chyba: ' + e.message);
+    }
+    return;
+  }
+
+  try {
+    const params = new URLSearchParams({ action: 'get_record_macs', id: recordId });
+    const result = await apiGet(`${API}?${params}`);
+
+    if (!result.ok) {
+      alert('Chyba: ' + (result.error || 'Nepodarilo sa načítať MAC adresy'));
+      return;
+    }
+
+    const data = result.data;
+    let msg = `MAC adresy pre záznam #${recordId}:\n\n`;
+    if (data.macs && data.macs.length > 0) {
+      data.macs.forEach(m => {
+        const status = m.has_coords ? `[${m.lat.toFixed(4)}, ${m.lng.toFixed(4)}]` : (m.negative ? '[negatívny]' : '[neotestovaný]');
+        const queried = m.last_queried ? ` (${new Date(m.last_queried).toLocaleDateString('sk-SK')})` : '';
+        msg += `${m.mac} ${status}${queried}\n`;
+      });
+    } else {
+      msg += 'Žiadne MAC adresy';
+    }
+    alert(msg);
+  } catch (e) {
+    alert('Chyba: ' + e.message);
+  }
+}
+
+async function retryGoogleForRecord(recordId) {
+  if (!confirm('Zavolať Google Geolocation API pre tento záznam? Toto môže aktualizovať polohu.')) return;
+
+  try {
+    const res = await apiPost('test_google_api', { position_id: recordId });
+    if (res.ok) {
+      const d = res.data || res;
+      let msg = 'Google API odpoveď:\n';
+      if (d.google_lat !== undefined) {
+        msg += `Poloha: ${d.google_lat.toFixed(5)}, ${d.google_lng.toFixed(5)}\n`;
+        msg += `Presnosť: ${d.google_accuracy || '—'} m\n`;
+        if (d.cache_lat !== undefined) {
+          msg += `\nPôvodná poloha (cache): ${d.cache_lat.toFixed(5)}, ${d.cache_lng.toFixed(5)}\n`;
+          msg += `Rozdiel: ${d.distance_meters?.toFixed(0) || '—'} m`;
+        }
+      } else {
+        msg += 'Žiadna poloha vrátená';
+      }
+      alert(msg);
+      loadDataBrowserRecords();
+    } else {
+      alert(res.error || 'Chyba pri volaní Google API');
+    }
+  } catch (e) {
+    alert('Chyba: ' + e.message);
+  }
+}
+
+async function retryGoogleForWifiScan(scanId) {
+  if (!confirm('Zavolať Google Geolocation API pre tento WiFi sken?')) return;
+
+  try {
+    const res = await apiPost('retry_google_wifi_scan', { scan_id: scanId });
+    if (res.ok) {
+      let msg = 'Google API odpoveď:\n';
+      if (res.latitude !== undefined && res.latitude !== null) {
+        msg += `Poloha: ${res.latitude.toFixed(5)}, ${res.longitude.toFixed(5)}\n`;
+        msg += `Presnosť: ${res.accuracy || '—'} m\n`;
+        msg += `Aktualizovaných MAC: ${res.macs_updated || 0}`;
+      } else {
+        msg += 'Žiadna poloha vrátená - Google nerozpoznal tieto WiFi siete';
+      }
+      alert(msg);
+      loadDataBrowserRecords();
+    } else {
+      alert(res.error || 'Chyba pri volaní Google API');
     }
   } catch (e) {
     alert('Chyba: ' + e.message);

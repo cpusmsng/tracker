@@ -22,7 +22,7 @@ PROJECT_NAME="gps-tracker"
 COMPOSE_FILE="docker-compose.yml"
 COMPOSE_PROD_FILE="docker-compose.prod.yml"
 BACKUP_DIR="${SCRIPT_DIR}/backups"
-DATA_VOLUME="gps-tracker-data"
+DATA_VOLUME="gps-tracker-pgdata"
 
 # Colors for output
 RED='\033[0;31m'
@@ -183,29 +183,26 @@ check_status() {
 
 # Backup database
 backup_database() {
-    log_info "Backing up database..."
+    log_info "Backing up PostgreSQL database..."
 
     mkdir -p "${BACKUP_DIR}"
 
     TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
-    BACKUP_FILE="${BACKUP_DIR}/tracker_backup_${TIMESTAMP}.sqlite"
+    BACKUP_FILE="${BACKUP_DIR}/tracker_backup_${TIMESTAMP}.sql"
 
-    # Copy database from volume
-    docker run --rm \
-        -v "${DATA_VOLUME}:/data:ro" \
-        -v "${BACKUP_DIR}:/backup" \
-        alpine \
-        cp /data/tracker_database.sqlite "/backup/tracker_backup_${TIMESTAMP}.sqlite"
+    # Dump PostgreSQL database from the db container
+    docker exec gps-tracker-db pg_dump -U "${POSTGRES_USER:-tracker}" "${POSTGRES_DB:-tracker}" > "${BACKUP_FILE}" 2>/dev/null
 
-    if [ -f "${BACKUP_FILE}" ]; then
+    if [ -f "${BACKUP_FILE}" ] && [ -s "${BACKUP_FILE}" ]; then
         log_success "Database backed up to: ${BACKUP_FILE}"
 
         # Keep only last 10 backups
         cd "${BACKUP_DIR}"
-        ls -t tracker_backup_*.sqlite 2>/dev/null | tail -n +11 | xargs -r rm
+        ls -t tracker_backup_*.sql 2>/dev/null | tail -n +11 | xargs -r rm
         log_info "Cleanup: Keeping last 10 backups."
     else
         log_error "Backup failed!"
+        rm -f "${BACKUP_FILE}"
         exit 1
     fi
 }
@@ -217,7 +214,7 @@ restore_database() {
         echo "Usage: ./deploy.sh restore <backup_file>"
         echo ""
         echo "Available backups:"
-        ls -la "${BACKUP_DIR}"/tracker_backup_*.sqlite 2>/dev/null || echo "No backups found."
+        ls -la "${BACKUP_DIR}"/tracker_backup_*.sql 2>/dev/null || echo "No backups found."
         exit 1
     fi
 
@@ -238,18 +235,15 @@ restore_database() {
     echo
 
     if [[ $REPLY =~ ^[Yy]$ ]]; then
-        log_info "Stopping containers..."
-        docker compose -f "${COMPOSE_FILE}" down
+        log_info "Restoring database from: ${RESTORE_FILE}"
 
-        log_info "Restoring database..."
-        docker run --rm \
-            -v "${DATA_VOLUME}:/data" \
-            -v "$(dirname "${RESTORE_FILE}"):/backup:ro" \
-            alpine \
-            cp "/backup/$(basename "${RESTORE_FILE}")" /data/tracker_database.sqlite
+        # Drop and recreate database, then restore
+        docker exec gps-tracker-db psql -U "${POSTGRES_USER:-tracker}" -c "DROP DATABASE IF EXISTS ${POSTGRES_DB:-tracker};" postgres
+        docker exec gps-tracker-db psql -U "${POSTGRES_USER:-tracker}" -c "CREATE DATABASE ${POSTGRES_DB:-tracker};" postgres
+        docker exec -i gps-tracker-db psql -U "${POSTGRES_USER:-tracker}" "${POSTGRES_DB:-tracker}" < "${RESTORE_FILE}"
 
-        log_info "Starting containers..."
-        docker compose -f "${COMPOSE_FILE}" up -d
+        log_info "Restarting tracker container..."
+        docker compose -f "${COMPOSE_FILE}" restart tracker
 
         log_success "Database restored from: ${RESTORE_FILE}"
     else
