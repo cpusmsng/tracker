@@ -426,7 +426,31 @@ function insert_wifi_scan(PDO $pdo, string $iso, int $deviceId, array $aps): int
 
     $stmt = $pdo->prepare("INSERT INTO wifi_scans (timestamp, device_id, macs_json, mac_count) VALUES (:ts, :did, :macs, :cnt)");
     $stmt->execute([':ts' => $ts, ':did' => $deviceId, ':macs' => $macsJson, ':cnt' => count($aps)]);
-    return (int)$pdo->lastInsertId();
+    $scanId = (int)$pdo->lastInsertId();
+
+    // Store individual MAC records in sensecraft_mac_records for complete history
+    try {
+        $macStmt = $pdo->prepare("
+            INSERT INTO sensecraft_mac_records (device_id, timestamp, mac_address, rssi, scan_type, raw_data)
+            VALUES (:did, :ts, :mac, :rssi, :type, :raw)
+            ON CONFLICT DO NOTHING
+        ");
+        foreach ($aps as $ap) {
+            if (empty($ap['mac'])) continue;
+            $macStmt->execute([
+                ':did' => $deviceId,
+                ':ts' => $ts,
+                ':mac' => $ap['mac'],
+                ':rssi' => $ap['rssi'] ?? null,
+                ':type' => 'wifi',
+                ':raw' => json_encode($ap, JSON_UNESCAPED_UNICODE),
+            ]);
+        }
+    } catch (Throwable $e) {
+        debug_log("MAC RECORD STORE ERROR: " . $e->getMessage());
+    }
+
+    return $scanId;
 }
 
 function resolve_wifi_scan(PDO $pdo, int $scanId, float $lat, float $lng, string $source, ?int $trackerDataId = null): void {
@@ -1339,6 +1363,12 @@ function parse_cli_args(array $argv): array {
         if (preg_match('/^--refetch-date=(.+)$/', $arg, $m)) {
             $result['refetch_date'] = $m[1];
         }
+        if (preg_match('/^--device-ids=(.+)$/', $arg, $m)) {
+            $result['device_ids'] = array_map('intval', explode(',', $m[1]));
+        }
+        if ($arg === '--from-pool') {
+            $result['from_pool'] = true;
+        }
     }
     return $result;
 }
@@ -1347,27 +1377,36 @@ function parse_cli_args(array $argv): array {
 
 info_log('=== FETCH START ===');
 
-// Lock file pre collision avoidance
-$lockFp = @fopen(FETCH_LOCK_FILE, 'c');
+// Parse CLI args early (needed for lock strategy)
+$cliArgs = parse_cli_args($argv);
+$isRefetchMode = isset($cliArgs['refetch_date']);
+$isFromPool = isset($cliArgs['from_pool']) || isset($cliArgs['device_ids']);
+$specificDeviceIds = $cliArgs['device_ids'] ?? null;
+
+// Lock file - use per-device-group lock when running from worker pool
+$lockFile = FETCH_LOCK_FILE;
+if ($isFromPool && $specificDeviceIds) {
+    $lockFile = FETCH_LOCK_FILE . '.' . implode('_', $specificDeviceIds);
+}
+
+$lockFp = @fopen($lockFile, 'c');
 if ($lockFp && flock($lockFp, LOCK_EX | LOCK_NB)) {
-    register_shutdown_function(function() use ($lockFp) {
+    register_shutdown_function(function() use ($lockFp, $lockFile) {
         if ($lockFp) {
             flock($lockFp, LOCK_UN);
             fclose($lockFp);
-            @unlink(FETCH_LOCK_FILE);
+            @unlink($lockFile);
         }
     });
 } else {
-    info_log('Another fetch_data.php instance is running, exiting');
+    info_log('Another fetch_data.php instance is running' . ($isFromPool ? " for devices " . implode(',', $specificDeviceIds ?? []) : '') . ', exiting');
     exit(0);
 }
 
 // ============== FREQUENCY CHECK ==============
-// Check if enough time has passed since last run (skip for refetch mode)
-$cliArgs = parse_cli_args($argv);
-$isRefetchMode = isset($cliArgs['refetch_date']);
+// Check if enough time has passed since last run (skip for refetch mode and pool workers)
 
-if (!$isRefetchMode) {
+if (!$isRefetchMode && !$isFromPool) {
     $fetchFrequencyMinutes = (int)(getenv('FETCH_FREQUENCY_MINUTES') ?: 5);
     $lastRunFile = __DIR__ . '/data/.fetch_last_run';
 
@@ -1455,7 +1494,13 @@ try {
         while ($tr = $tq->fetch()) $tables[] = $tr['table_name'];
 
         if (in_array('devices', $tables)) {
-            $dq = $pdo->query("SELECT id, name, device_eui FROM devices WHERE is_active = 1 ORDER BY id ASC");
+            // If specific device IDs are requested (from worker pool), filter by them
+            if ($specificDeviceIds) {
+                $ids = implode(',', array_map('intval', $specificDeviceIds));
+                $dq = $pdo->query("SELECT id, name, device_eui FROM devices WHERE is_active = 1 AND id IN ($ids) ORDER BY id ASC");
+            } else {
+                $dq = $pdo->query("SELECT id, name, device_eui FROM devices WHERE is_active = 1 ORDER BY id ASC");
+            }
             while ($dr = $dq->fetch()) {
                 $activeDevices[] = ['id' => (int)$dr['id'], 'name' => $dr['name'], 'eui' => $dr['device_eui']];
             }
@@ -1466,6 +1511,10 @@ try {
 
     // Fallback: use .env EUI if no devices in DB
     if (empty($activeDevices)) {
+        if ($specificDeviceIds) {
+            info_log('ERROR: Specified device IDs not found in DB: ' . implode(',', $specificDeviceIds));
+            exit(0);
+        }
         $envEui = getenv('SENSECAP_DEVICE_EUI') ?: '';
         if ($envEui === '') {
             info_log('ERROR: No active devices in DB and no SENSECAP_DEVICE_EUI in .env');
@@ -1614,6 +1663,29 @@ try {
         if (!empty($list)) {
             $btBuckets[] = ['iso'=>$r['iso'], 'beacons'=>$list];
             debug_log("BT BUCKET: ts=".$r['iso']." count=".count($list));
+
+            // Store individual BT MAC records in sensecraft_mac_records
+            try {
+                $dt = new DateTimeImmutable($r['iso']);
+                $ts = $dt->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d H:i:s');
+                $btMacStmt = $pdo->prepare("
+                    INSERT INTO sensecraft_mac_records (device_id, timestamp, mac_address, rssi, scan_type, raw_data)
+                    VALUES (:did, :ts, :mac, :rssi, :type, :raw)
+                    ON CONFLICT DO NOTHING
+                ");
+                foreach ($list as $beacon) {
+                    $btMacStmt->execute([
+                        ':did' => $DEVICE_ID,
+                        ':ts' => $ts,
+                        ':mac' => $beacon['mac'],
+                        ':rssi' => $beacon['rssi'],
+                        ':type' => 'bluetooth',
+                        ':raw' => json_encode($beacon, JSON_UNESCAPED_UNICODE),
+                    ]);
+                }
+            } catch (Throwable $e) {
+                debug_log("BT MAC RECORD STORE ERROR: " . $e->getMessage());
+            }
         }
     }
 

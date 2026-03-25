@@ -39,7 +39,8 @@ chmod +x deploy.sh
 ```
 tracker/
 ├── api.php                 # REST API (30+ endpoints)
-├── fetch_data.php          # CLI cron job for SenseCAP data
+├── fetch_data.php          # CLI cron job for SenseCAP data (single/batch)
+├── fetch_worker_pool.php   # Parallel fetch orchestrator for 100+ devices
 ├── smart_refetch_v2.php    # Intelligent data gap detection
 ├── config.php              # Environment loader
 ├── app.js                  # Frontend JavaScript
@@ -107,6 +108,15 @@ Single-file REST API with action-based routing (`?action=X`).
 | `test_email` | POST | Test email service |
 | `n8n_status` | GET | Device status for n8n |
 | `n8n_events` | GET | Perimeter events |
+| `user_login` | POST | Username/password login |
+| `user_logout` | POST | End user session |
+| `user_me` | GET | Current user info + devices |
+| `user_change_password` | POST | Change own password |
+| `get_users` | GET | List users (admin) |
+| `save_user` | POST | Create/update user (admin) |
+| `delete_user` | DELETE | Delete user (admin) |
+| `toggle_user` | POST | Activate/deactivate user |
+| `assign_devices` | POST | Assign devices to user |
 
 ### Data Collection (`fetch_data.php`)
 
@@ -149,10 +159,21 @@ php smart_refetch_v2.php --days=14
 
 | Table | Purpose |
 |-------|---------|
+| `devices` | Tracker devices (EUI, name, color, icon) |
 | `tracker_data` | Position records (timestamp, lat, lng, source) |
 | `device_status` | Battery and online status cache |
 | `ibeacon_locations` | Static iBeacon location markers |
 | `mac_locations` | Wi-Fi geolocation cache (positive/negative) |
+| `wifi_scans` | Raw Wi-Fi scan records with MAC JSON |
+| `sensecraft_mac_records` | All individual MAC records from SenseCraft |
+
+### User Management Tables
+
+| Table | Purpose |
+|-------|---------|
+| `users` | User accounts (username, password_hash, role) |
+| `user_devices` | User-device assignments (many-to-many) |
+| `user_sessions` | Active session tokens |
 
 ### Perimeter Tables
 
@@ -162,12 +183,14 @@ php smart_refetch_v2.php --days=14
 | `perimeter_emails` | Email recipients per zone |
 | `perimeter_alerts` | Alert history |
 | `perimeter_state` | Current inside/outside state |
+| `device_perimeters` | Device-specific circular geofences |
 
 ### Utility Tables
 
 | Table | Purpose |
 |-------|---------|
 | `refetch_state` | Smart refetch tracking |
+| `battery_alert_log` | Battery alert history |
 
 **Note:** Timestamps stored in UTC, converted to Europe/Bratislava in frontend.
 

@@ -15,7 +15,7 @@
 </FilesMatch>
 
 # Ochrana PHP súborov ktoré sú len pre CLI
-<FilesMatch "^(fetch_data|smart_refetch_v2)\.php$">
+<FilesMatch "^(fetch_data|smart_refetch_v2|fetch_worker_pool)\.php$">
     Require all denied
 </FilesMatch>
 

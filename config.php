@@ -74,6 +74,13 @@ define('TRUST_DOCKER_NETWORK',      strtolower(getenv('TRUST_DOCKER_NETWORK') ?:
 define('INTERNAL_API_KEY',          getenv('INTERNAL_API_KEY')          ?: '');
 define('SUBDOMAIN_NAME',            getenv('SUBDOMAIN_NAME')            ?: 'tracker');
 
+// User authentication (multi-user system)
+define('USER_AUTH_ENABLED', strtolower(getenv('USER_AUTH_ENABLED') ?: 'true') === 'true');
+
+// Worker pool settings
+define('FETCH_WORKERS',    (int)(getenv('FETCH_WORKERS')    ?: 0));
+define('FETCH_BATCH_SIZE', (int)(getenv('FETCH_BATCH_SIZE') ?: 5));
+
 // Application URL (for email links)
 define('TRACKER_APP_URL',           getenv('TRACKER_APP_URL')           ?: '');
 
