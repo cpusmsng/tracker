@@ -214,7 +214,8 @@ async function handleLogin(e) {
 function updateAdminUI() {
   // Show/hide admin-only menu items
   const adminItems = document.querySelectorAll('.admin-only');
-  const isAdmin = currentUser && currentUser.is_admin;
+  // Handle both SSO (isAdmin) and user auth (is_admin) property names
+  const isAdmin = currentUser && (currentUser.is_admin || currentUser.isAdmin);
   adminItems.forEach(el => {
     el.style.display = isAdmin ? '' : 'none';
   });
@@ -274,6 +275,7 @@ async function handleSSOAuth(loginUrl) {
       showAuthenticatedContent(); // Show content only after confirmed auth
       hidePinOverlay();
       showUserInfo(auth.user);
+      updateAdminUI();
       initAppAfterAuth();
 
       // Set up periodic session check (but don't redirect on failure)
