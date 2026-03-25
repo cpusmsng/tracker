@@ -17,7 +17,7 @@ This application tracks the location of a SenseCAP tracker device and displays p
 |-----------|------------|
 | Frontend | Vanilla JavaScript, Leaflet.js (maps), Leaflet.draw (polygon drawing) |
 | Backend | PHP 8.2+ |
-| Database | SQLite |
+| Database | PostgreSQL 16 |
 | Infrastructure | Docker, Apache, Supervisor, Cron |
 | External APIs | SenseCAP API, Google Geolocation API |
 

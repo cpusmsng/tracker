@@ -10,6 +10,11 @@
 version: '3.8'
 
 services:
+  db:
+    restart: always
+    mem_limit: 256m
+    memswap_limit: 256m
+
   tracker:
     restart: always
     mem_limit: 512m

@@ -29,7 +29,7 @@ define('BATTERY_ALERT_EMAIL', getenv('BATTERY_ALERT_EMAIL') ?: '');
 
 // Log file path - from env, or Docker default, or local fallback
 $LOG_FILE = getenv('LOG_FILE') ?: (is_dir('/var/log/tracker') ? '/var/log/tracker/fetch.log' : __DIR__ . '/fetch.log');
-const FETCH_LOCK_FILE = __DIR__ . '/fetch_data.lock';
+const FETCH_LOCK_FILE = '/tmp/tracker_fetch.lock';
 
 // LOG LEVEL: "error", "info", "debug" (from env or default to "info")
 $LOG_LEVEL = strtolower(getenv('LOG_LEVEL') ?: 'info');
@@ -69,13 +69,8 @@ function debug_log(string $msg): void {
 }
 
 function db(): PDO {
-    $path = getenv('SQLITE_PATH') ?: (__DIR__ . '/tracker_database.sqlite');
-    $pdo = new PDO('sqlite:' . $path, null, null, [
-        PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-    ]);
-    $pdo->exec('PRAGMA foreign_keys = ON;');
-    return $pdo;
+    require_once __DIR__ . '/config.php';
+    return get_pdo();
 }
 
 function norm_mac(string $mac): string {
@@ -398,17 +393,17 @@ function ensure_wifi_scans_table(PDO $pdo): void {
     static $created = false;
     if ($created) return;
     $pdo->exec("CREATE TABLE IF NOT EXISTS wifi_scans (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        timestamp TEXT NOT NULL,
+        id SERIAL PRIMARY KEY,
+        timestamp TIMESTAMP NOT NULL,
         device_id INTEGER NOT NULL DEFAULT 1,
         macs_json TEXT NOT NULL,
         mac_count INTEGER NOT NULL DEFAULT 0,
         resolved INTEGER NOT NULL DEFAULT 0,
-        latitude REAL,
-        longitude REAL,
+        latitude DOUBLE PRECISION,
+        longitude DOUBLE PRECISION,
         source TEXT,
         tracker_data_id INTEGER,
-        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        created_at TIMESTAMP DEFAULT NOW(),
         FOREIGN KEY (device_id) REFERENCES devices(id)
     )");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_wifi_scans_device_ts ON wifi_scans(device_id, timestamp)");
@@ -550,9 +545,9 @@ function load_active_perimeters(PDO $pdo, ?int $deviceId = null): array {
     try {
         // Check if device_id column exists
         $hasDeviceIdCol = false;
-        $cols = $pdo->query("PRAGMA table_info(perimeters)");
+        $cols = $pdo->query("SELECT column_name FROM information_schema.columns WHERE table_name = 'perimeters'");
         while ($c = $cols->fetch()) {
-            if ($c['name'] === 'device_id') { $hasDeviceIdCol = true; break; }
+            if ($c['column_name'] === 'device_id') { $hasDeviceIdCol = true; break; }
         }
 
         // Load perimeters: global (device_id IS NULL) + device-specific
@@ -1216,9 +1211,9 @@ function send_battery_alert_email(PDO $pdo, ?string $deviceName = null): bool {
         try {
             $pdo->exec("
                 CREATE TABLE IF NOT EXISTS battery_alert_log (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    sent_at TEXT NOT NULL,
-                    email TEXT NOT NULL
+                    id SERIAL PRIMARY KEY,
+                    sent_at TIMESTAMP NOT NULL,
+                    email VARCHAR(255) NOT NULL
                 )
             ");
             $stmt = $pdo->prepare("INSERT INTO battery_alert_log (sent_at, email) VALUES (:sent, :email)");
@@ -1245,9 +1240,9 @@ function should_send_battery_alert(PDO $pdo): bool {
         // Create table if not exists
         $pdo->exec("
             CREATE TABLE IF NOT EXISTS battery_alert_log (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                sent_at TEXT NOT NULL,
-                email TEXT NOT NULL
+                id SERIAL PRIMARY KEY,
+                sent_at TIMESTAMP NOT NULL,
+                email VARCHAR(255) NOT NULL
             )
         ");
 
@@ -1456,8 +1451,8 @@ try {
     $activeDevices = [];
     try {
         $tables = [];
-        $tq = $pdo->query("SELECT name FROM sqlite_master WHERE type='table' AND name='devices'");
-        while ($tr = $tq->fetch()) $tables[] = $tr['name'];
+        $tq = $pdo->query("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'devices'");
+        while ($tr = $tq->fetch()) $tables[] = $tr['table_name'];
 
         if (in_array('devices', $tables)) {
             $dq = $pdo->query("SELECT id, name, device_eui FROM devices WHERE is_active = 1 ORDER BY id ASC");
@@ -1953,11 +1948,11 @@ try {
             // Vytvor tabuľku ak neexistuje (používame latest_message_time ako názov stĺpca)
             $pdo->exec("
                 CREATE TABLE IF NOT EXISTS device_status (
-                    device_eui TEXT PRIMARY KEY,
-                    battery_state INTEGER,
-                    latest_message_time TEXT,
-                    online_status INTEGER,
-                    last_update TEXT NOT NULL,
+                    device_eui VARCHAR(64) PRIMARY KEY,
+                    battery_state SMALLINT,
+                    latest_message_time VARCHAR(64),
+                    online_status SMALLINT,
+                    last_update TIMESTAMP NOT NULL,
                     CONSTRAINT battery_state_check CHECK (battery_state IS NULL OR battery_state IN (0, 1)),
                     CONSTRAINT online_status_check CHECK (online_status IS NULL OR online_status IN (0, 1))
                 )

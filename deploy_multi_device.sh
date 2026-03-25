@@ -1,6 +1,9 @@
 #!/bin/bash
 #
-# Multi-Device Support - Deployment Script
+# DEPRECATED: This script was for SQLite multi-device migration.
+# The application now uses PostgreSQL. Schema is created automatically by entrypoint.sh.
+#
+# Original: Multi-Device Support - Deployment Script
 #
 # This script upgrades an existing GPS Tracker deployment to support
 # multiple tracking devices.

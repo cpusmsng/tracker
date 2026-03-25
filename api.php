@@ -59,13 +59,8 @@ if (!function_exists('db')) {
                 }
             }
         }
-        $path = getenv('SQLITE_PATH') ?: (__DIR__ . '/tracker_database.sqlite');
-        $pdo = new PDO('sqlite:' . $path, null, null, [
-            PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-            PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-        ]);
-        $pdo->exec("PRAGMA foreign_keys = ON;");
-        return $pdo;
+        require_once __DIR__ . '/config.php';
+        return get_pdo();
     }
 }
 
@@ -989,20 +984,20 @@ if ($action === 'delete_ibeacon') {
 if ($action === 'get_device_status') {
     try {
         // AUTO-MIGRATION: Skontroluj či existuje stará tabuľka so zlým názvom stĺpca
-        $stmt = $pdo->query("SELECT name FROM sqlite_master WHERE type='table' AND name='device_status'");
+        $stmt = $pdo->query("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'device_status'");
         $tableExists = $stmt->fetch();
         
         if ($tableExists) {
             // Tabuľka existuje - skontroluj stĺpce
-            $stmt = $pdo->query("PRAGMA table_info(device_status)");
+            $stmt = $pdo->query("SELECT column_name FROM information_schema.columns WHERE table_name = 'device_status'");
             $columns = $stmt->fetchAll();
-            
+
             $hasDataUploadTime = false;
             $hasLatestMessageTime = false;
-            
+
             foreach ($columns as $col) {
-                if ($col['name'] === 'data_upload_time') $hasDataUploadTime = true;
-                if ($col['name'] === 'latest_message_time') $hasLatestMessageTime = true;
+                if ($col['column_name'] === 'data_upload_time') $hasDataUploadTime = true;
+                if ($col['column_name'] === 'latest_message_time') $hasLatestMessageTime = true;
             }
             
             // Ak má starý názov stĺpca, zmigruj
@@ -1599,7 +1594,7 @@ if ($action === 'update_position' && $_SERVER['REQUEST_METHOD'] === 'POST') {
             // Update all MACs from this position
             $macs = array_filter(array_map('trim', explode(',', $rawMacs)));
             foreach ($macs as $mac) {
-                $stmt = $pdo->prepare('UPDATE mac_locations SET latitude = ?, longitude = ?, last_queried = datetime(\'now\') WHERE mac_address = ?');
+                $stmt = $pdo->prepare('UPDATE mac_locations SET latitude = ?, longitude = ?, last_queried = NOW() WHERE mac_address = ?');
                 $stmt->execute([$newLat, $newLng, $mac]);
             }
         }
@@ -1628,12 +1623,12 @@ if ($action === 'invalidate_mac' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         $pdo = db();
 
         // Mark the MAC as negative in the cache (no location)
-        $stmt = $pdo->prepare('UPDATE mac_locations SET lat = NULL, lng = NULL, negative = 1, updated_at = datetime(\'now\') WHERE mac = ?');
+        $stmt = $pdo->prepare('UPDATE mac_locations SET lat = NULL, lng = NULL, negative = 1, updated_at = NOW() WHERE mac = ?');
         $stmt->execute([$mac]);
 
         // If mac_locations didn't have this MAC, insert it as negative
         if ($stmt->rowCount() === 0) {
-            $stmt = $pdo->prepare('INSERT OR REPLACE INTO mac_locations (mac, lat, lng, negative, created_at, updated_at) VALUES (?, NULL, NULL, 1, datetime(\'now\'), datetime(\'now\'))');
+            $stmt = $pdo->prepare('INSERT INTO mac_locations (mac, lat, lng, negative, created_at, updated_at) VALUES (?, NULL, NULL, 1, NOW(), NOW()) ON CONFLICT (mac) DO UPDATE SET lat = NULL, lng = NULL, negative = 1, updated_at = NOW()');
             $stmt->execute([$mac]);
         }
 
@@ -1770,12 +1765,12 @@ if ($action === 'update_mac_coordinates' && $_SERVER['REQUEST_METHOD'] === 'POST
         }
 
         $pdo = db();
-        $stmt = $pdo->prepare('UPDATE mac_locations SET latitude = ?, longitude = ?, last_queried = datetime("now") WHERE mac_address = ?');
+        $stmt = $pdo->prepare('UPDATE mac_locations SET latitude = ?, longitude = ?, last_queried = NOW() WHERE mac_address = ?');
         $stmt->execute([$lat, $lng, $mac]);
 
         if ($stmt->rowCount() === 0) {
             // Insert if not exists
-            $stmt = $pdo->prepare('INSERT INTO mac_locations (mac_address, latitude, longitude, last_queried) VALUES (?, ?, ?, datetime("now"))');
+            $stmt = $pdo->prepare('INSERT INTO mac_locations (mac_address, latitude, longitude, last_queried) VALUES (?, ?, ?, NOW())');
             $stmt->execute([$mac, $lat, $lng]);
         }
 
@@ -1819,7 +1814,7 @@ if ($action === 'batch_refetch_days' && $_SERVER['REQUEST_METHOD'] === 'POST') {
 
             // Insert into refetch queue (if table exists)
             try {
-                $stmt = $pdo->prepare("INSERT OR REPLACE INTO refetch_state (date, status, reason) VALUES (?, 'pending', 'manual_mac_invalidation')");
+                $stmt = $pdo->prepare("INSERT INTO refetch_state (date, status, reason) VALUES (?, 'pending', 'manual_mac_invalidation') ON CONFLICT (date) DO UPDATE SET status = 'pending', reason = 'manual_mac_invalidation'");
                 $stmt->execute([$date]);
             } catch (Throwable $e) {
                 // refetch_state table might not exist, ignore
@@ -1952,7 +1947,7 @@ if ($action === 'retry_google_macs' && $_SERVER['REQUEST_METHOD'] === 'POST') {
                 $macAddr = $ap['macAddress'];
                 $stmt = $pdo->prepare("
                     INSERT INTO mac_locations (mac_address, latitude, longitude, last_queried)
-                    VALUES (?, ?, ?, datetime('now'))
+                    VALUES (?, ?, ?, NOW())
                     ON CONFLICT(mac_address) DO UPDATE SET
                         latitude = excluded.latitude,
                         longitude = excluded.longitude,
@@ -2113,7 +2108,7 @@ if ($action === 'delete_mac_coordinates' && $_SERVER['REQUEST_METHOD'] === 'POST
             $mac = trim((string)$mac);
             if (!$mac) continue;
 
-            $stmt = $pdo->prepare("UPDATE mac_locations SET latitude = NULL, longitude = NULL, last_queried = datetime('now') WHERE mac_address = ?");
+            $stmt = $pdo->prepare("UPDATE mac_locations SET latitude = NULL, longitude = NULL, last_queried = NOW() WHERE mac_address = ?");
             $stmt->execute([$mac]);
             $deleted += $stmt->rowCount();
         }
@@ -2410,7 +2405,7 @@ if ($action === 'get_log_date_range') {
 try {
     $pdo->exec("
         CREATE TABLE IF NOT EXISTS perimeters (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             name TEXT NOT NULL,
             polygon TEXT NOT NULL,
             alert_on_enter INTEGER DEFAULT 1,
@@ -2426,7 +2421,7 @@ try {
     // Create perimeter_emails table for multiple emails per perimeter
     $pdo->exec("
         CREATE TABLE IF NOT EXISTS perimeter_emails (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             perimeter_id INTEGER NOT NULL,
             email TEXT NOT NULL,
             alert_on_enter INTEGER DEFAULT 1,
@@ -2438,12 +2433,12 @@ try {
     // Create perimeter_alerts table for tracking sent notifications
     $pdo->exec("
         CREATE TABLE IF NOT EXISTS perimeter_alerts (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             perimeter_id INTEGER NOT NULL,
             alert_type TEXT NOT NULL,
             position_id INTEGER,
-            latitude REAL NOT NULL,
-            longitude REAL NOT NULL,
+            latitude DOUBLE PRECISION NOT NULL,
+            longitude DOUBLE PRECISION NOT NULL,
             sent_at TEXT NOT NULL,
             email_sent INTEGER DEFAULT 0,
             FOREIGN KEY (perimeter_id) REFERENCES perimeters(id) ON DELETE CASCADE
@@ -2457,9 +2452,9 @@ if ($action === 'get_perimeters') {
     try {
         // Check if device_id column exists (migration may not have run yet)
         $hasDeviceId = false;
-        $cols = $pdo->query("PRAGMA table_info(perimeters)");
+        $cols = $pdo->query("SELECT column_name FROM information_schema.columns WHERE table_name = 'perimeters'");
         while ($c = $cols->fetch()) {
-            if ($c['name'] === 'device_id') { $hasDeviceId = true; break; }
+            if ($c['column_name'] === 'device_id') { $hasDeviceId = true; break; }
         }
 
         $q = $pdo->query("SELECT * FROM perimeters ORDER BY id ASC");
@@ -2546,9 +2541,9 @@ if ($action === 'save_perimeter' && $_SERVER['REQUEST_METHOD'] === 'POST') {
 
         // Check if device_id column exists
         $hasDeviceIdCol = false;
-        $cols = $pdo->query("PRAGMA table_info(perimeters)");
+        $cols = $pdo->query("SELECT column_name FROM information_schema.columns WHERE table_name = 'perimeters'");
         while ($c = $cols->fetch()) {
-            if ($c['name'] === 'device_id') { $hasDeviceIdCol = true; break; }
+            if ($c['column_name'] === 'device_id') { $hasDeviceIdCol = true; break; }
         }
 
         $pdo->beginTransaction();
@@ -3152,7 +3147,7 @@ if ($action === 'n8n_alerts') {
                    pa.latitude, pa.longitude, pa.sent_at, pa.email_sent
             FROM perimeter_alerts pa
             LEFT JOIN perimeters p ON pa.perimeter_id = p.id
-            WHERE pa.sent_at >= datetime('now', '-' || :days || ' days')
+            WHERE pa.sent_at >= NOW() - INTERVAL '1 day' * :days
             ORDER BY pa.sent_at DESC
             LIMIT :limit
         ");
@@ -3332,7 +3327,7 @@ if ($action === 'api_auth_check') {
 // Ensure devices table exists (auto-migration for existing installs)
 try {
     $pdo->exec("CREATE TABLE IF NOT EXISTS devices (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id SERIAL PRIMARY KEY,
         name TEXT NOT NULL,
         device_eui TEXT NOT NULL UNIQUE,
         color TEXT NOT NULL DEFAULT '#3388ff',
@@ -3341,34 +3336,34 @@ try {
         notifications_enabled INTEGER DEFAULT 0,
         notification_email TEXT,
         notification_webhook TEXT,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )");
     $pdo->exec("CREATE TABLE IF NOT EXISTS device_perimeters (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id SERIAL PRIMARY KEY,
         device_id INTEGER NOT NULL,
         name TEXT NOT NULL,
-        latitude REAL NOT NULL,
-        longitude REAL NOT NULL,
-        radius_meters REAL NOT NULL DEFAULT 500,
+        latitude DOUBLE PRECISION NOT NULL,
+        longitude DOUBLE PRECISION NOT NULL,
+        radius_meters DOUBLE PRECISION NOT NULL DEFAULT 500,
         alert_on_enter INTEGER DEFAULT 0,
         alert_on_exit INTEGER DEFAULT 0,
         is_active INTEGER DEFAULT 1,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE CASCADE
     )");
     $pdo->exec("CREATE TABLE IF NOT EXISTS wifi_scans (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id SERIAL PRIMARY KEY,
         timestamp TEXT NOT NULL,
         device_id INTEGER NOT NULL DEFAULT 1,
         macs_json TEXT NOT NULL,
         mac_count INTEGER NOT NULL DEFAULT 0,
         resolved INTEGER NOT NULL DEFAULT 0,
-        latitude REAL,
-        longitude REAL,
+        latitude DOUBLE PRECISION,
+        longitude DOUBLE PRECISION,
         source TEXT,
         tracker_data_id INTEGER,
-        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (device_id) REFERENCES devices(id)
     )");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_wifi_scans_device_ts ON wifi_scans(device_id, timestamp)");

@@ -4,9 +4,9 @@ declare(strict_types=1);
 /**
  * CONFIG – načítanie .env a definícia konštánt
  *
- * Umiestnenie: /volume1/web/tracker/config.php
  * Po načítaní tohto súboru MUSÍ fungovať:
  *   getenv('GOOGLE_API_KEY')
+ *   get_pdo() — returns PostgreSQL PDO connection
  */
 
 // ---------- Základ ----------
@@ -77,5 +77,25 @@ define('SUBDOMAIN_NAME',            getenv('SUBDOMAIN_NAME')            ?: 'trac
 // Application URL (for email links)
 define('TRACKER_APP_URL',           getenv('TRACKER_APP_URL')           ?: '');
 
-// (voliteľné) ďalšie technické nastavenia
-define('TRACKER_DB_PATH', __DIR__ . '/tracker_database.sqlite');
+// ---------- PostgreSQL Database Connection ----------
+define('DB_HOST',     getenv('DB_HOST')     ?: '127.0.0.1');
+define('DB_PORT',     getenv('DB_PORT')     ?: '5432');
+define('DB_NAME',     getenv('DB_NAME')     ?: 'tracker');
+define('DB_USER',     getenv('DB_USER')     ?: 'tracker');
+define('DB_PASSWORD', getenv('DB_PASSWORD') ?: 'tracker_secret');
+
+/**
+ * Returns a singleton PDO connection to PostgreSQL.
+ */
+function get_pdo(): PDO {
+    static $pdo = null;
+    if ($pdo === null) {
+        $dsn = sprintf('pgsql:host=%s;port=%s;dbname=%s', DB_HOST, DB_PORT, DB_NAME);
+        $pdo = new PDO($dsn, DB_USER, DB_PASSWORD, [
+            PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
+            PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+            PDO::ATTR_EMULATE_PREPARES   => false,
+        ]);
+    }
+    return $pdo;
+}

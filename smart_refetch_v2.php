@@ -109,25 +109,22 @@ function load_env(): void {
 }
 
 function db(): PDO {
-    $path = getenv('SQLITE_PATH') ?: (__DIR__ . '/tracker_database.sqlite');
-    $pdo = new PDO('sqlite:' . $path, null, null, [
-        PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-    ]);
-    $pdo->exec('PRAGMA foreign_keys = ON;');
-    return $pdo;
+    require_once __DIR__ . '/config.php';
+    return get_pdo();
 }
 
 function ensure_refetch_state_table(PDO $pdo): void {
     $pdo->exec("
         CREATE TABLE IF NOT EXISTS refetch_state (
-            date TEXT PRIMARY KEY,
+            date TEXT NOT NULL,
+            device_id INTEGER NOT NULL DEFAULT 1,
             last_check_time TEXT NOT NULL,
             last_known_timestamp TEXT,
             last_known_count INTEGER DEFAULT 0,
             needs_refetch INTEGER DEFAULT 0,
             last_refetch_time TEXT,
-            notes TEXT
+            notes TEXT,
+            PRIMARY KEY (date, device_id)
         )
     ");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_refetch_date ON refetch_state(date)");
@@ -201,8 +198,8 @@ try {
 $activeDevices = [];
 try {
     $tables = [];
-    $tq = $pdo->query("SELECT name FROM sqlite_master WHERE type='table' AND name='devices'");
-    while ($tr = $tq->fetch()) $tables[] = $tr['name'];
+    $tq = $pdo->query("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'devices'");
+    while ($tr = $tq->fetch()) $tables[] = $tr['table_name'];
 
     if (in_array('devices', $tables)) {
         $dq = $pdo->query("SELECT id, name, device_eui FROM devices WHERE is_active = 1 ORDER BY id ASC");
@@ -355,36 +352,27 @@ foreach ($stats as $dateStr => $stat) {
     }
     
     // Update refetch_state (even if no issues - important for future comparison!)
-    if ($DEVICE_ID !== null) {
-        $stmt = $pdo->prepare("
-            INSERT OR REPLACE INTO refetch_state
-            (date, device_id, last_check_time, last_known_timestamp, last_known_count, needs_refetch, notes)
-            VALUES (:date, :did, :check_time, :timestamp, :count, :needs, :notes)
-        ");
-        $stmt->execute([
-            ':date' => $dateStr,
-            ':did' => $DEVICE_ID,
-            ':check_time' => (new DateTimeImmutable())->format('Y-m-d H:i:s'),
-            ':timestamp' => $stat['last_record'],
-            ':count' => $stat['record_count'],
-            ':needs' => count($issues) > 0 ? 1 : 0,
-            ':notes' => count($issues) > 0 ? implode(', ', $issues) : null
-        ]);
-    } else {
-        $stmt = $pdo->prepare("
-            INSERT OR REPLACE INTO refetch_state
-            (date, last_check_time, last_known_timestamp, last_known_count, needs_refetch, notes)
-            VALUES (:date, :check_time, :timestamp, :count, :needs, :notes)
-        ");
-        $stmt->execute([
-            ':date' => $dateStr,
-            ':check_time' => (new DateTimeImmutable())->format('Y-m-d H:i:s'),
-            ':timestamp' => $stat['last_record'],
-            ':count' => $stat['record_count'],
-            ':needs' => count($issues) > 0 ? 1 : 0,
-            ':notes' => count($issues) > 0 ? implode(', ', $issues) : null
-        ]);
-    }
+    $did = $DEVICE_ID ?? 1;
+    $stmt = $pdo->prepare("
+        INSERT INTO refetch_state
+        (date, device_id, last_check_time, last_known_timestamp, last_known_count, needs_refetch, notes)
+        VALUES (:date, :did, :check_time, :timestamp, :count, :needs, :notes)
+        ON CONFLICT (date, device_id) DO UPDATE SET
+            last_check_time = EXCLUDED.last_check_time,
+            last_known_timestamp = EXCLUDED.last_known_timestamp,
+            last_known_count = EXCLUDED.last_known_count,
+            needs_refetch = EXCLUDED.needs_refetch,
+            notes = EXCLUDED.notes
+    ");
+    $stmt->execute([
+        ':date' => $dateStr,
+        ':did' => $did,
+        ':check_time' => (new DateTimeImmutable())->format('Y-m-d H:i:s'),
+        ':timestamp' => $stat['last_record'],
+        ':count' => $stat['record_count'],
+        ':needs' => count($issues) > 0 ? 1 : 0,
+        ':notes' => count($issues) > 0 ? implode(', ', $issues) : null
+    ]);
 }
 
 // Sort by priority
