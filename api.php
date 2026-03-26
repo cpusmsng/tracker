@@ -210,9 +210,129 @@ function ssoLogout(): void {
     ]);
 }
 
+// ========== USER AUTHENTICATION SYSTEM ==========
+
+/**
+ * Validate user session token. Returns user data or null.
+ */
+function validateUserSession(PDO $pdo, ?string $token): ?array {
+    if (!$token) return null;
+
+    $tokenHash = hash('sha256', $token);
+    $stmt = $pdo->prepare("
+        SELECT us.user_id, us.expires_at, u.username, u.email, u.display_name, u.role, u.is_active
+        FROM user_sessions us
+        JOIN users u ON us.user_id = u.id
+        WHERE us.token_hash = :hash AND us.expires_at > NOW() AND u.is_active = 1
+        LIMIT 1
+    ");
+    $stmt->execute([':hash' => $tokenHash]);
+    $row = $stmt->fetch();
+    if (!$row) return null;
+
+    return [
+        'id' => (int)$row['user_id'],
+        'username' => $row['username'],
+        'email' => $row['email'],
+        'display_name' => $row['display_name'],
+        'role' => $row['role'],
+        'is_admin' => $row['role'] === 'admin',
+    ];
+}
+
+/**
+ * Get current authenticated user from session token (header or query).
+ * Returns user data or null. Does NOT enforce auth.
+ */
+function getCurrentUser(PDO $pdo): ?array {
+    // Check X-Auth-Token header first, then query param
+    $token = $_SERVER['HTTP_X_AUTH_TOKEN'] ?? $_GET['auth_token'] ?? null;
+    if (!$token) return null;
+    return validateUserSession($pdo, $token);
+}
+
+/**
+ * Require user authentication. Returns user data or responds 401.
+ */
+function requireUser(PDO $pdo): array {
+    $user = getCurrentUser($pdo);
+    if (!$user) {
+        respond(['ok' => false, 'error' => 'Authentication required', 'auth_required' => true], 401);
+    }
+    return $user;
+}
+
+/**
+ * Require admin role. Returns user data or responds 403.
+ */
+function requireAdmin(PDO $pdo): array {
+    $user = requireUser($pdo);
+    if (!$user['is_admin']) {
+        respond(['ok' => false, 'error' => 'Admin access required'], 403);
+    }
+    return $user;
+}
+
+/**
+ * Get device IDs accessible by user. Admin sees all, regular user sees assigned only.
+ */
+function getUserDeviceIds(PDO $pdo, array $user): array {
+    if ($user['is_admin']) {
+        $rows = $pdo->query("SELECT id FROM devices ORDER BY id")->fetchAll();
+        return array_map(fn($r) => (int)$r['id'], $rows);
+    }
+    $stmt = $pdo->prepare("SELECT device_id FROM user_devices WHERE user_id = :uid ORDER BY device_id");
+    $stmt->execute([':uid' => $user['id']]);
+    return array_map(fn($r) => (int)$r['device_id'], $stmt->fetchAll());
+}
+
+/**
+ * Check if user has access to a specific device.
+ */
+function userCanAccessDevice(PDO $pdo, array $user, int $deviceId): bool {
+    if ($user['is_admin']) return true;
+    $stmt = $pdo->prepare("SELECT 1 FROM user_devices WHERE user_id = :uid AND device_id = :did LIMIT 1");
+    $stmt->execute([':uid' => $user['id'], ':did' => $deviceId]);
+    return (bool)$stmt->fetch();
+}
+
+/**
+ * Build SQL IN clause for user's devices. Returns [sql_fragment, params].
+ */
+function userDeviceFilter(PDO $pdo, array $user, string $column = 'td.device_id'): array {
+    $ids = getUserDeviceIds($pdo, $user);
+    if (empty($ids)) {
+        return ["$column IN (-1)", []]; // No devices = no results
+    }
+    $placeholders = [];
+    $params = [];
+    foreach ($ids as $i => $id) {
+        $key = ":udev$i";
+        $placeholders[] = $key;
+        $params[$key] = $id;
+    }
+    return ["$column IN (" . implode(',', $placeholders) . ")", $params];
+}
+
+/**
+ * Check if user auth mode is enabled (vs legacy PIN-only mode).
+ * When USER_AUTH_ENABLED=true, the system uses username/password auth.
+ * Legacy PIN/SSO modes still work as fallback.
+ */
+function isUserAuthEnabled(): bool {
+    $v = getenv('USER_AUTH_ENABLED') ?: 'true';
+    return strtolower($v) === 'true' || $v === '1';
+}
+
 try { $pdo = db(); } catch (Throwable $e) { respond(['ok'=>false, 'error'=>'DB: '.$e->getMessage()], 500); }
 
 $action = qparam('action', 'root');
+
+// Resolve current user (may be null for unauthenticated endpoints)
+$currentUser = null;
+if (isUserAuthEnabled()) {
+    $currentUser = getCurrentUser($pdo);
+}
 
 if ($action === 'root') {
     $meters    = getenv('METERS') ?: 50;
@@ -267,27 +387,38 @@ if ($action === 'health') {
 if ($action === 'get_last_position') {
     $deviceId = qparam('device_id');
 
+    // Build user device filter
+    $userFilter = '';
+    $userParams = [];
+    if ($currentUser) {
+        [$userFilter, $userParams] = userDeviceFilter($pdo, $currentUser);
+        $userFilter = " AND $userFilter";
+    }
+
     if ($deviceId) {
         $stmt = $pdo->prepare("
             SELECT td.id, td.timestamp, td.latitude, td.longitude, td.source, td.device_id,
                    d.name as device_name, d.color as device_color
             FROM tracker_data td
             LEFT JOIN devices d ON td.device_id = d.id
-            WHERE td.device_id = :did
+            WHERE td.device_id = :did $userFilter
             ORDER BY td.timestamp DESC
             LIMIT 1
         ");
-        $stmt->execute([':did' => (int)$deviceId]);
+        $stmt->execute(array_merge([':did' => (int)$deviceId], $userParams));
         $row = $stmt->fetch();
     } else {
-        $row = $pdo->query("
+        $stmt = $pdo->prepare("
             SELECT td.id, td.timestamp, td.latitude, td.longitude, td.source, td.device_id,
                    d.name as device_name, d.color as device_color
             FROM tracker_data td
             LEFT JOIN devices d ON td.device_id = d.id
+            WHERE 1=1 $userFilter
             ORDER BY td.timestamp DESC
             LIMIT 1
-        ")->fetch();
+        ");
+        $stmt->execute($userParams);
+        $row = $stmt->fetch();
     }
     if (!$row) respond([]);
 
@@ -326,6 +457,12 @@ if ($action === 'get_history') {
     if ($deviceId) {
         $sql .= " AND td.device_id = :did";
         $params[':did'] = (int)$deviceId;
+    }
+    // User device filter
+    if ($currentUser) {
+        [$uf, $up] = userDeviceFilter($pdo, $currentUser);
+        $sql .= " AND $uf";
+        $params = array_merge($params, $up);
     }
     $sql .= " ORDER BY td.timestamp ASC";
 
@@ -379,6 +516,12 @@ if ($action === 'get_history_range') {
         $sql .= " AND td.device_id = :did";
         $params[':did'] = (int)$deviceId;
     }
+    // User device filter
+    if ($currentUser) {
+        [$uf, $up] = userDeviceFilter($pdo, $currentUser);
+        $sql .= " AND $uf";
+        $params = array_merge($params, $up);
+    }
     $sql .= " ORDER BY td.timestamp ASC";
 
     $stmt = $pdo->prepare($sql);
@@ -425,12 +568,12 @@ if ($action === 'get_raw_records' && $_SERVER['REQUEST_METHOD'] === 'GET') {
         $utcEnd     = $endLocal->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d H:i:s');
     }
 
-    // Build unified query using UNION of tracker_data (non-wifi) and wifi_scans (all wifi)
+    // Build unified query using UNION of tracker_data (all sources) and wifi_scans (unresolved only)
     if ($hasWifiScans) {
-        // Part 1: Non-WiFi records from tracker_data (GNSS, iBeacon)
-        // Part 2: All WiFi scans from wifi_scans (resolved + unresolved)
-        $whereTd  = ["td.source NOT LIKE 'wifi%'"];
-        $whereWs  = [];
+        // Part 1: ALL records from tracker_data (GNSS, iBeacon, WiFi-resolved)
+        // Part 2: UNRESOLVED WiFi scans from wifi_scans (no tracker_data link)
+        $whereTd  = [];
+        $whereWs  = ['ws.resolved = 0'];
         $paramsTd = [];
         $paramsWs = [];
 
@@ -451,27 +594,26 @@ if ($action === 'get_raw_records' && $_SERVER['REQUEST_METHOD'] === 'GET') {
         }
 
         if ($sourceFilter && $sourceFilter !== 'all') {
-            if (str_starts_with($sourceFilter, 'wifi')) {
-                // WiFi filter - only show wifi_scans
-                $whereWs[]          = 'ws.source = :src2';
-                $paramsWs[':src2']  = $sourceFilter;
-                // Exclude all tracker_data (non-wifi)
-                $whereTd[] = '0 = 1';
-            } else if ($sourceFilter === 'unresolved') {
+            if ($sourceFilter === 'unresolved') {
                 // Special filter: show only unresolved wifi scans
-                $whereWs[]  = 'ws.resolved = 0';
-                $whereTd[]  = '0 = 1';
-            } else {
-                // Non-wifi filter (gnss, ibeacon)
+                // Keep ws.resolved = 0 (already set above)
+                $whereTd[] = '0 = 1'; // No tracker_data for unresolved
+            } else if (str_starts_with($sourceFilter, 'wifi')) {
+                // WiFi filter - show from both tracker_data (resolved wifi) and wifi_scans (unresolved)
                 $whereTd[]          = 'td.source = :src';
                 $paramsTd[':src']   = $sourceFilter;
-                // Exclude wifi_scans
+                // Unresolved wifi_scans stay (no extra filter needed)
+            } else {
+                // Non-wifi filter (gnss, ibeacon) - only tracker_data
+                $whereTd[]          = 'td.source = :src';
+                $paramsTd[':src']   = $sourceFilter;
+                // Exclude unresolved wifi_scans
                 $whereWs[] = '0 = 1';
             }
         }
 
-        $whereTdSql = 'WHERE ' . implode(' AND ', $whereTd);
-        $whereWsSql = $whereWs ? 'WHERE ' . implode(' AND ', $whereWs) : '';
+        $whereTdSql = $whereTd ? 'WHERE ' . implode(' AND ', $whereTd) : '';
+        $whereWsSql = 'WHERE ' . implode(' AND ', $whereWs);
 
         // Count total
         $countSql = "
@@ -487,12 +629,17 @@ if ($action === 'get_raw_records' && $_SERVER['REQUEST_METHOD'] === 'GET') {
         $offset     = ($page - 1) * $perPage;
 
         // Fetch unified records
+        // For tracker_data WiFi records, LEFT JOIN wifi_scans to get macs_json
         $sql = "
             SELECT 'tracker' as record_type, td.id, td.timestamp, td.latitude, td.longitude, td.source,
                    td.device_id, td.raw_wifi_macs, td.primary_mac,
-                   d.name as device_name, NULL as macs_json, 0 as mac_count, 1 as resolved
+                   d.name as device_name,
+                   wsj.macs_json as macs_json,
+                   COALESCE(wsj.mac_count, 0) as mac_count,
+                   1 as resolved
             FROM tracker_data td
             LEFT JOIN devices d ON td.device_id = d.id
+            LEFT JOIN wifi_scans wsj ON wsj.tracker_data_id = td.id
             $whereTdSql
             UNION ALL
             SELECT 'wifi_scan' as record_type, ws.id, ws.timestamp, ws.latitude, ws.longitude, ws.source,
@@ -1231,8 +1378,337 @@ if ($action === 'auth_config') {
     respond([
         'ok' => true,
         'ssoEnabled' => isSSOEnabled(),
+        'userAuthEnabled' => isUserAuthEnabled(),
         'loginUrl' => isSSOEnabled() ? getLoginUrl() : null
     ]);
+}
+
+// ========== USER AUTHENTICATION ENDPOINTS ==========
+
+// POST /api.php?action=user_login
+if ($action === 'user_login' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    try {
+        $j = json_body();
+        $username = trim((string)($j['username'] ?? ''));
+        $password = (string)($j['password'] ?? '');
+
+        if ($username === '' || $password === '') {
+            respond(['ok' => false, 'error' => 'Meno a heslo sú povinné'], 400);
+        }
+
+        $stmt = $pdo->prepare("SELECT id, username, email, password_hash, display_name, role, is_active FROM users WHERE username = :u LIMIT 1");
+        $stmt->execute([':u' => $username]);
+        $user = $stmt->fetch();
+
+        if (!$user || !password_verify($password, $user['password_hash'])) {
+            usleep(500000); // 500ms brute-force protection
+            respond(['ok' => false, 'error' => 'Nesprávne meno alebo heslo'], 401);
+        }
+
+        if (!(int)$user['is_active']) {
+            respond(['ok' => false, 'error' => 'Účet je deaktivovaný'], 403);
+        }
+
+        // Create session token
+        $token = bin2hex(random_bytes(32));
+        $tokenHash = hash('sha256', $token);
+        $expiresAt = (new DateTimeImmutable('+30 days'))->format('Y-m-d H:i:s');
+
+        $stmt = $pdo->prepare("INSERT INTO user_sessions (user_id, token_hash, expires_at) VALUES (:uid, :hash, :exp)");
+        $stmt->execute([':uid' => $user['id'], ':hash' => $tokenHash, ':exp' => $expiresAt]);
+
+        // Update last login
+        $pdo->prepare("UPDATE users SET last_login = NOW() WHERE id = :id")->execute([':id' => $user['id']]);
+
+        // Clean expired sessions
+        $pdo->exec("DELETE FROM user_sessions WHERE expires_at < NOW()");
+
+        respond([
+            'ok' => true,
+            'token' => $token,
+            'user' => [
+                'id' => (int)$user['id'],
+                'username' => $user['username'],
+                'email' => $user['email'],
+                'display_name' => $user['display_name'],
+                'role' => $user['role'],
+                'is_admin' => $user['role'] === 'admin',
+            ]
+        ]);
+    } catch (Throwable $e) {
+        respond(['ok' => false, 'error' => 'Login failed: ' . $e->getMessage()], 500);
+    }
+}
+
+// POST /api.php?action=user_logout
+if ($action === 'user_logout' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    try {
+        $token = $_SERVER['HTTP_X_AUTH_TOKEN'] ?? null;
+        if ($token) {
+            $tokenHash = hash('sha256', $token);
+            $pdo->prepare("DELETE FROM user_sessions WHERE token_hash = :hash")->execute([':hash' => $tokenHash]);
+        }
+        respond(['ok' => true, 'message' => 'Odhlásený']);
+    } catch (Throwable $e) {
+        respond(['ok' => false, 'error' => $e->getMessage()], 500);
+    }
+}
+
+// GET /api.php?action=user_me
+if ($action === 'user_me') {
+    if (isUserAuthEnabled()) {
+        $user = getCurrentUser($pdo);
+        if ($user) {
+            $deviceIds = getUserDeviceIds($pdo, $user);
+            respond([
+                'ok' => true,
+                'authenticated' => true,
+                'method' => 'user_auth',
+                'user' => array_merge($user, ['device_ids' => $deviceIds])
+            ]);
+        } else {
+            respond([
+                'ok' => true,
+                'authenticated' => false,
+                'method' => 'user_auth'
+            ]);
+        }
+    } else {
+        respond(['ok' => true, 'authenticated' => false, 'method' => 'pin']);
+    }
+}
+
+// POST /api.php?action=user_change_password
+if ($action === 'user_change_password' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    try {
+        $user = requireUser($pdo);
+        $j = json_body();
+        $oldPassword = (string)($j['old_password'] ?? '');
+        $newPassword = (string)($j['new_password'] ?? '');
+
+        if ($newPassword === '' || strlen($newPassword) < 4) {
+            respond(['ok' => false, 'error' => 'Nové heslo musí mať aspoň 4 znaky'], 400);
+        }
+
+        // Verify old password
+        $stmt = $pdo->prepare("SELECT password_hash FROM users WHERE id = :id");
+        $stmt->execute([':id' => $user['id']]);
+        $row = $stmt->fetch();
+        if (!$row || !password_verify($oldPassword, $row['password_hash'])) {
+            respond(['ok' => false, 'error' => 'Nesprávne staré heslo'], 401);
+        }
+
+        $newHash = password_hash($newPassword, PASSWORD_BCRYPT);
+        $pdo->prepare("UPDATE users SET password_hash = :hash, updated_at = NOW() WHERE id = :id")
+            ->execute([':hash' => $newHash, ':id' => $user['id']]);
+
+        respond(['ok' => true, 'message' => 'Heslo zmenené']);
+    } catch (Throwable $e) {
+        respond(['ok' => false, 'error' => $e->getMessage()], 500);
+    }
+}
+
+// ========== ADMIN: USER MANAGEMENT ==========
+
+// GET /api.php?action=get_users (admin only)
+if ($action === 'get_users') {
+    try {
+        $admin = requireAdmin($pdo);
+
+        $rows = $pdo->query("
+            SELECT u.id, u.username, u.email, u.display_name, u.role, u.is_active, u.last_login, u.created_at, u.updated_at,
+                   COALESCE(
+                       (SELECT string_agg(d.name || ' (' || d.device_eui || ')', ', ' ORDER BY d.name)
+                        FROM user_devices ud JOIN devices d ON ud.device_id = d.id
+                        WHERE ud.user_id = u.id), ''
+                   ) as assigned_devices,
+                   COALESCE(
+                       (SELECT string_agg(CAST(ud.device_id AS TEXT), ',' ORDER BY ud.device_id)
+                        FROM user_devices ud WHERE ud.user_id = u.id), ''
+                   ) as device_ids
+            FROM users u
+            ORDER BY u.id ASC
+        ")->fetchAll();
+
+        $out = [];
+        foreach ($rows as $r) {
+            $out[] = [
+                'id' => (int)$r['id'],
+                'username' => $r['username'],
+                'email' => $r['email'],
+                'display_name' => $r['display_name'],
+                'role' => $r['role'],
+                'is_active' => (bool)(int)$r['is_active'],
+                'last_login' => $r['last_login'],
+                'created_at' => $r['created_at'],
+                'updated_at' => $r['updated_at'],
+                'assigned_devices' => $r['assigned_devices'],
+                'device_ids' => $r['device_ids'] ? array_map('intval', explode(',', $r['device_ids'])) : [],
+            ];
+        }
+        respond(['ok' => true, 'data' => $out]);
+    } catch (Throwable $e) {
+        respond(['ok' => false, 'error' => $e->getMessage()], 500);
+    }
+}
+
+// POST /api.php?action=save_user (admin only)
+if ($action === 'save_user' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    try {
+        $admin = requireAdmin($pdo);
+        $j = json_body();
+
+        $id = isset($j['id']) ? (int)$j['id'] : null;
+        $username = trim((string)($j['username'] ?? ''));
+        $email = trim((string)($j['email'] ?? ''));
+        $displayName = trim((string)($j['display_name'] ?? ''));
+        $role = in_array($j['role'] ?? '', ['admin', 'user']) ? $j['role'] : 'user';
+        $isActive = isset($j['is_active']) ? (int)(bool)$j['is_active'] : 1;
+        $password = (string)($j['password'] ?? '');
+        $deviceIds = isset($j['device_ids']) && is_array($j['device_ids']) ? $j['device_ids'] : null;
+
+        if ($username === '') {
+            respond(['ok' => false, 'error' => 'Používateľské meno je povinné'], 400);
+        }
+        if ($email !== '' && !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            respond(['ok' => false, 'error' => 'Neplatná e-mailová adresa'], 400);
+        }
+
+        $pdo->beginTransaction();
+
+        if ($id) {
+            // Update existing user
+            $sql = "UPDATE users SET username = :u, email = :e, display_name = :d, role = :r, is_active = :a, updated_at = NOW() WHERE id = :id";
+            $params = [':u' => $username, ':e' => $email ?: null, ':d' => $displayName ?: null, ':r' => $role, ':a' => $isActive, ':id' => $id];
+            $pdo->prepare($sql)->execute($params);
+
+            // Update password if provided
+            if ($password !== '') {
+                if (strlen($password) < 4) {
+                    $pdo->rollBack();
+                    respond(['ok' => false, 'error' => 'Heslo musí mať aspoň 4 znaky'], 400);
+                }
+                $hash = password_hash($password, PASSWORD_BCRYPT);
+                $pdo->prepare("UPDATE users SET password_hash = :hash WHERE id = :id")->execute([':hash' => $hash, ':id' => $id]);
+            }
+            $userId = $id;
+        } else {
+            // Create new user
+            if ($password === '' || strlen($password) < 4) {
+                $pdo->rollBack();
+                respond(['ok' => false, 'error' => 'Heslo musí mať aspoň 4 znaky'], 400);
+            }
+            $hash = password_hash($password, PASSWORD_BCRYPT);
+            $stmt = $pdo->prepare("INSERT INTO users (username, email, password_hash, display_name, role, is_active) VALUES (:u, :e, :p, :d, :r, :a)");
+            $stmt->execute([':u' => $username, ':e' => $email ?: null, ':p' => $hash, ':d' => $displayName ?: null, ':r' => $role, ':a' => $isActive]);
+            $userId = (int)$pdo->lastInsertId();
+        }
+
+        // Update device assignments if provided
+        if ($deviceIds !== null) {
+            $pdo->prepare("DELETE FROM user_devices WHERE user_id = :uid")->execute([':uid' => $userId]);
+            $stmtAssign = $pdo->prepare("INSERT INTO user_devices (user_id, device_id) VALUES (:uid, :did) ON CONFLICT DO NOTHING");
+            foreach ($deviceIds as $did) {
+                $stmtAssign->execute([':uid' => $userId, ':did' => (int)$did]);
+            }
+        }
+
+        $pdo->commit();
+        respond(['ok' => true, 'message' => $id ? 'Používateľ aktualizovaný' : 'Používateľ vytvorený', 'id' => $userId]);
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        $msg = $e->getMessage();
+        if (str_contains($msg, 'unique') || str_contains($msg, 'UNIQUE')) {
+            respond(['ok' => false, 'error' => 'Používateľ s týmto menom alebo emailom už existuje'], 409);
+        }
+        respond(['ok' => false, 'error' => $msg], 500);
+    }
+}
+
+// DELETE /api.php?action=delete_user&id=X (admin only)
+if ($action === 'delete_user') {
+    try {
+        $admin = requireAdmin($pdo);
+        $id = (int)(qparam('id') ?: 0);
+        if (!$id) {
+            $j = json_body();
+            $id = isset($j['id']) ? (int)$j['id'] : 0;
+        }
+        if (!$id) respond(['ok' => false, 'error' => 'Missing user id'], 400);
+
+        // Cannot delete yourself
+        if ($id === $admin['id']) {
+            respond(['ok' => false, 'error' => 'Nemôžete zmazať vlastný účet'], 400);
+        }
+
+        // Cannot delete last admin
+        $adminCount = (int)$pdo->query("SELECT COUNT(*) as c FROM users WHERE role = 'admin' AND is_active = 1")->fetch()['c'];
+        $targetUser = $pdo->prepare("SELECT role FROM users WHERE id = :id");
+        $targetUser->execute([':id' => $id]);
+        $target = $targetUser->fetch();
+        if ($target && $target['role'] === 'admin' && $adminCount <= 1) {
+            respond(['ok' => false, 'error' => 'Nemožno zmazať posledného administrátora'], 400);
+        }
+
+        $pdo->prepare("DELETE FROM users WHERE id = :id")->execute([':id' => $id]);
+        respond(['ok' => true, 'message' => 'Používateľ zmazaný']);
+    } catch (Throwable $e) {
+        respond(['ok' => false, 'error' => $e->getMessage()], 500);
+    }
+}
+
+// POST /api.php?action=toggle_user (admin only)
+if ($action === 'toggle_user' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    try {
+        $admin = requireAdmin($pdo);
+        $j = json_body();
+        $id = isset($j['id']) ? (int)$j['id'] : 0;
+        $isActive = isset($j['is_active']) ? (int)(bool)$j['is_active'] : 0;
+
+        if (!$id) respond(['ok' => false, 'error' => 'Missing user id'], 400);
+
+        // Cannot deactivate yourself
+        if ($id === $admin['id'] && !$isActive) {
+            respond(['ok' => false, 'error' => 'Nemôžete deaktivovať vlastný účet'], 400);
+        }
+
+        $pdo->prepare("UPDATE users SET is_active = :a, updated_at = NOW() WHERE id = :id")
+            ->execute([':a' => $isActive, ':id' => $id]);
+
+        // If deactivating, clear their sessions
+        if (!$isActive) {
+            $pdo->prepare("DELETE FROM user_sessions WHERE user_id = :uid")->execute([':uid' => $id]);
+        }
+
+        respond(['ok' => true, 'message' => $isActive ? 'Používateľ aktivovaný' : 'Používateľ deaktivovaný']);
+    } catch (Throwable $e) {
+        respond(['ok' => false, 'error' => $e->getMessage()], 500);
+    }
+}
+
+// POST /api.php?action=assign_devices (admin only)
+if ($action === 'assign_devices' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    try {
+        $admin = requireAdmin($pdo);
+        $j = json_body();
+        $userId = isset($j['user_id']) ? (int)$j['user_id'] : 0;
+        $deviceIds = isset($j['device_ids']) && is_array($j['device_ids']) ? $j['device_ids'] : [];
+
+        if (!$userId) respond(['ok' => false, 'error' => 'Missing user_id'], 400);
+
+        $pdo->beginTransaction();
+        $pdo->prepare("DELETE FROM user_devices WHERE user_id = :uid")->execute([':uid' => $userId]);
+        $stmt = $pdo->prepare("INSERT INTO user_devices (user_id, device_id) VALUES (:uid, :did) ON CONFLICT DO NOTHING");
+        foreach ($deviceIds as $did) {
+            $stmt->execute([':uid' => $userId, ':did' => (int)$did]);
+        }
+        $pdo->commit();
+
+        respond(['ok' => true, 'message' => 'Zariadenia priradené', 'count' => count($deviceIds)]);
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        respond(['ok' => false, 'error' => $e->getMessage()], 500);
+    }
 }
 
 // ========== PIN SECURITY ==========
@@ -3375,7 +3851,15 @@ try {
 // GET /api.php?action=get_devices
 if ($action === 'get_devices') {
     try {
-        $q = $pdo->query("SELECT id, name, device_eui, color, icon, is_active, notifications_enabled, notification_email, notification_webhook, created_at, updated_at FROM devices ORDER BY id ASC");
+        // Filter devices by user permissions
+        if ($currentUser) {
+            [$devFilter, $devParams] = userDeviceFilter($pdo, $currentUser, 'd.id');
+            $stmt = $pdo->prepare("SELECT id, name, device_eui, color, icon, is_active, notifications_enabled, notification_email, notification_webhook, created_at, updated_at FROM devices d WHERE $devFilter ORDER BY id ASC");
+            $stmt->execute($devParams);
+            $q = $stmt;
+        } else {
+            $q = $pdo->query("SELECT id, name, device_eui, color, icon, is_active, notifications_enabled, notification_email, notification_webhook, created_at, updated_at FROM devices ORDER BY id ASC");
+        }
         $out = [];
         while ($r = $q->fetch()) {
             // Get last position for this device
@@ -3502,12 +3986,22 @@ if ($action === 'save_device' && $_SERVER['REQUEST_METHOD'] === 'POST') {
                 ':updated' => $now
             ]);
             $deviceId = (int)$pdo->lastInsertId();
+
+            // Auto-assign new device to all admin users and the creating user
+            $admins = $pdo->query("SELECT id FROM users WHERE role = 'admin' AND is_active = 1")->fetchAll();
+            $assignStmt = $pdo->prepare("INSERT INTO user_devices (user_id, device_id) VALUES (:uid, :did) ON CONFLICT DO NOTHING");
+            foreach ($admins as $a) {
+                $assignStmt->execute([':uid' => $a['id'], ':did' => $deviceId]);
+            }
+            if ($currentUser && !$currentUser['is_admin']) {
+                $assignStmt->execute([':uid' => $currentUser['id'], ':did' => $deviceId]);
+            }
         }
 
         respond(['ok' => true, 'message' => $id ? 'Zariadenie aktualizované' : 'Zariadenie vytvorené', 'id' => $deviceId]);
     } catch (Throwable $e) {
         $msg = $e->getMessage();
-        if (strpos($msg, 'UNIQUE constraint failed') !== false) {
+        if (strpos($msg, 'UNIQUE constraint failed') !== false || strpos($msg, 'unique') !== false) {
             respond(['ok' => false, 'error' => 'Zariadenie s týmto EUI už existuje'], 409);
         }
         respond(['ok' => false, 'error' => $msg], 500);

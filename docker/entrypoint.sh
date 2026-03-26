@@ -203,11 +203,72 @@ cd /var/www/html && /usr/local/bin/php -r "
         email TEXT NOT NULL
     )');
 
+    // ===== USER MANAGEMENT TABLES =====
+
+    // Users table
+    \$pdo->exec('CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        username TEXT NOT NULL UNIQUE,
+        email TEXT UNIQUE,
+        password_hash TEXT NOT NULL,
+        display_name TEXT,
+        role TEXT NOT NULL DEFAULT \'user\',
+        is_active INTEGER NOT NULL DEFAULT 1,
+        last_login TIMESTAMP,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )');
+
+    // User-Device assignments (many-to-many)
+    \$pdo->exec('CREATE TABLE IF NOT EXISTS user_devices (
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        device_id INTEGER NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+        assigned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (user_id, device_id)
+    )');
+
+    // User sessions
+    \$pdo->exec('CREATE TABLE IF NOT EXISTS user_sessions (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        token_hash TEXT NOT NULL UNIQUE,
+        expires_at TIMESTAMP NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )');
+
+    // Raw SenseCraft MAC records (all MAC data from portal)
+    \$pdo->exec('CREATE TABLE IF NOT EXISTS sensecraft_mac_records (
+        id SERIAL PRIMARY KEY,
+        device_id INTEGER REFERENCES devices(id),
+        timestamp TIMESTAMP NOT NULL,
+        mac_address TEXT NOT NULL,
+        rssi INTEGER,
+        scan_type TEXT DEFAULT \'wifi\',
+        raw_data TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE (device_id, timestamp, mac_address)
+    )');
+
     // Create default device from .env
     \$eui = getenv('SENSECAP_DEVICE_EUI') ?: 'UNKNOWN';
     \$deviceName = getenv('DEVICE_NAME') ?: 'Predvolené zariadenie';
     \$stmt = \$pdo->prepare('INSERT INTO devices (name, device_eui, color, icon, is_active) VALUES (:name, :eui, \'#3388ff\', \'default\', 1) ON CONFLICT (device_eui) DO NOTHING');
     \$stmt->execute([':name' => \$deviceName, ':eui' => \$eui]);
+
+    // Create default admin user (password: admin123 - CHANGE IN PRODUCTION!)
+    \$adminHash = password_hash('admin123', PASSWORD_BCRYPT);
+    \$stmt = \$pdo->prepare('INSERT INTO users (username, email, password_hash, display_name, role, is_active) VALUES (:u, :e, :p, :d, :r, 1) ON CONFLICT (username) DO NOTHING');
+    \$stmt->execute([':u' => 'admin', ':e' => null, ':p' => \$adminHash, ':d' => 'Administrátor', ':r' => 'admin']);
+
+    // Assign all existing devices to admin user
+    \$adminUser = \$pdo->query(\"SELECT id FROM users WHERE username = 'admin' LIMIT 1\")->fetch();
+    if (\$adminUser) {
+        \$allDevices = \$pdo->query('SELECT id FROM devices');
+        while (\$dev = \$allDevices->fetch()) {
+            \$stmt = \$pdo->prepare('INSERT INTO user_devices (user_id, device_id) VALUES (:uid, :did) ON CONFLICT DO NOTHING');
+            \$stmt->execute([':uid' => \$adminUser['id'], ':did' => \$dev['id']]);
+        }
+    }
 
     // Create indexes
     \$pdo->exec('CREATE INDEX IF NOT EXISTS idx_tracker_timestamp ON tracker_data(timestamp)');
@@ -220,6 +281,14 @@ cd /var/www/html && /usr/local/bin/php -r "
     \$pdo->exec('CREATE INDEX IF NOT EXISTS idx_perimeter_alerts_sent ON perimeter_alerts(sent_at)');
     \$pdo->exec('CREATE INDEX IF NOT EXISTS idx_wifi_scans_device_ts ON wifi_scans(device_id, timestamp)');
     \$pdo->exec('CREATE INDEX IF NOT EXISTS idx_wifi_scans_resolved ON wifi_scans(resolved)');
+    \$pdo->exec('CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)');
+    \$pdo->exec('CREATE INDEX IF NOT EXISTS idx_users_role ON users(role)');
+    \$pdo->exec('CREATE INDEX IF NOT EXISTS idx_user_devices_user ON user_devices(user_id)');
+    \$pdo->exec('CREATE INDEX IF NOT EXISTS idx_user_devices_device ON user_devices(device_id)');
+    \$pdo->exec('CREATE INDEX IF NOT EXISTS idx_user_sessions_token ON user_sessions(token_hash)');
+    \$pdo->exec('CREATE INDEX IF NOT EXISTS idx_user_sessions_expires ON user_sessions(expires_at)');
+    \$pdo->exec('CREATE INDEX IF NOT EXISTS idx_sensecraft_mac_device_ts ON sensecraft_mac_records(device_id, timestamp)');
+    \$pdo->exec('CREATE INDEX IF NOT EXISTS idx_sensecraft_mac_address ON sensecraft_mac_records(mac_address)');
 
     echo 'Database initialized successfully.';
 "

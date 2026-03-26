@@ -61,7 +61,7 @@ function showAuthenticatedContent() {
 
 async function initPinSecurity() {
   try {
-    // Check auth config to determine SSO or PIN mode
+    // Check auth config to determine auth mode
     const configRes = await fetch(`${API}?action=auth_config`);
     const config = await configRes.json();
 
@@ -70,12 +70,155 @@ async function initPinSecurity() {
       await handleSSOAuth(config.loginUrl);
       return;
     }
+
+    // User auth mode (username/password)
+    if (config.ok && config.userAuthEnabled) {
+      await handleUserAuth();
+      return;
+    }
   } catch (e) {
     console.warn('Auth config check failed, falling back to PIN mode', e);
   }
 
   // PIN mode fallback
   handlePINAuth();
+}
+
+async function handleUserAuth() {
+  // Check if we have a valid token
+  const token = getAuthToken();
+  if (token) {
+    try {
+      const res = await fetch(`${API}?action=user_me`, {
+        headers: { 'X-Auth-Token': token }
+      });
+      const data = await res.json();
+      if (data.ok && data.authenticated && data.user) {
+        currentUser = data.user;
+        setStoredUser(data.user);
+        showAuthenticatedContent();
+        showUserInfo(data.user);
+        updateAdminUI();
+        initAppAfterAuth();
+        return;
+      }
+    } catch (e) {
+      console.warn('Token validation failed:', e);
+    }
+    clearAuthToken();
+  }
+
+  // Show login overlay
+  showAuthenticatedContent(); // Show content with login overlay on top
+  showLoginOverlay();
+}
+
+function showLoginOverlay() {
+  let overlay = document.getElementById('loginOverlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'loginOverlay';
+    overlay.className = 'pin-overlay';
+    overlay.innerHTML = `
+      <div class="pin-container" style="max-width:420px;">
+        <div class="pin-header">
+          <div class="app-logo">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="32" height="32">
+              <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/>
+              <circle cx="12" cy="10" r="3"/>
+            </svg>
+            <span style="font-size:1.2em;font-weight:700;color:var(--text);">Family Tracker</span>
+          </div>
+          <h2>Prihlásenie</h2>
+          <p>Zadajte prihlasovacie údaje</p>
+        </div>
+        <form id="loginForm" autocomplete="on" style="display:flex;flex-direction:column;gap:16px;">
+          <label style="display:flex;flex-direction:column;gap:4px;">
+            <span style="font-size:0.85em;color:var(--muted-text);">Používateľské meno</span>
+            <input type="text" id="loginUsername" name="username" autocomplete="username"
+              style="padding:12px;border-radius:10px;border:1px solid var(--border);background:var(--input-bg);color:var(--text);font-size:1em;"
+              placeholder="admin" required autofocus>
+          </label>
+          <label style="display:flex;flex-direction:column;gap:4px;">
+            <span style="font-size:0.85em;color:var(--muted-text);">Heslo</span>
+            <input type="password" id="loginPassword" name="password" autocomplete="current-password"
+              style="padding:12px;border-radius:10px;border:1px solid var(--border);background:var(--input-bg);color:var(--text);font-size:1em;"
+              placeholder="••••" required>
+          </label>
+          <div id="loginError" class="hidden" style="color:#ef4444;font-size:0.85em;text-align:center;padding:8px;background:rgba(239,68,68,0.1);border-radius:8px;"></div>
+          <button type="submit" id="loginSubmitBtn"
+            style="padding:14px;border-radius:10px;background:var(--primary,#3b82f6);color:white;border:none;font-size:1em;font-weight:600;cursor:pointer;transition:opacity 0.2s;">
+            Prihlásiť sa
+          </button>
+        </form>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+
+    document.getElementById('loginForm').addEventListener('submit', handleLogin);
+  }
+  overlay.classList.remove('hidden');
+}
+
+function hideLoginOverlay() {
+  const overlay = document.getElementById('loginOverlay');
+  if (overlay) overlay.classList.add('hidden');
+}
+
+async function handleLogin(e) {
+  e.preventDefault();
+  const username = document.getElementById('loginUsername').value.trim();
+  const password = document.getElementById('loginPassword').value;
+  const errorEl = document.getElementById('loginError');
+  const btn = document.getElementById('loginSubmitBtn');
+
+  if (!username || !password) {
+    errorEl.textContent = 'Vyplňte meno a heslo';
+    errorEl.classList.remove('hidden');
+    return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = 'Prihlasujem...';
+  errorEl.classList.add('hidden');
+
+  try {
+    const res = await fetch(`${API}?action=user_login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password })
+    });
+    const data = await res.json();
+
+    if (data.ok && data.token) {
+      setAuthToken(data.token);
+      currentUser = data.user;
+      setStoredUser(data.user);
+      hideLoginOverlay();
+      showUserInfo(data.user);
+      updateAdminUI();
+      initAppAfterAuth();
+    } else {
+      errorEl.textContent = data.error || 'Prihlásenie zlyhalo';
+      errorEl.classList.remove('hidden');
+    }
+  } catch (err) {
+    errorEl.textContent = 'Chyba pripojenia k serveru';
+    errorEl.classList.remove('hidden');
+  }
+
+  btn.disabled = false;
+  btn.textContent = 'Prihlásiť sa';
+}
+
+function updateAdminUI() {
+  // Show/hide admin-only menu items
+  const adminItems = document.querySelectorAll('.admin-only');
+  // Handle both SSO (isAdmin) and user auth (is_admin) property names
+  const isAdmin = currentUser && (currentUser.is_admin || currentUser.isAdmin);
+  adminItems.forEach(el => {
+    el.style.display = isAdmin ? '' : 'none';
+  });
 }
 
 async function handleSSOAuth(loginUrl) {
@@ -132,6 +275,7 @@ async function handleSSOAuth(loginUrl) {
       showAuthenticatedContent(); // Show content only after confirmed auth
       hidePinOverlay();
       showUserInfo(auth.user);
+      updateAdminUI();
       initAppAfterAuth();
 
       // Set up periodic session check (but don't redirect on failure)
@@ -184,8 +328,9 @@ async function checkSSOSession() {
 function showUserInfo(user) {
   // Update UI to show logged in user name near hamburger menu
   const userNameDisplay = document.getElementById('userNameDisplay');
-  if (userNameDisplay && user.name) {
-    userNameDisplay.textContent = user.name;
+  const displayName = user.display_name || user.name || user.username || '';
+  if (userNameDisplay && displayName) {
+    userNameDisplay.textContent = displayName;
     userNameDisplay.classList.remove('hidden');
   }
 
@@ -217,6 +362,21 @@ function addLogoutMenuItem() {
 
 async function handleLogout() {
   try {
+    // User auth logout
+    const token = getAuthToken();
+    if (token) {
+      await fetch(`${API}?action=user_logout`, {
+        method: 'POST',
+        headers: { 'X-Auth-Token': token }
+      });
+      clearAuthToken();
+      currentUser = null;
+      sessionStorage.clear();
+      window.location.reload();
+      return;
+    }
+
+    // SSO logout
     const res = await fetch(`${API}?action=auth_logout`, {
       credentials: 'include'
     });
@@ -231,7 +391,8 @@ async function handleLogout() {
     }
   } catch (e) {
     console.error('Logout failed', e);
-    window.location.href = 'https://bagron.eu/login';
+    sessionStorage.clear();
+    window.location.reload();
   }
 }
 
@@ -258,9 +419,9 @@ function handlePINAuth() {
 }
 
 function initAppAfterAuth() {
-  // This will be called after successful auth (SSO or PIN)
+  // This will be called after successful auth (SSO, PIN, or User auth)
   // initializeApp() already calls initMap, initCalendar, initHamburgerMenu, addUIHandlers
-  if (ssoEnabled) {
+  if (ssoEnabled || currentUser) {
     initTheme();
     initializeApp();
     initPerimeterManagement();
@@ -485,28 +646,66 @@ const dur = (fromIso, toIso) => {
   const m = Math.max(0, Math.round((b - a) / 60000));
   return m + ' min';
 };
+// Auth token management
+function getAuthToken() {
+  return sessionStorage.getItem('tracker_user_token') || null;
+}
+function setAuthToken(token) {
+  sessionStorage.setItem('tracker_user_token', token);
+}
+function clearAuthToken() {
+  sessionStorage.removeItem('tracker_user_token');
+  sessionStorage.removeItem('tracker_user_data');
+}
+function getStoredUser() {
+  try {
+    const data = sessionStorage.getItem('tracker_user_data');
+    return data ? JSON.parse(data) : null;
+  } catch { return null; }
+}
+function setStoredUser(user) {
+  sessionStorage.setItem('tracker_user_data', JSON.stringify(user));
+}
+
+function authHeaders() {
+  const token = getAuthToken();
+  const headers = {};
+  if (token) headers['X-Auth-Token'] = token;
+  return headers;
+}
+
 async function apiGet(url) {
-  const r = await fetch(url, { method:'GET' });
+  const r = await fetch(url, { method:'GET', headers: authHeaders() });
+  if (r.status === 401) { handleAuthExpired(); throw new Error('Auth expired'); }
   if (!r.ok) throw new Error(`GET ${url} -> ${r.status}`);
   return r.json();
 }
 async function apiPost(action, payload) {
   const r = await fetch(`${API}?action=${action}`, {
     method: 'POST',
-    headers: { 'Content-Type':'application/json' },
+    headers: { 'Content-Type':'application/json', ...authHeaders() },
     body: JSON.stringify(payload)
   });
+  if (r.status === 401) { handleAuthExpired(); throw new Error('Auth expired'); }
   if (!r.ok) throw new Error(`POST ${action} -> ${r.status}`);
   return r.json();
 }
 async function apiDelete(action, payload) {
   const r = await fetch(`${API}?action=${action}`, {
     method: 'DELETE',
-    headers: { 'Content-Type':'application/json' },
+    headers: { 'Content-Type':'application/json', ...authHeaders() },
     body: JSON.stringify(payload)
   });
+  if (r.status === 401) { handleAuthExpired(); throw new Error('Auth expired'); }
   if (!r.ok) throw new Error(`DELETE ${action} -> ${r.status}`);
   return r.json();
+}
+
+function handleAuthExpired() {
+  clearAuthToken();
+  currentUser = null;
+  document.body.classList.remove('authenticated');
+  showLoginOverlay();
 }
 
 // --------- Multi-Device State ---------
@@ -727,6 +926,9 @@ function initHamburgerMenu() {
         break;
       case 'menuDevices':
         openDeviceManagement();
+        break;
+      case 'menuUsers':
+        openUserManagement();
         break;
       case 'menuLogout':
         handleLogout();
@@ -5543,6 +5745,225 @@ async function deleteDevicePerimeter(perimeterId, deviceId) {
     openDevicePerimeterManager(deviceId);
     const allPerimeters = await loadDevicePerimeters();
     renderDevicePerimetersOnMap(allPerimeters);
+  } catch (e) {
+    alert('Chyba: ' + e.message);
+  }
+}
+
+// ========== ADMIN: USER MANAGEMENT ==========
+
+let usersCache = [];
+
+async function loadUsers() {
+  try {
+    const res = await apiGet(`${API}?action=get_users`);
+    if (res.ok && Array.isArray(res.data)) {
+      usersCache = res.data;
+      return res.data;
+    }
+  } catch (e) {
+    console.error('Failed to load users:', e);
+  }
+  return [];
+}
+
+function createUserManagementOverlay() {
+  let overlay = document.getElementById('userManagementOverlay');
+  if (overlay) return overlay;
+
+  overlay = document.createElement('div');
+  overlay.id = 'userManagementOverlay';
+  overlay.className = 'overlay hidden';
+  overlay.innerHTML = `
+    <div class="overlay-content settings-content">
+      <div class="overlay-header">
+        <h2>Správa používateľov</h2>
+        <button class="overlay-close" onclick="document.getElementById('userManagementOverlay').classList.add('hidden')">&times;</button>
+      </div>
+      <div class="overlay-body">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+          <span id="userCount" style="color:var(--muted-text);font-size:0.9em;"></span>
+          <button class="btn-primary btn-small" onclick="showUserForm()">+ Nový používateľ</button>
+        </div>
+        <div id="userList">Načítavam...</div>
+        <div id="userFormContainer" class="hidden" style="margin-top:20px;padding:16px;background:var(--bg-secondary);border-radius:12px;">
+          <h3 id="userFormTitle" style="margin:0 0 12px;">Nový používateľ</h3>
+          <form id="userForm" autocomplete="off" style="display:flex;flex-direction:column;gap:12px;">
+            <input type="hidden" id="userFormId">
+            <label style="display:flex;flex-direction:column;gap:4px;">
+              <span style="font-size:0.85em;color:var(--muted-text);">Používateľské meno</span>
+              <input type="text" id="userFormUsername" required autocomplete="off"
+                style="padding:8px 12px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--text);">
+            </label>
+            <label style="display:flex;flex-direction:column;gap:4px;">
+              <span style="font-size:0.85em;color:var(--muted-text);">Zobrazované meno</span>
+              <input type="text" id="userFormDisplayName" autocomplete="off"
+                style="padding:8px 12px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--text);">
+            </label>
+            <label style="display:flex;flex-direction:column;gap:4px;">
+              <span style="font-size:0.85em;color:var(--muted-text);">Email</span>
+              <input type="email" id="userFormEmail" autocomplete="off"
+                style="padding:8px 12px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--text);">
+            </label>
+            <label style="display:flex;flex-direction:column;gap:4px;">
+              <span style="font-size:0.85em;color:var(--muted-text);">Heslo <span id="userFormPasswordHint" style="font-size:0.8em;">(povinné pre nového používateľa)</span></span>
+              <input type="password" id="userFormPassword" autocomplete="new-password"
+                style="padding:8px 12px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--text);">
+            </label>
+            <label style="display:flex;flex-direction:column;gap:4px;">
+              <span style="font-size:0.85em;color:var(--muted-text);">Rola</span>
+              <select id="userFormRole"
+                style="padding:8px 12px;border-radius:8px;border:1px solid var(--border);background:var(--input-bg);color:var(--text);">
+                <option value="user">Používateľ</option>
+                <option value="admin">Administrátor</option>
+              </select>
+            </label>
+            <label style="display:flex;flex-direction:column;gap:4px;">
+              <span style="font-size:0.85em;color:var(--muted-text);">Priradené zariadenia</span>
+              <div id="userFormDevices" style="display:flex;flex-wrap:wrap;gap:8px;padding:8px 0;"></div>
+            </label>
+            <div id="userFormError" class="hidden" style="color:#ef4444;font-size:0.85em;padding:8px;background:rgba(239,68,68,0.1);border-radius:8px;"></div>
+            <div style="display:flex;gap:8px;">
+              <button type="submit" class="btn-primary btn-small">Uložiť</button>
+              <button type="button" class="btn-secondary btn-small" onclick="hideUserForm()">Zrušiť</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  document.getElementById('userForm').addEventListener('submit', handleSaveUser);
+  return overlay;
+}
+
+async function openUserManagement() {
+  const overlay = createUserManagementOverlay();
+  overlay.classList.remove('hidden');
+  await renderUserList();
+}
+
+async function renderUserList() {
+  const users = await loadUsers();
+  const container = document.getElementById('userList');
+  const countEl = document.getElementById('userCount');
+  if (countEl) countEl.textContent = `${users.length} používateľ(ov)`;
+
+  if (users.length === 0) {
+    container.innerHTML = '<p style="color:var(--muted-text);text-align:center;">Žiadni používatelia</p>';
+    return;
+  }
+
+  container.innerHTML = users.map(u => `
+    <div class="device-card" style="margin-bottom:8px;">
+      <div class="device-card-header">
+        <span class="device-color-indicator" style="background:${u.role === 'admin' ? '#f59e0b' : '#3b82f6'}"></span>
+        <strong>${u.display_name || u.username}</strong>
+        <span style="font-size:0.8em;color:var(--muted-text);">@${u.username}</span>
+        <span class="device-card-status ${u.is_active ? 'active' : 'inactive'}">${u.role === 'admin' ? 'Admin' : 'User'}${u.is_active ? '' : ' (neaktívny)'}</span>
+      </div>
+      <div style="font-size:0.85em;color:var(--muted-text);padding:4px 0;">
+        ${u.email ? u.email + ' | ' : ''}Zariadenia: ${u.assigned_devices || 'žiadne'}
+        ${u.last_login ? ' | Posledné prihlásenie: ' + new Date(u.last_login).toLocaleString('sk-SK') : ''}
+      </div>
+      <div class="device-card-actions">
+        <button class="btn-sm btn-edit" onclick="editUser(${u.id})">Upraviť</button>
+        <button class="btn-sm ${u.is_active ? 'btn-warning' : 'btn-primary'}" onclick="toggleUser(${u.id}, ${u.is_active ? 'false' : 'true'})">${u.is_active ? 'Deaktivovať' : 'Aktivovať'}</button>
+        <button class="btn-sm btn-danger" onclick="deleteUser(${u.id}, '${u.username}')">Zmazať</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+function showUserForm(user = null) {
+  document.getElementById('userFormContainer').classList.remove('hidden');
+  document.getElementById('userFormTitle').textContent = user ? 'Upraviť používateľa' : 'Nový používateľ';
+  document.getElementById('userFormId').value = user ? user.id : '';
+  document.getElementById('userFormUsername').value = user ? user.username : '';
+  document.getElementById('userFormDisplayName').value = user ? (user.display_name || '') : '';
+  document.getElementById('userFormEmail').value = user ? (user.email || '') : '';
+  document.getElementById('userFormPassword').value = '';
+  document.getElementById('userFormRole').value = user ? user.role : 'user';
+  document.getElementById('userFormPasswordHint').textContent = user ? '(nechajte prázdne ak nechcete meniť)' : '(povinné pre nového používateľa)';
+  document.getElementById('userFormError').classList.add('hidden');
+
+  // Render device checkboxes
+  const devContainer = document.getElementById('userFormDevices');
+  const assignedIds = user ? (user.device_ids || []) : [];
+  devContainer.innerHTML = devices.map(d => `
+    <label style="display:flex;align-items:center;gap:6px;padding:4px 8px;background:var(--bg-primary);border-radius:6px;cursor:pointer;">
+      <input type="checkbox" value="${d.id}" ${assignedIds.includes(d.id) ? 'checked' : ''}>
+      <span class="device-color-indicator" style="background:${d.color};width:10px;height:10px;"></span>
+      <span style="font-size:0.9em;">${d.name}</span>
+    </label>
+  `).join('');
+}
+
+function hideUserForm() {
+  document.getElementById('userFormContainer').classList.add('hidden');
+}
+
+async function handleSaveUser(e) {
+  e.preventDefault();
+  const errorEl = document.getElementById('userFormError');
+  errorEl.classList.add('hidden');
+
+  const id = document.getElementById('userFormId').value;
+  const deviceCheckboxes = document.querySelectorAll('#userFormDevices input[type="checkbox"]');
+  const deviceIds = Array.from(deviceCheckboxes).filter(cb => cb.checked).map(cb => parseInt(cb.value));
+
+  const payload = {
+    username: document.getElementById('userFormUsername').value.trim(),
+    display_name: document.getElementById('userFormDisplayName').value.trim(),
+    email: document.getElementById('userFormEmail').value.trim(),
+    role: document.getElementById('userFormRole').value,
+    is_active: true,
+    device_ids: deviceIds,
+  };
+  if (id) payload.id = parseInt(id);
+
+  const password = document.getElementById('userFormPassword').value;
+  if (password) payload.password = password;
+
+  try {
+    const res = await apiPost('save_user', payload);
+    if (res.ok) {
+      hideUserForm();
+      await renderUserList();
+    } else {
+      errorEl.textContent = res.error || 'Chyba pri ukladaní';
+      errorEl.classList.remove('hidden');
+    }
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.classList.remove('hidden');
+  }
+}
+
+async function editUser(userId) {
+  const user = usersCache.find(u => u.id === userId);
+  if (user) showUserForm(user);
+}
+
+async function toggleUser(userId, activate) {
+  try {
+    await apiPost('toggle_user', { id: userId, is_active: activate });
+    await renderUserList();
+  } catch (e) {
+    alert('Chyba: ' + e.message);
+  }
+}
+
+async function deleteUser(userId, username) {
+  if (!confirm(`Naozaj zmazať používateľa "${username}"?`)) return;
+  try {
+    const res = await apiGet(`${API}?action=delete_user&id=${userId}`);
+    if (res.ok) {
+      await renderUserList();
+    } else {
+      alert(res.error || 'Chyba pri mazaní');
+    }
   } catch (e) {
     alert('Chyba: ' + e.message);
   }
