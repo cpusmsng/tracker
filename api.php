@@ -1761,7 +1761,8 @@ if ($action === 'get_settings') {
             'smart_refetch_frequency_minutes' => (int)(getenv('SMART_REFETCH_FREQUENCY_MINUTES') ?: 30),
             'smart_refetch_days' => (int)(getenv('SMART_REFETCH_DAYS') ?: 7),
             'battery_alert_enabled' => in_array(strtolower(getenv('BATTERY_ALERT_ENABLED') ?: 'false'), ['true', '1', 'yes']),
-            'battery_alert_email' => getenv('BATTERY_ALERT_EMAIL') ?: ''
+            'battery_alert_email' => getenv('BATTERY_ALERT_EMAIL') ?: '',
+            'has_google_api' => !empty(getenv('GOOGLE_API_KEY'))
         ];
 
         respond([

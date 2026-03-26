@@ -46,6 +46,7 @@ const SESSION_DURATION = 24 * 60 * 60 * 1000; // 24 hodín
 let currentUser = null;
 let ssoEnabled = false;
 let isRedirecting = false; // Prevents content flash during redirect
+let hasGoogleApi = false;
 const DEBUG_MODE = new URLSearchParams(window.location.search).has('debug');
 
 // URL parameters for deep linking (from email alerts)
@@ -241,14 +242,11 @@ async function handleSSOAuth(loginUrl) {
   };
 
   try {
-    console.log('[SSO] v2 - Checking authentication...');
-
     const authRes = await fetch(`${API}?action=auth_me`, {
       credentials: 'include'
     });
 
     const authText = await authRes.text();
-    console.log('[SSO] Raw response:', authText.substring(0, 300));
 
     // Check if response is HTML (not JSON)
     if (authText.trim().startsWith('<')) {
@@ -266,11 +264,8 @@ async function handleSSOAuth(loginUrl) {
       return;
     }
 
-    console.log('[SSO] Parsed:', auth.ok, auth.authenticated, auth.user?.name);
-
     if (auth.ok && auth.authenticated && auth.user) {
       // User is authenticated via SSO - NOW show content
-      console.log('[SSO] SUCCESS - Authenticated as:', auth.user.name);
       currentUser = auth.user;
       showAuthenticatedContent(); // Show content only after confirmed auth
       hidePinOverlay();
@@ -283,7 +278,7 @@ async function handleSSOAuth(loginUrl) {
       window.addEventListener('focus', checkSSOSession);
     } else {
       // Not authenticated via SSO - DO NOT show content
-      console.log('[SSO] Not authenticated, debug:', auth.debug);
+      // SSO not authenticated
 
       // If debug mode, don't redirect
       if (DEBUG_MODE) {
@@ -425,6 +420,10 @@ function initAppAfterAuth() {
     initTheme();
     initializeApp();
     initPerimeterManagement();
+    // Preload Google API availability flag for data browser
+    apiGet(`${API}?action=get_settings`).then(s => {
+      if (s && s.ok && s.data) hasGoogleApi = !!s.data.has_google_api;
+    }).catch(() => {});
   }
 }
 
@@ -1368,16 +1367,12 @@ function closeSettingsOverlay() {
 }
 
 async function loadCurrentSettings() {
-  console.log('loadCurrentSettings called');
   try {
-    console.log('Fetching settings from API...');
     const settings = await apiGet(`${API}?action=get_settings`);
-    console.log('Settings response:', settings);
 
     if (settings && settings.ok) {
       const data = settings.data;
-      console.log('Settings data:', data);
-
+      hasGoogleApi = !!data.has_google_api;
       // Naplň form fields
       $('#hysteresisMeters').value = data.hysteresis_meters || 50;
       $('#hysteresisMinutes').value = data.hysteresis_minutes || 30;
@@ -1410,9 +1405,8 @@ async function loadCurrentSettings() {
       // Initialize theme toggle in settings
       initTheme();
 
-      console.log('Settings loaded successfully');
     } else {
-      console.warn('Settings response not OK:', settings);
+      console.warn('Settings response not OK');
     }
   } catch (err) {
     console.error('Failed to load settings:', err);
@@ -4204,21 +4198,11 @@ window.sendTestEmail = async function() {
       response = { ok: false, error: `Server vrátil HTTP ${r.status} (nie JSON odpoveď)` };
     }
 
-    console.log('Test email response:', response);
-
     if (response.ok) {
       resultEl.textContent = response.message || 'Testovací e-mail bol odoslaný!';
       resultEl.className = 'test-email-result success';
-
-      if (response.debug) {
-        console.log('Test email debug:', response.debug);
-      }
     } else {
       let errorMsg = response.error || `Chyba servera (HTTP ${r.status})`;
-
-      if (response.debug) {
-        console.error('Test email error debug:', response.debug);
-      }
 
       resultEl.textContent = errorMsg;
       resultEl.className = 'test-email-result error';
@@ -5316,14 +5300,16 @@ async function loadDataBrowserRecords() {
         macInfo = '<span class="source-badge ibeacon">iBeacon</span>';
       }
 
-      // Actions
+      // Actions - only show Google buttons if API key is configured
       let actions = '';
-      if (isWifiScan && !r.resolved) {
-        actions = `<button class="btn-sm btn-edit" onclick="retryGoogleForWifiScan(${r.id})" title="Skúsiť Google API pre tento sken">Google</button>`;
-      } else if (r.raw_wifi_macs || isWifiScan) {
-        const retryId = isWifiScan ? r.id : r.id;
-        const retryFn = isWifiScan ? 'retryGoogleForWifiScan' : 'retryGoogleForRecord';
-        actions = `<button class="btn-sm btn-edit" onclick="${retryFn}(${retryId})" title="Zavolať Google API">Google</button>`;
+      if (hasGoogleApi) {
+        if (isWifiScan && !r.resolved) {
+          actions = `<button class="btn-sm btn-edit" onclick="retryGoogleForWifiScan(${r.id})" title="Skúsiť Google API pre tento sken">Google</button>`;
+        } else if (r.raw_wifi_macs || isWifiScan) {
+          const retryId = isWifiScan ? r.id : r.id;
+          const retryFn = isWifiScan ? 'retryGoogleForWifiScan' : 'retryGoogleForRecord';
+          actions = `<button class="btn-sm btn-edit" onclick="${retryFn}(${retryId})" title="Zavolať Google API">Google</button>`;
+        }
       }
 
       return `<tr data-record-id="${r.id}" data-record-type="${r.record_type || 'tracker'}" class="${rowClass}">
