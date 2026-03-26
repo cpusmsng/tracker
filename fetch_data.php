@@ -128,17 +128,17 @@ function sensecap_fetch_basic(string $devEui, int $measurementId, string $aid, s
     $http = 0; $err = '';
     [$json, $raw] = http_get_json_basic($url, $aid, $akey, $http, $err);
     
-    if ($err) { 
-        debug_log("SenseCAP ERR m=$measurementId http=$http err=$err"); 
-        return []; 
+    if ($err) {
+        info_log("SenseCAP API ERROR: measurement=$measurementId http=$http err=$err");
+        return [];
     }
-    if (!is_array($json)) { 
-        debug_log("SenseCAP BADJSON m=$measurementId http=$http body=".substr((string)$raw,0,200)); 
-        return []; 
+    if (!is_array($json)) {
+        info_log("SenseCAP API BAD RESPONSE: measurement=$measurementId http=$http body=".substr((string)$raw,0,200));
+        return [];
     }
-    if (($json['code'] ?? '') !== '0') { 
-        debug_log("SenseCAP APICODE m=$measurementId code=".($json['code']??'').' body='.substr(json_encode($json),0,200)); 
-        return []; 
+    if (($json['code'] ?? '') !== '0') {
+        info_log("SenseCAP API CODE ERROR: measurement=$measurementId code=".($json['code']??'').' body='.substr(json_encode($json),0,200));
+        return [];
     }
 
     $list = $json['data']['list'] ?? [];
@@ -343,7 +343,7 @@ function insert_position_with_hysteresis(
         return ['inserted' => true, 'reason' => 'ok', 'distance' => $dist !== null ? round($dist, 1) : null];
     } catch (Throwable $e) {
         $errorMsg = $e->getMessage();
-        debug_log("    DB EXCEPTION: $errorMsg");
+        info_log("    DB INSERT ERROR: $errorMsg (source=$source, lat=$lat, lng=$lng)");
         return ['inserted' => false, 'reason' => 'db_error', 'error' => $errorMsg];
     }
 }

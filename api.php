@@ -384,6 +384,60 @@ if ($action === 'health') {
     }
 }
 
+// Fetch status - diagnostic info about data fetching
+if ($action === 'fetch_status') {
+    try {
+        $deviceId = qparam('device_id');
+
+        // Last tracker_data record per device
+        if ($deviceId) {
+            $stmt = $pdo->prepare("SELECT MAX(timestamp) as last_ts, COUNT(*) as today_count FROM tracker_data WHERE device_id = :did AND timestamp >= (NOW() AT TIME ZONE 'UTC' - INTERVAL '24 hours')");
+            $stmt->execute([':did' => (int)$deviceId]);
+            $row = $stmt->fetch();
+
+            $stmtAll = $pdo->prepare("SELECT MAX(timestamp) as last_ts FROM tracker_data WHERE device_id = :did");
+            $stmtAll->execute([':did' => (int)$deviceId]);
+            $rowAll = $stmtAll->fetch();
+
+            // WiFi scans count for today
+            $wifiToday = 0;
+            try {
+                $stmtWs = $pdo->prepare("SELECT COUNT(*) FROM wifi_scans WHERE device_id = :did AND timestamp >= (NOW() AT TIME ZONE 'UTC' - INTERVAL '24 hours')");
+                $stmtWs->execute([':did' => (int)$deviceId]);
+                $wifiToday = (int)$stmtWs->fetchColumn();
+            } catch (Throwable $e) {}
+        } else {
+            $row = $pdo->query("SELECT MAX(timestamp) as last_ts, COUNT(*) as today_count FROM tracker_data WHERE timestamp >= (NOW() AT TIME ZONE 'UTC' - INTERVAL '24 hours')")->fetch();
+            $rowAll = $pdo->query("SELECT MAX(timestamp) as last_ts FROM tracker_data")->fetch();
+            $wifiToday = 0;
+            try {
+                $wifiToday = (int)$pdo->query("SELECT COUNT(*) FROM wifi_scans WHERE timestamp >= (NOW() AT TIME ZONE 'UTC' - INTERVAL '24 hours')")->fetchColumn();
+            } catch (Throwable $e) {}
+        }
+
+        // Check last fetch run time from file
+        $lastRunFile = __DIR__ . '/data/.fetch_last_run';
+        $lastRunTime = null;
+        if (is_file($lastRunFile)) {
+            $ts = (int)file_get_contents($lastRunFile);
+            if ($ts > 0) {
+                $lastRunTime = (new DateTimeImmutable("@$ts"))->setTimezone(new DateTimeZone('Europe/Bratislava'))->format('Y-m-d H:i:s');
+            }
+        }
+
+        respond([
+            'ok' => true,
+            'last_record' => $rowAll['last_ts'] ? utc_to_local($rowAll['last_ts']) : null,
+            'records_last_24h' => (int)($row['today_count'] ?? 0),
+            'wifi_scans_last_24h' => $wifiToday,
+            'last_fetch_run' => $lastRunTime,
+            'server_time' => (new DateTimeImmutable('now', new DateTimeZone('Europe/Bratislava')))->format('Y-m-d H:i:s'),
+        ]);
+    } catch (Throwable $e) {
+        respond(['ok' => false, 'error' => $e->getMessage()], 500);
+    }
+}
+
 if ($action === 'get_last_position') {
     $deviceId = qparam('device_id');
 

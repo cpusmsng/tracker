@@ -5243,6 +5243,25 @@ function closeDataBrowser() {
   if (overlay) overlay.classList.add('hidden');
 }
 
+async function triggerRefetchFromDataBrowser() {
+  const date = $('#dataBrowserDate')?.value;
+  if (!date) return;
+  if (!confirm(`Spustiť refetch dát zo SenseCraft pre ${date}?`)) return;
+
+  try {
+    const res = await apiPost('refetch_day', { date });
+    if (res.ok) {
+      alert(`Refetch spustený pre ${date}. Počkajte 1-2 minúty a potom obnovte.`);
+      // Auto-reload after 30 seconds
+      setTimeout(() => loadDataBrowserRecords(), 30000);
+    } else {
+      alert('Chyba: ' + (res.error || 'Nepodarilo sa spustiť refetch'));
+    }
+  } catch (e) {
+    alert('Chyba: ' + e.message);
+  }
+}
+
 async function loadDataBrowserRecords() {
   const tbody = $('#dataBrowserBody');
   if (!tbody) return;
@@ -5273,7 +5292,23 @@ async function loadDataBrowserRecords() {
     const pagination = result.pagination || {};
 
     if (records.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--muted-text);">Žiadne záznamy</td></tr>';
+      // Show diagnostic info when no records found
+      let diagHtml = '<tr><td colspan="7" style="text-align:center;color:var(--muted-text);padding:20px;">';
+      diagHtml += '<div style="font-size:1.1em;">Žiadne záznamy</div>';
+      try {
+        const status = await apiGet(`${API}?action=fetch_status&device_id=${dataBrowserDeviceId}`);
+        if (status && status.ok) {
+          diagHtml += '<div style="margin-top:12px;font-size:0.85em;opacity:0.7;line-height:1.6;">';
+          diagHtml += `Posledný záznam: ${status.last_record || 'žiadny'}<br>`;
+          diagHtml += `Záznamy za 24h: ${status.records_last_24h} (+ ${status.wifi_scans_last_24h} WiFi skenov)<br>`;
+          diagHtml += `Posledný fetch: ${status.last_fetch_run || 'neznámy'}<br>`;
+          diagHtml += `Čas servera: ${status.server_time}`;
+          diagHtml += '</div>';
+        }
+      } catch (e) { /* ignore diagnostic errors */ }
+      diagHtml += `<div style="margin-top:14px;"><button class="btn-sm btn-edit" onclick="triggerRefetchFromDataBrowser()">Znovu načítať dáta zo SenseCraft</button></div>`;
+      diagHtml += '</td></tr>';
+      tbody.innerHTML = diagHtml;
       updateDataBrowserPagination(pagination);
       return;
     }
