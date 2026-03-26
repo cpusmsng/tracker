@@ -5509,6 +5509,10 @@ async function retryGoogleForWifiScan(scanId) {
       }
       alert(msg);
       loadDataBrowserRecords();
+      // Refresh map to show the newly resolved position
+      if (res.latitude !== undefined && res.latitude !== null) {
+        try { await loadHistory(fmt(currentDate)); } catch(e) {}
+      }
     } else {
       alert(res.error || 'Chyba pri volaní Google API');
     }

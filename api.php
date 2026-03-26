@@ -1030,6 +1030,33 @@ if ($action === 'retry_google_wifi_scan' && $_SERVER['REQUEST_METHOD'] === 'POST
         $upd = $pdo->prepare("UPDATE wifi_scans SET resolved = 1, latitude = :lat, longitude = :lng, source = 'wifi-google' WHERE id = :id");
         $upd->execute([':lat' => $lat, ':lng' => $lng, ':id' => $scanId]);
 
+        // Create tracker_data entry so position appears on map and in history
+        $allMacs = [];
+        $primaryMac = null;
+        foreach ($parsed as $ap) {
+            $mac = strtoupper(str_replace('-', ':', $ap['mac'] ?? ''));
+            if (strlen($mac) === 17) $allMacs[] = $mac;
+        }
+        if (!empty($allMacs)) $primaryMac = $allMacs[0];
+
+        $ins = $pdo->prepare("
+            INSERT INTO tracker_data (timestamp, latitude, longitude, source, raw_wifi_macs, primary_mac, device_id)
+            VALUES (:ts, :lat, :lng, 'wifi-google', :macs, :pmac, :did)
+        ");
+        $ins->execute([
+            ':ts'   => $scan['timestamp'],
+            ':lat'  => $lat,
+            ':lng'  => $lng,
+            ':macs' => implode(',', $allMacs),
+            ':pmac' => $primaryMac,
+            ':did'  => $scan['device_id'],
+        ]);
+        $tdId = (int)$pdo->lastInsertId();
+
+        // Link wifi_scan to the new tracker_data entry
+        $link = $pdo->prepare("UPDATE wifi_scans SET tracker_data_id = :tid WHERE id = :id");
+        $link->execute([':tid' => $tdId, ':id' => $scanId]);
+
         // Update mac_locations for all MACs in this scan
         $macsUpdated = 0;
         foreach ($parsed as $ap) {
