@@ -44,9 +44,11 @@ COPY docker/crontab /etc/cron.d/tracker-cron
 COPY docker/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 COPY docker/entrypoint.sh /entrypoint.sh
 
-# Set permissions for cron and entrypoint
+# Set permissions for cron, entrypoint, and fetch scripts
 RUN chmod 0644 /etc/cron.d/tracker-cron \
-    && chmod +x /entrypoint.sh
+    && chmod +x /entrypoint.sh \
+    && chmod +x /var/www/html/docker/fetch-loop.sh \
+    && chmod +x /var/www/html/docker/smart-refetch-loop.sh
 
 # Expose port 80
 EXPOSE 80
@@ -55,6 +57,6 @@ EXPOSE 80
 HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
     CMD curl -f http://localhost/api.php?action=health || exit 1
 
-# Use supervisor to run Apache and cron
+# Use supervisor to run Apache and fetch loops
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
