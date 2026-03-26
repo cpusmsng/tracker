@@ -294,14 +294,25 @@ cd /var/www/html && /usr/local/bin/php -r "
 "
 echo ""
 
-# Ensure crontab is properly installed
+# Install crontab - use root crontab directly (more reliable than cron.d in Docker)
+# Convert cron.d format (with user field) to standard crontab format
 if [ -f /etc/cron.d/tracker-cron ]; then
+    # Also keep cron.d file with proper permissions
     chown root:root /etc/cron.d/tracker-cron
     chmod 0644 /etc/cron.d/tracker-cron
-    echo "Crontab installed from /etc/cron.d/tracker-cron"
-else
-    echo "WARNING: /etc/cron.d/tracker-cron not found! Cron jobs will not run."
 fi
+
+# Install as root crontab with su to www-data for each job
+cat > /tmp/root-crontab <<'CRONTAB'
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+* * * * * su -s /bin/bash www-data -c 'cd /var/www/html && /usr/local/bin/php fetch_worker_pool.php >> /var/log/tracker/fetch.log 2>&1'
+*/30 * * * * su -s /bin/bash www-data -c 'cd /var/www/html && /usr/local/bin/php smart_refetch_v2.php >> /var/log/tracker/smart_refetch.log 2>&1'
+CRONTAB
+crontab /tmp/root-crontab
+rm /tmp/root-crontab
+echo "Crontab installed for root ($(crontab -l 2>/dev/null | grep -c '^[^#]') jobs)"
 
 # Touch log files
 touch /var/log/tracker/fetch.log /var/log/tracker/smart_refetch.log /var/log/tracker/php-error.log

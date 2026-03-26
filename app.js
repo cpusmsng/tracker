@@ -5243,6 +5243,23 @@ function closeDataBrowser() {
   if (overlay) overlay.classList.add('hidden');
 }
 
+async function deletePositionCoords(recordId, recordType) {
+  const label = recordType === 'wifi_scan' ? 'Vrátiť WiFi sken na nerozpoznaný?' : 'Zmazať tento záznam polohy?';
+  if (!confirm(label)) return;
+
+  try {
+    const res = await apiPost('delete_position_coords', { id: recordId, record_type: recordType });
+    if (res.ok) {
+      loadDataBrowserRecords();
+      try { await loadHistory(fmt(currentDate)); } catch(e) {}
+    } else {
+      alert(res.error || 'Chyba pri mazaní');
+    }
+  } catch (e) {
+    alert('Chyba: ' + e.message);
+  }
+}
+
 async function triggerRefetchFromDataBrowser() {
   const date = $('#dataBrowserDate')?.value;
   if (!date) return;
@@ -5337,14 +5354,27 @@ async function loadDataBrowserRecords() {
 
       // Actions - only show Google buttons if API key is configured
       let actions = '';
+      const hasCoords = r.latitude && r.longitude;
+
+      // Edit button - for records with coordinates (opens position edit overlay)
+      if (hasCoords && !isWifiScan) {
+        actions += `<button class="btn-sm btn-edit" onclick="openPositionEditModal(${r.id})" title="Upraviť súradnice">✎</button>`;
+      }
+
+      // Google button
       if (hasGoogleApi) {
         if (isWifiScan && !r.resolved) {
-          actions = `<button class="btn-sm btn-edit" onclick="retryGoogleForWifiScan(${r.id})" title="Skúsiť Google API pre tento sken">Google</button>`;
+          actions += `<button class="btn-sm btn-edit" onclick="retryGoogleForWifiScan(${r.id})" title="Skúsiť Google API pre tento sken">Google</button>`;
         } else if (r.raw_wifi_macs || isWifiScan) {
-          const retryId = isWifiScan ? r.id : r.id;
           const retryFn = isWifiScan ? 'retryGoogleForWifiScan' : 'retryGoogleForRecord';
-          actions = `<button class="btn-sm btn-edit" onclick="${retryFn}(${retryId})" title="Zavolať Google API">Google</button>`;
+          actions += `<button class="btn-sm btn-edit" onclick="${retryFn}(${r.id})" title="Zavolať Google API">Google</button>`;
         }
+      }
+
+      // Delete coordinates button - for records with coordinates
+      if (hasCoords) {
+        const recType = isWifiScan ? 'wifi_scan' : 'tracker';
+        actions += `<button class="btn-sm btn-danger" onclick="deletePositionCoords(${r.id}, '${recType}')" title="Zmazať súradnice" style="padding:2px 6px;font-size:11px;">✕</button>`;
       }
 
       return `<tr data-record-id="${r.id}" data-record-type="${r.record_type || 'tracker'}" class="${rowClass}">

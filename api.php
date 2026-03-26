@@ -2166,6 +2166,43 @@ if ($action === 'update_position' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
+// DELETE position coordinates (revert to unresolved or delete tracker_data entry)
+if ($action === 'delete_position_coords' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    try {
+        $j = json_body();
+        $id = isset($j['id']) ? (int)$j['id'] : null;
+        $recordType = $j['record_type'] ?? 'tracker';
+
+        if (!$id) respond(['ok' => false, 'error' => 'Record ID is required'], 400);
+
+        $pdo = db();
+
+        if ($recordType === 'wifi_scan') {
+            // For wifi_scans: revert to unresolved (keep the scan, just remove coordinates)
+            $stmt = $pdo->prepare("UPDATE wifi_scans SET resolved = 0, latitude = NULL, longitude = NULL, source = NULL, tracker_data_id = NULL WHERE id = ?");
+            $stmt->execute([$id]);
+
+            // Also delete the linked tracker_data entry if exists
+            $stmtTd = $pdo->prepare("DELETE FROM tracker_data WHERE id IN (SELECT tracker_data_id FROM wifi_scans WHERE id = ? AND tracker_data_id IS NOT NULL)");
+            $stmtTd->execute([$id]);
+
+            respond(['ok' => true, 'message' => 'WiFi scan reverted to unresolved']);
+        } else {
+            // For tracker_data: delete the record entirely
+            $stmt = $pdo->prepare("DELETE FROM tracker_data WHERE id = ?");
+            $stmt->execute([$id]);
+
+            // Also unlink any wifi_scans that referenced this
+            $stmtWs = $pdo->prepare("UPDATE wifi_scans SET resolved = 0, tracker_data_id = NULL WHERE tracker_data_id = ?");
+            $stmtWs->execute([$id]);
+
+            respond(['ok' => true, 'message' => 'Position deleted']);
+        }
+    } catch (Throwable $e) {
+        respond(['ok' => false, 'error' => $e->getMessage()], 500);
+    }
+}
+
 // Invalidate MAC address cache (remove coordinates for a MAC)
 if ($action === 'invalidate_mac' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     try {
