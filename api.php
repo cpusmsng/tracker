@@ -568,12 +568,12 @@ if ($action === 'get_raw_records' && $_SERVER['REQUEST_METHOD'] === 'GET') {
         $utcEnd     = $endLocal->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d H:i:s');
     }
 
-    // Build unified query using UNION of tracker_data (non-wifi) and wifi_scans (all wifi)
+    // Build unified query using UNION of tracker_data (all sources) and wifi_scans (unresolved only)
     if ($hasWifiScans) {
-        // Part 1: Non-WiFi records from tracker_data (GNSS, iBeacon)
-        // Part 2: All WiFi scans from wifi_scans (resolved + unresolved)
-        $whereTd  = ["td.source NOT LIKE 'wifi%'"];
-        $whereWs  = [];
+        // Part 1: ALL records from tracker_data (GNSS, iBeacon, WiFi-resolved)
+        // Part 2: UNRESOLVED WiFi scans from wifi_scans (no tracker_data link)
+        $whereTd  = [];
+        $whereWs  = ['ws.resolved = 0'];
         $paramsTd = [];
         $paramsWs = [];
 
@@ -594,27 +594,26 @@ if ($action === 'get_raw_records' && $_SERVER['REQUEST_METHOD'] === 'GET') {
         }
 
         if ($sourceFilter && $sourceFilter !== 'all') {
-            if (str_starts_with($sourceFilter, 'wifi')) {
-                // WiFi filter - only show wifi_scans
-                $whereWs[]          = 'ws.source = :src2';
-                $paramsWs[':src2']  = $sourceFilter;
-                // Exclude all tracker_data (non-wifi)
-                $whereTd[] = '0 = 1';
-            } else if ($sourceFilter === 'unresolved') {
+            if ($sourceFilter === 'unresolved') {
                 // Special filter: show only unresolved wifi scans
-                $whereWs[]  = 'ws.resolved = 0';
-                $whereTd[]  = '0 = 1';
-            } else {
-                // Non-wifi filter (gnss, ibeacon)
+                // Keep ws.resolved = 0 (already set above)
+                $whereTd[] = '0 = 1'; // No tracker_data for unresolved
+            } else if (str_starts_with($sourceFilter, 'wifi')) {
+                // WiFi filter - show from both tracker_data (resolved wifi) and wifi_scans (unresolved)
                 $whereTd[]          = 'td.source = :src';
                 $paramsTd[':src']   = $sourceFilter;
-                // Exclude wifi_scans
+                // Unresolved wifi_scans stay (no extra filter needed)
+            } else {
+                // Non-wifi filter (gnss, ibeacon) - only tracker_data
+                $whereTd[]          = 'td.source = :src';
+                $paramsTd[':src']   = $sourceFilter;
+                // Exclude unresolved wifi_scans
                 $whereWs[] = '0 = 1';
             }
         }
 
-        $whereTdSql = 'WHERE ' . implode(' AND ', $whereTd);
-        $whereWsSql = $whereWs ? 'WHERE ' . implode(' AND ', $whereWs) : '';
+        $whereTdSql = $whereTd ? 'WHERE ' . implode(' AND ', $whereTd) : '';
+        $whereWsSql = 'WHERE ' . implode(' AND ', $whereWs);
 
         // Count total
         $countSql = "
@@ -630,12 +629,17 @@ if ($action === 'get_raw_records' && $_SERVER['REQUEST_METHOD'] === 'GET') {
         $offset     = ($page - 1) * $perPage;
 
         // Fetch unified records
+        // For tracker_data WiFi records, LEFT JOIN wifi_scans to get macs_json
         $sql = "
             SELECT 'tracker' as record_type, td.id, td.timestamp, td.latitude, td.longitude, td.source,
                    td.device_id, td.raw_wifi_macs, td.primary_mac,
-                   d.name as device_name, NULL as macs_json, 0 as mac_count, 1 as resolved
+                   d.name as device_name,
+                   wsj.macs_json as macs_json,
+                   COALESCE(wsj.mac_count, 0) as mac_count,
+                   1 as resolved
             FROM tracker_data td
             LEFT JOIN devices d ON td.device_id = d.id
+            LEFT JOIN wifi_scans wsj ON wsj.tracker_data_id = td.id
             $whereTdSql
             UNION ALL
             SELECT 'wifi_scan' as record_type, ws.id, ws.timestamp, ws.latitude, ws.longitude, ws.source,
