@@ -567,30 +567,31 @@ function point_in_polygon(float $lat, float $lng, array $polygon): bool {
 function load_active_perimeters(PDO $pdo, ?int $deviceId = null): array {
     $perimeters = [];
     try {
-        // Check if device_id column exists
+        // Check which columns exist in perimeters table
         $hasDeviceIdCol = false;
+        $hasNotificationEmailCol = false;
         $cols = $pdo->query("SELECT column_name FROM information_schema.columns WHERE table_name = 'perimeters'");
         while ($c = $cols->fetch()) {
-            if ($c['column_name'] === 'device_id') { $hasDeviceIdCol = true; break; }
+            if ($c['column_name'] === 'device_id') { $hasDeviceIdCol = true; }
+            if ($c['column_name'] === 'notification_email') { $hasNotificationEmailCol = true; }
         }
+
+        // Build SELECT columns dynamically based on what exists
+        $selectCols = 'id, name, polygon, alert_on_enter, alert_on_exit';
+        if ($hasNotificationEmailCol) $selectCols .= ', notification_email';
+        if ($hasDeviceIdCol) $selectCols .= ', device_id';
 
         // Load perimeters: global (device_id IS NULL) + device-specific
         if ($hasDeviceIdCol && $deviceId !== null) {
             $stmt = $pdo->prepare("
-                SELECT id, name, polygon, alert_on_enter, alert_on_exit, notification_email, device_id
+                SELECT $selectCols
                 FROM perimeters
                 WHERE is_active = 1 AND (device_id IS NULL OR device_id = :did)
             ");
             $stmt->execute([':did' => $deviceId]);
-        } elseif ($hasDeviceIdCol) {
-            $stmt = $pdo->query("
-                SELECT id, name, polygon, alert_on_enter, alert_on_exit, notification_email, device_id
-                FROM perimeters
-                WHERE is_active = 1
-            ");
         } else {
             $stmt = $pdo->query("
-                SELECT id, name, polygon, alert_on_enter, alert_on_exit, notification_email
+                SELECT $selectCols
                 FROM perimeters
                 WHERE is_active = 1
             ");
@@ -614,8 +615,8 @@ function load_active_perimeters(PDO $pdo, ?int $deviceId = null): array {
                 ];
             }
 
-            // Backwards compatibility: if no emails in new table, use legacy field
-            if (empty($emails) && !empty($r['notification_email'])) {
+            // Backwards compatibility: if no emails in new table, use legacy notification_email field
+            if (empty($emails) && $hasNotificationEmailCol && !empty($r['notification_email'])) {
                 $emails[] = [
                     'email' => $r['notification_email'],
                     'alert_on_enter' => (bool)$r['alert_on_enter'],
@@ -630,7 +631,7 @@ function load_active_perimeters(PDO $pdo, ?int $deviceId = null): array {
                 'polygon' => json_decode($r['polygon'], true),
                 'alert_on_enter' => (bool)$r['alert_on_enter'],
                 'alert_on_exit' => (bool)$r['alert_on_exit'],
-                'notification_email' => $r['notification_email'],
+                'notification_email' => $hasNotificationEmailCol ? ($r['notification_email'] ?? null) : null,
                 'device_id' => $perDeviceId,
                 'emails' => $emails
             ];

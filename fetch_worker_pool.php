@@ -126,7 +126,7 @@ if ($deviceCount <= 5 && !$refetchDate) {
     if ($refetchDate) {
         $cmd .= ' --refetch-date=' . escapeshellarg($refetchDate);
     }
-    passthrough($cmd, $exitCode);
+    passthru($cmd, $exitCode);
     pool_log("Single process completed with exit code: $exitCode");
     flock($lockFp, LOCK_UN);
     fclose($lockFp);

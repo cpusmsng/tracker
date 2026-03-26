@@ -294,6 +294,15 @@ cd /var/www/html && /usr/local/bin/php -r "
 "
 echo ""
 
+# Ensure crontab is properly installed
+if [ -f /etc/cron.d/tracker-cron ]; then
+    chown root:root /etc/cron.d/tracker-cron
+    chmod 0644 /etc/cron.d/tracker-cron
+    echo "Crontab installed from /etc/cron.d/tracker-cron"
+else
+    echo "WARNING: /etc/cron.d/tracker-cron not found! Cron jobs will not run."
+fi
+
 # Touch log files
 touch /var/log/tracker/fetch.log /var/log/tracker/smart_refetch.log /var/log/tracker/php-error.log
 chown www-data:www-data /var/log/tracker/*.log
