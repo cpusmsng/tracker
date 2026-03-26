@@ -977,7 +977,7 @@ if ($action === 'retry_google_wifi_scan' && $_SERVER['REQUEST_METHOD'] === 'POST
         $parsed = json_decode($scan['macs_json'], true);
         if (!is_array($parsed) || empty($parsed)) respond(['ok' => false, 'error' => 'No MACs in scan']);
 
-        $GKEY = $CFG['GOOGLE_API_KEY'] ?? '';
+        $GKEY = getenv('GOOGLE_API_KEY') ?: '';
         if (!$GKEY) respond(['ok' => false, 'error' => 'Google API key not configured']);
 
         // Build WiFi access points for Google
