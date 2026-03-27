@@ -1026,6 +1026,18 @@ if ($action === 'retry_google_wifi_scan' && $_SERVER['REQUEST_METHOD'] === 'POST
             respond(['ok' => true, 'latitude' => null, 'longitude' => null, 'message' => 'No location in response']);
         }
 
+        // Reject results with poor accuracy (>500m means Google is guessing)
+        $maxAccuracy = (int)(getenv('GOOGLE_MAX_ACCURACY_METERS') ?: 500);
+        if ($acc !== null && $acc > $maxAccuracy) {
+            respond([
+                'ok' => true,
+                'latitude' => null,
+                'longitude' => null,
+                'accuracy' => (float)$acc,
+                'message' => "Presnosť príliš nízka ({$acc}m > {$maxAccuracy}m limit). Výsledok zamietnutý."
+            ]);
+        }
+
         // Update wifi_scan as resolved
         $upd = $pdo->prepare("UPDATE wifi_scans SET resolved = 1, latitude = :lat, longitude = :lng, source = 'wifi-google' WHERE id = :id");
         $upd->execute([':lat' => $lat, ':lng' => $lng, ':id' => $scanId]);

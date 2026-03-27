@@ -1747,6 +1747,15 @@ async function loadHistory(dateStr) {
       byDevice[did].push(p);
     });
 
+    // Group previous day's data by device for trail connection
+    const prevByDevice = {};
+    if (prevData && prevData.length > 0) {
+      prevData.forEach(p => {
+        const did = p.device_id || 'unknown';
+        prevByDevice[did] = p; // keep only last point per device (array is sorted ASC)
+      });
+    }
+
     // Clear device layers
     Object.values(deviceLayers).forEach(l => { l.clearLayers(); map.removeLayer(l); });
     deviceLayers = {};
@@ -1756,7 +1765,13 @@ async function loadHistory(dateStr) {
       const pts = byDevice[did];
       const color = pts[0].device_color || getDeviceColor(parseInt(did)) || '#3388ff';
       const name = pts[0].device_name || getDeviceName(parseInt(did));
-      const lls = pts.map(p => [p.latitude, p.longitude]);
+      let lls = pts.map(p => [p.latitude, p.longitude]);
+
+      // Prepend previous day's last point to connect the trail
+      const prevPt = prevByDevice[did];
+      if (prevPt && prevPt.latitude && prevPt.longitude) {
+        lls = [[prevPt.latitude, prevPt.longitude], ...lls];
+      }
       allBounds.push(...lls);
 
       const layer = L.layerGroup();
@@ -1782,7 +1797,11 @@ async function loadHistory(dateStr) {
   } else {
     // Single device or legacy mode
     const routeColor = (deviceViewMode === 'single' && activeDeviceId) ? getDeviceColor(activeDeviceId) : '#3388ff';
-    const latlngs = data.map(p => [p.latitude, p.longitude]);
+    let latlngs = data.map(p => [p.latitude, p.longitude]);
+    // Prepend previous day's last point to connect the trail
+    if (lastPrevPoint && lastPrevPoint.latitude && lastPrevPoint.longitude) {
+      latlngs = [[lastPrevPoint.latitude, lastPrevPoint.longitude], ...latlngs];
+    }
     const line = L.polyline(latlngs, { color: routeColor, weight:3 }).addTo(trackLayer);
     map.fitBounds(line.getBounds(), { padding:[20,20] });
   }
