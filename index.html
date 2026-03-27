@@ -537,6 +537,24 @@
                   </div>
                 </div>
               </div>
+
+              <!-- Google Max Accuracy -->
+              <div class="setting-group">
+                <div class="setting-header">
+                  <label for="googleMaxAccuracy">
+                    <strong>Max. presnosť Google (m)</strong>
+                    <span class="setting-current" id="currentGoogleMaxAccuracy">—</span>
+                  </label>
+                  <button type="button" class="btn-default" data-setting="google_max_accuracy" data-default="500">Predvolené</button>
+                </div>
+                <div class="setting-description">
+                  Výsledky z Google Geolocation s presnosťou horšou ako táto hodnota budú zamietnuté. Nízka hodnota = prísnejšie (len presné výsledky). Keď Google nepozná WiFi siete, vracia polohu servera (~2000m presnosť).
+                </div>
+                <div class="setting-input-group">
+                  <input type="number" id="googleMaxAccuracy" min="50" max="10000" step="50" placeholder="500">
+                  <span class="input-suffix">m</span>
+                </div>
+              </div>
             </div>
           </div>
 

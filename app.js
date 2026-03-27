@@ -1404,6 +1404,7 @@ async function loadCurrentSettings() {
       $('#uniqueBucketMinutes').value = data.unique_bucket_minutes || 30;
       $('#macCacheMaxAgeDays').value = data.mac_cache_max_age_days || 3600;
       $('#googleForce').checked = data.google_force === '1' || data.google_force === 1;
+      $('#googleMaxAccuracy').value = data.google_max_accuracy || 500;
       $('#logLevel').value = data.log_level || 'info';
       $('#fetchFrequencyMinutes').value = data.fetch_frequency_minutes || 5;
       $('#smartRefetchFrequencyMinutes').value = data.smart_refetch_frequency_minutes || 30;
@@ -1418,6 +1419,7 @@ async function loadCurrentSettings() {
       $('#currentUniqueBucketMinutes').textContent = `(${data.unique_bucket_minutes || 30} min)`;
       $('#currentMacCacheMaxAgeDays').textContent = `(${data.mac_cache_max_age_days || 3600} dní)`;
       $('#currentGoogleForce').textContent = (data.google_force === '1' || data.google_force === 1) ? '(Zapnuté)' : '(Vypnuté)';
+      $('#currentGoogleMaxAccuracy').textContent = `(${data.google_max_accuracy || 500} m)`;
       const logLevelLabels = { 'error': 'Error', 'info': 'Info', 'debug': 'Debug' };
       $('#currentLogLevel').textContent = `(${logLevelLabels[data.log_level] || 'Info'})`;
       $('#currentFetchFrequencyMinutes').textContent = `(${data.fetch_frequency_minutes || 5} min)`;
@@ -1448,6 +1450,7 @@ async function saveSettings() {
       unique_bucket_minutes: parseInt($('#uniqueBucketMinutes').value) || 30,
       mac_cache_max_age_days: parseInt($('#macCacheMaxAgeDays').value) || 3600,
       google_force: $('#googleForce').checked ? '1' : '0',
+      google_max_accuracy: parseInt($('#googleMaxAccuracy').value) || 500,
       log_level: $('#logLevel').value || 'info',
       fetch_frequency_minutes: parseInt($('#fetchFrequencyMinutes').value) || 5,
       smart_refetch_frequency_minutes: parseInt($('#smartRefetchFrequencyMinutes').value) || 30,
