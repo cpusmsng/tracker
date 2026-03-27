@@ -2218,19 +2218,24 @@ if ($action === 'invalidate_mac' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         $pdo = db();
 
         // Mark the MAC as negative in the cache (no location)
-        $stmt = $pdo->prepare('UPDATE mac_locations SET lat = NULL, lng = NULL, negative = 1, updated_at = NOW() WHERE mac = ?');
+        $stmt = $pdo->prepare('UPDATE mac_locations SET latitude = NULL, longitude = NULL, last_queried = NOW() WHERE mac_address = ?');
         $stmt->execute([$mac]);
 
         // If mac_locations didn't have this MAC, insert it as negative
         if ($stmt->rowCount() === 0) {
-            $stmt = $pdo->prepare('INSERT INTO mac_locations (mac, lat, lng, negative, created_at, updated_at) VALUES (?, NULL, NULL, 1, NOW(), NOW()) ON CONFLICT (mac) DO UPDATE SET lat = NULL, lng = NULL, negative = 1, updated_at = NOW()');
+            $stmt = $pdo->prepare('INSERT INTO mac_locations (mac_address, latitude, longitude, last_queried) VALUES (?, NULL, NULL, NOW()) ON CONFLICT(mac_address) DO UPDATE SET latitude = NULL, longitude = NULL, last_queried = NOW()');
             $stmt->execute([$mac]);
         }
 
-        // Clear coordinates from all tracker_data entries with this MAC
-        $stmt = $pdo->prepare('UPDATE tracker_data SET latitude = NULL, longitude = NULL WHERE raw_wifi_macs = ?');
+        // Clear coordinates from all tracker_data entries where this MAC is primary
+        $stmt = $pdo->prepare('UPDATE tracker_data SET latitude = NULL, longitude = NULL WHERE primary_mac = ?');
         $stmt->execute([$mac]);
         $affectedPositions = $stmt->rowCount();
+
+        // Also clear entries where this MAC appears in raw_wifi_macs
+        $stmt = $pdo->prepare('UPDATE tracker_data SET latitude = NULL, longitude = NULL WHERE raw_wifi_macs LIKE ? AND primary_mac IS NULL');
+        $stmt->execute(['%' . $mac . '%']);
+        $affectedPositions += $stmt->rowCount();
 
         respond([
             'ok' => true,

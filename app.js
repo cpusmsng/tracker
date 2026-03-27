@@ -49,6 +49,30 @@ let isRedirecting = false; // Prevents content flash during redirect
 let hasGoogleApi = false;
 const DEBUG_MODE = new URLSearchParams(window.location.search).has('debug');
 
+// Overlay stack management - each opened overlay gets a higher z-index
+const overlayStack = [];
+function pushOverlay(overlayEl) {
+  // Hide previous overlay's backdrop but keep it in DOM
+  if (overlayStack.length > 0) {
+    overlayStack[overlayStack.length - 1].style.background = 'transparent';
+  }
+  const zBase = 2000 + overlayStack.length * 10;
+  overlayEl.style.zIndex = zBase;
+  overlayEl.classList.remove('hidden');
+  overlayStack.push(overlayEl);
+}
+function popOverlay(overlayEl) {
+  overlayEl.classList.add('hidden');
+  overlayEl.style.zIndex = '';
+  overlayEl.style.background = '';
+  const idx = overlayStack.indexOf(overlayEl);
+  if (idx !== -1) overlayStack.splice(idx, 1);
+  // Restore backdrop on the new top overlay
+  if (overlayStack.length > 0) {
+    overlayStack[overlayStack.length - 1].style.background = '';
+  }
+}
+
 // URL parameters for deep linking (from email alerts)
 const urlParams = new URLSearchParams(window.location.search);
 const URL_LAT = urlParams.get('lat') ? parseFloat(urlParams.get('lat')) : null;
@@ -1790,6 +1814,7 @@ async function loadHistory(dateStr) {
             radius: 4, fillColor: color, color: '#fff', weight: 1, fillOpacity: 0.8
           })
           .bindTooltip(`${name}: ${new Date(p.timestamp).toLocaleString('sk-SK')}`, { permanent: false, opacity: 1 })
+          .bindPopup(`<b>${new Date(p.timestamp).toLocaleString('sk-SK')}</b><br>${p.source || ''}<br><a href="#" onclick="openPositionEditModal(${p.id});return false;">✎ Upraviť</a>`)
           .addTo(layer);
 
           marker.on('click', () => {
@@ -1822,6 +1847,7 @@ async function loadHistory(dateStr) {
           radius: 4, fillColor: singleColor, color: '#fff', weight: 1, fillOpacity: 0.8
         })
         .bindTooltip(new Date(p.timestamp).toLocaleString('sk-SK'), { permanent: false, opacity: 1 })
+        .bindPopup(`<b>${new Date(p.timestamp).toLocaleString('sk-SK')}</b><br>${p.source || ''}<br><a href="#" onclick="openPositionEditModal(${p.id});return false;">✎ Upraviť</a>`)
         .addTo(trackLayer);
         marker.on('click', () => { highlightTableRowByCoords(p.latitude, p.longitude); highlightMarker(marker); });
         circleMarkers.push({ marker, lat: p.latitude, lng: p.longitude, deviceColor: singleColor });
@@ -2208,7 +2234,7 @@ let positionEditNewMarker = null;
 let currentEditPosition = null;
 
 function openPositionEditOverlay() {
-  $('#positionEditOverlay').classList.remove('hidden');
+  pushOverlay($('#positionEditOverlay'));
 
   // Reset Google comparison UI
   $('#googleComparisonResult').style.display = 'none';
@@ -2239,7 +2265,7 @@ function openPositionEditOverlay() {
 }
 
 function closePositionEditOverlay() {
-  $('#positionEditOverlay').classList.add('hidden');
+  popOverlay($('#positionEditOverlay'));
   // Clear markers
   if (positionEditCurrentMarker) {
     positionEditMap.removeLayer(positionEditCurrentMarker);
@@ -2560,12 +2586,11 @@ async function savePositionEdit() {
 }
 
 async function invalidateMacCache() {
-  if (!currentEditPosition || !currentEditPosition.mac_address) {
+  const mac = currentEditPosition?.primary_mac || currentEditPosition?.all_macs?.split(',')[0]?.trim();
+  if (!mac) {
     alert('Tento záznam nemá MAC adresu');
     return;
   }
-
-  const mac = currentEditPosition.mac_address;
   if (!confirm(`Naozaj chcete zneplatniť cache pre MAC adresu ${mac}?\n\nToto odstráni súradnice zo všetkých záznamov s touto MAC adresou a označí ju ako neplatnú.`)) {
     return;
   }
@@ -5029,7 +5054,7 @@ function updateDeviceLayerVisibility() {
 function openDeviceManagement() {
   const overlay = $('#deviceManagementOverlay');
   if (overlay) {
-    overlay.classList.remove('hidden');
+    pushOverlay(overlay);
     loadDeviceManagementList();
 
     // Close on background click (consistent with other overlays)
@@ -5041,7 +5066,7 @@ function openDeviceManagement() {
 
 function closeDeviceManagement() {
   const overlay = $('#deviceManagementOverlay');
-  if (overlay) overlay.classList.add('hidden');
+  if (overlay) popOverlay(overlay);
 }
 
 async function loadDeviceManagementList() {
@@ -5229,7 +5254,7 @@ function openDataBrowser(deviceId, deviceName) {
   overlay.querySelector('#dataBrowserTitle').textContent = `Dáta: ${deviceName}`;
   overlay.querySelector('#dataBrowserDate').value = fmt(new Date());
   overlay.querySelector('#dataBrowserSourceFilter').value = 'all';
-  overlay.classList.remove('hidden');
+  pushOverlay(overlay);
 
   overlay.onclick = (e) => {
     if (e.target === overlay) closeDataBrowser();
@@ -5240,7 +5265,7 @@ function openDataBrowser(deviceId, deviceName) {
 
 function closeDataBrowser() {
   const overlay = $('#dataBrowserOverlay');
-  if (overlay) overlay.classList.add('hidden');
+  if (overlay) popOverlay(overlay);
 }
 
 async function deletePositionCoords(recordId, recordType) {
