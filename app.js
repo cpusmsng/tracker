@@ -2303,7 +2303,12 @@ async function openPositionEditModal(positionId) {
     const result = await apiGet(`${API}?action=get_position_detail&id=${positionId}`);
 
     if (!result.ok) {
-      alert(`Chyba: ${result.error || 'Nepodarilo sa načítať záznam'}`);
+      if (result.error?.includes('not found')) {
+        alert('Tento záznam už neexistuje (bol zmazaný alebo refetchnutý). Obnovte mapu.');
+        try { await loadHistory(fmt(currentDate)); } catch(e) {}
+      } else {
+        alert(`Chyba: ${result.error || 'Nepodarilo sa načítať záznam'}`);
+      }
       return;
     }
 
@@ -2385,7 +2390,12 @@ async function openPositionEditModal(positionId) {
     }, 200);
 
   } catch (err) {
-    alert(`Chyba pri načítavaní záznamu: ${err.message}`);
+    if (err.message?.includes('404')) {
+      alert('Tento záznam už neexistuje (bol zmazaný alebo refetchnutý). Obnovte mapu.');
+      try { await loadHistory(fmt(currentDate)); } catch(e) {}
+    } else {
+      alert(`Chyba pri načítavaní záznamu: ${err.message}`);
+    }
   }
 }
 
@@ -5297,12 +5307,12 @@ async function deletePositionCoords(recordId, recordType) {
 async function triggerRefetchFromDataBrowser() {
   const date = $('#dataBrowserDate')?.value;
   if (!date) return;
-  if (!confirm(`Spustiť refetch dát zo SenseCraft pre ${date}?`)) return;
+  if (!confirm(`Spustiť refetch dát zo SenseCraft pre zariadenie "${dataBrowserDeviceName}" na deň ${date}?\n\nExistujúce dáta tohto zariadenia pre tento deň budú nahradené.`)) return;
 
   try {
     const res = await apiPost('refetch_day', { date, device_id: dataBrowserDeviceId });
     if (res.ok) {
-      alert(`Refetch spustený pre ${date}. Počkajte 1-2 minúty a potom obnovte.`);
+      alert(`Refetch spustený pre "${dataBrowserDeviceName}" na ${date}. Počkajte 1-2 minúty a potom obnovte.`);
       // Auto-reload after 30 seconds
       setTimeout(() => loadDataBrowserRecords(), 30000);
     } else {
@@ -5357,7 +5367,6 @@ async function loadDataBrowserRecords() {
           diagHtml += '</div>';
         }
       } catch (e) { /* ignore diagnostic errors */ }
-      diagHtml += `<div style="margin-top:14px;"><button class="btn-sm btn-edit" onclick="triggerRefetchFromDataBrowser()">Znovu načítať dáta zo SenseCraft</button></div>`;
       diagHtml += '</td></tr>';
       tbody.innerHTML = diagHtml;
       updateDataBrowserPagination(pagination);
