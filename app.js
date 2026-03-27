@@ -5592,12 +5592,17 @@ async function retryGoogleForWifiScan(scanId) {
     const res = await apiPost('retry_google_wifi_scan', { scan_id: scanId });
     if (res.ok) {
       let msg = 'Google API odpoveď:\n';
-      if (res.latitude !== undefined && res.latitude !== null) {
+      if (res.message) {
+        // Accuracy rejection or other message from server
+        msg += res.message;
+        if (res.accuracy) msg += `\n(Presnosť: ${Math.round(res.accuracy)} m)`;
+      } else if (res.latitude !== undefined && res.latitude !== null) {
         msg += `Poloha: ${res.latitude.toFixed(5)}, ${res.longitude.toFixed(5)}\n`;
-        msg += `Presnosť: ${res.accuracy || '—'} m\n`;
+        msg += `Presnosť: ${res.accuracy ? Math.round(res.accuracy) + ' m' : '—'}\n`;
         msg += `Aktualizovaných MAC: ${res.macs_updated || 0}`;
       } else {
-        msg += 'Žiadna poloha vrátená - Google nerozpoznal tieto WiFi siete';
+        msg += 'Žiadna poloha vrátená - Google nerozpoznal tieto WiFi siete.\n';
+        msg += '(Keď Google nepozná MAC adresy, vracia polohu servera podľa IP.)';
       }
       alert(msg);
       loadDataBrowserRecords();

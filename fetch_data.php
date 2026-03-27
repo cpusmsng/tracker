@@ -533,6 +533,14 @@ function google_geolocate(string $apiKey, array $aps, int $minAps, string $times
     if (isset($j['location']['lat'],$j['location']['lng'])) {
         $acc = isset($j['accuracy']) ? (float)$j['accuracy'] : null;
         debug_log("  GOOGLE SUCCESS: lat=".$j['location']['lat']." lng=".$j['location']['lng']." accuracy=".($acc??'null')."m");
+
+        // Reject results with poor accuracy (server IP-based fallback)
+        $maxAcc = (int)(getenv('GOOGLE_MAX_ACCURACY_METERS') ?: 500);
+        if ($acc !== null && $acc > $maxAcc) {
+            info_log("  GOOGLE REJECTED: accuracy={$acc}m exceeds limit={$maxAcc}m (likely IP-based fallback)");
+            return null;
+        }
+
         return [ (float)$j['location']['lat'], (float)$j['location']['lng'], $acc ];
     }
     
