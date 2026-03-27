@@ -1086,6 +1086,7 @@ if ($action === 'retry_google_wifi_scan' && $_SERVER['REQUEST_METHOD'] === 'POST
 if ($action === 'refetch_day' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     $j = json_body();
     $date = trim((string)($j['date'] ?? ''));
+    $deviceId = isset($j['device_id']) ? (int)$j['device_id'] : null;
     
     if ($date === '') {
         respond(['ok'=>false, 'error'=>'Missing date parameter'], 400);
@@ -1115,12 +1116,14 @@ if ($action === 'refetch_day' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         $phpBin = 'php';
     }
     
-    // Spusti proces na pozadÃ­ s parametrom --refetch-date
+    // Spusti proces na pozadí s parametrom --refetch-date
+    $deviceArg = $deviceId ? ' --device-ids=' . escapeshellarg((string)$deviceId) : '';
     $cmd = sprintf(
-        '%s %s --refetch-date=%s >> %s 2>&1 &',
+        '%s %s --refetch-date=%s%s >> %s 2>&1 &',
         escapeshellarg($phpBin),
         escapeshellarg($scriptPath),
         escapeshellarg($dateStr),
+        $deviceArg,
         escapeshellarg($logFile)
     );
     
@@ -2227,14 +2230,14 @@ if ($action === 'invalidate_mac' && $_SERVER['REQUEST_METHOD'] === 'POST') {
             $stmt->execute([$mac]);
         }
 
-        // Clear coordinates from all tracker_data entries where this MAC is primary
-        $stmt = $pdo->prepare('UPDATE tracker_data SET latitude = NULL, longitude = NULL WHERE primary_mac = ?');
+        // Delete tracker_data entries where this MAC is primary (NOT NULL constraint prevents nulling coords)
+        $stmt = $pdo->prepare('DELETE FROM tracker_data WHERE primary_mac = ?');
         $stmt->execute([$mac]);
         $affectedPositions = $stmt->rowCount();
 
-        // Also clear entries where this MAC appears in raw_wifi_macs
-        $stmt = $pdo->prepare('UPDATE tracker_data SET latitude = NULL, longitude = NULL WHERE raw_wifi_macs LIKE ? AND primary_mac IS NULL');
-        $stmt->execute(['%' . $mac . '%']);
+        // Also delete entries where this MAC appears in raw_wifi_macs
+        $stmt = $pdo->prepare('DELETE FROM tracker_data WHERE raw_wifi_macs LIKE ? AND (primary_mac IS NULL OR primary_mac = ?)');
+        $stmt->execute(['%' . $mac . '%', $mac]);
         $affectedPositions += $stmt->rowCount();
 
         respond([

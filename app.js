@@ -2547,17 +2547,22 @@ async function loadHistoryDayOnMap(date) {
 
 async function savePositionEdit() {
   const positionId = parseInt($('#editPositionId').value);
-  const newLat = parseFloat($('#editNewLat').value);
-  const newLng = parseFloat($('#editNewLng').value);
+  let newLat = parseFloat($('#editNewLat').value);
+  let newLng = parseFloat($('#editNewLng').value);
 
   if (!positionId) {
     alert('Chýba ID záznamu');
     return;
   }
 
+  // If no new coordinates, use current ones (allow save without changes)
   if (isNaN(newLat) || isNaN(newLng)) {
-    alert('Zadajte nové súradnice (kliknutím na mapu alebo manuálne)');
-    return;
+    newLat = parseFloat($('#editCurrentLat').value);
+    newLng = parseFloat($('#editCurrentLng').value);
+    if (isNaN(newLat) || isNaN(newLng)) {
+      alert('Žiadne súradnice na uloženie');
+      return;
+    }
   }
 
   if (newLat < -90 || newLat > 90) {
@@ -5295,7 +5300,7 @@ async function triggerRefetchFromDataBrowser() {
   if (!confirm(`Spustiť refetch dát zo SenseCraft pre ${date}?`)) return;
 
   try {
-    const res = await apiPost('refetch_day', { date });
+    const res = await apiPost('refetch_day', { date, device_id: dataBrowserDeviceId });
     if (res.ok) {
       alert(`Refetch spustený pre ${date}. Počkajte 1-2 minúty a potom obnovte.`);
       // Auto-reload after 30 seconds
