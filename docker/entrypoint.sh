@@ -294,25 +294,9 @@ cd /var/www/html && /usr/local/bin/php -r "
 "
 echo ""
 
-# Install crontab - use root crontab directly (more reliable than cron.d in Docker)
-# Convert cron.d format (with user field) to standard crontab format
-if [ -f /etc/cron.d/tracker-cron ]; then
-    # Also keep cron.d file with proper permissions
-    chown root:root /etc/cron.d/tracker-cron
-    chmod 0644 /etc/cron.d/tracker-cron
-fi
-
-# Install as root crontab with su to www-data for each job
-cat > /tmp/root-crontab <<'CRONTAB'
-SHELL=/bin/bash
-PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-
-* * * * * su -s /bin/bash www-data -c 'cd /var/www/html && /usr/local/bin/php fetch_worker_pool.php >> /var/log/tracker/fetch.log 2>&1'
-*/30 * * * * su -s /bin/bash www-data -c 'cd /var/www/html && /usr/local/bin/php smart_refetch_v2.php >> /var/log/tracker/smart_refetch.log 2>&1'
-CRONTAB
-crontab /tmp/root-crontab
-rm /tmp/root-crontab
-echo "Crontab installed for root ($(crontab -l 2>/dev/null | grep -c '^[^#]') jobs)"
+# Scheduling is handled by supervisord (fetch-loop.sh and smart-refetch-loop.sh)
+# Remove any leftover crontabs to avoid duplicate execution
+crontab -r 2>/dev/null || true
 
 # Touch log files
 touch /var/log/tracker/fetch.log /var/log/tracker/smart_refetch.log /var/log/tracker/php-error.log

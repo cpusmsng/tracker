@@ -1623,6 +1623,9 @@ async function loadHistory(dateStr) {
     lastPositionMarker.remove();
     lastPositionMarker = null;
   }
+  // Clean up device layers from previous load
+  Object.values(deviceLayers).forEach(l => { l.clearLayers(); map.removeLayer(l); });
+  deviceLayers = {};
   // Clean up cluster markers from previous load
   if (window._clusterMarkers) {
     window._clusterMarkers.forEach(m => m.remove());
@@ -1820,6 +1823,7 @@ async function loadHistory(dateStr) {
           marker.on('click', () => {
             highlightTableRowByCoords(p.latitude, p.longitude);
             highlightMarker(marker);
+            marker.openPopup();
           });
 
           circleMarkers.push({ marker, lat: p.latitude, lng: p.longitude, deviceColor: color });
@@ -1849,7 +1853,7 @@ async function loadHistory(dateStr) {
         .bindTooltip(new Date(p.timestamp).toLocaleString('sk-SK'), { permanent: false, opacity: 1 })
         .bindPopup(`<b>${new Date(p.timestamp).toLocaleString('sk-SK')}</b><br>${p.source || ''}<br><a href="#" onclick="openPositionEditModal(${p.id});return false;">✎ Upraviť</a>`)
         .addTo(trackLayer);
-        marker.on('click', () => { highlightTableRowByCoords(p.latitude, p.longitude); highlightMarker(marker); });
+        marker.on('click', () => { highlightTableRowByCoords(p.latitude, p.longitude); highlightMarker(marker); marker.openPopup(); });
         circleMarkers.push({ marker, lat: p.latitude, lng: p.longitude, deviceColor: singleColor });
       }
     });
