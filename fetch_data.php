@@ -1733,23 +1733,22 @@ try {
         global $REFETCH_MODE, $REFETCH_BREACHES;
         if (empty($activePerimeters)) return;
 
+        // Skip perimeter checking entirely in refetch mode - historical data should not trigger alerts
+        if ($REFETCH_MODE) {
+            $currentStates = get_position_perimeter_states($lat, $lng, $activePerimeters);
+            $previousPerimeterStates = $currentStates;
+            return;
+        }
+
         $currentStates = get_position_perimeter_states($lat, $lng, $activePerimeters);
         $breaches = check_perimeter_breaches($pdo, $lat, $lng, $iso, $activePerimeters, $currentStates, $previousPerimeterStates, $DEVICE_NAME);
 
         foreach ($breaches as $breach) {
-            if ($REFETCH_MODE) {
-                // In refetch mode, collect breaches for summary email
-                $REFETCH_BREACHES[] = $breach;
-                record_perimeter_alert($pdo, $breach, false); // Mark as not yet sent
-                $perimeterAlerts++;
-                debug_log("    BREACH COLLECTED for summary: {$breach['type']} '{$breach['perimeter']['name']}'");
-            } else {
-                // Normal mode: send individual email
-                $emailSent = send_perimeter_alert_email($breach);
-                record_perimeter_alert($pdo, $breach, $emailSent);
-                $perimeterAlerts++;
-                if ($emailSent) $emailsSent++;
-            }
+            // Normal mode: send individual email
+            $emailSent = send_perimeter_alert_email($breach);
+            record_perimeter_alert($pdo, $breach, $emailSent);
+            $perimeterAlerts++;
+            if ($emailSent) $emailsSent++;
         }
 
         // Update previous states for next iteration

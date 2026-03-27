@@ -2595,7 +2595,7 @@ async function savePositionEdit() {
       alert('Poloha bola úspešne aktualizovaná');
       closePositionEditOverlay();
       // Reload the current day's data
-      loadData(fmt(currentDate));
+      loadHistory(fmt(currentDate));
     } else {
       alert(`Chyba: ${result.error || 'Nepodarilo sa uložiť zmeny'}`);
     }
@@ -2624,7 +2624,7 @@ async function invalidateMacCache() {
       alert(result.message || 'MAC cache bola zneplatnená');
       closePositionEditOverlay();
       // Reload the current day's data
-      loadData(fmt(currentDate));
+      loadHistory(fmt(currentDate));
     } else {
       alert(`Chyba: ${result.error || 'Nepodarilo sa zneplatniť cache'}`);
     }
@@ -2731,7 +2731,7 @@ async function acceptGoogleCoordinates() {
 
       alert('Súradnice boli aktualizované na Google hodnoty');
       closePositionEditOverlay();
-      loadData(fmt(currentDate));
+      loadHistory(fmt(currentDate));
     } else {
       alert('Chyba: ' + (result.error || 'Nepodarilo sa aktualizovať súradnice'));
     }
