@@ -46,7 +46,32 @@ const SESSION_DURATION = 24 * 60 * 60 * 1000; // 24 hodín
 let currentUser = null;
 let ssoEnabled = false;
 let isRedirecting = false; // Prevents content flash during redirect
+let hasGoogleApi = false;
 const DEBUG_MODE = new URLSearchParams(window.location.search).has('debug');
+
+// Overlay stack management - each opened overlay gets a higher z-index
+const overlayStack = [];
+function pushOverlay(overlayEl) {
+  // Hide previous overlay's backdrop but keep it in DOM
+  if (overlayStack.length > 0) {
+    overlayStack[overlayStack.length - 1].style.background = 'transparent';
+  }
+  const zBase = 2000 + overlayStack.length * 10;
+  overlayEl.style.zIndex = zBase;
+  overlayEl.classList.remove('hidden');
+  overlayStack.push(overlayEl);
+}
+function popOverlay(overlayEl) {
+  overlayEl.classList.add('hidden');
+  overlayEl.style.zIndex = '';
+  overlayEl.style.background = '';
+  const idx = overlayStack.indexOf(overlayEl);
+  if (idx !== -1) overlayStack.splice(idx, 1);
+  // Restore backdrop on the new top overlay
+  if (overlayStack.length > 0) {
+    overlayStack[overlayStack.length - 1].style.background = '';
+  }
+}
 
 // URL parameters for deep linking (from email alerts)
 const urlParams = new URLSearchParams(window.location.search);
@@ -241,14 +266,11 @@ async function handleSSOAuth(loginUrl) {
   };
 
   try {
-    console.log('[SSO] v2 - Checking authentication...');
-
     const authRes = await fetch(`${API}?action=auth_me`, {
       credentials: 'include'
     });
 
     const authText = await authRes.text();
-    console.log('[SSO] Raw response:', authText.substring(0, 300));
 
     // Check if response is HTML (not JSON)
     if (authText.trim().startsWith('<')) {
@@ -266,11 +288,8 @@ async function handleSSOAuth(loginUrl) {
       return;
     }
 
-    console.log('[SSO] Parsed:', auth.ok, auth.authenticated, auth.user?.name);
-
     if (auth.ok && auth.authenticated && auth.user) {
       // User is authenticated via SSO - NOW show content
-      console.log('[SSO] SUCCESS - Authenticated as:', auth.user.name);
       currentUser = auth.user;
       showAuthenticatedContent(); // Show content only after confirmed auth
       hidePinOverlay();
@@ -283,7 +302,7 @@ async function handleSSOAuth(loginUrl) {
       window.addEventListener('focus', checkSSOSession);
     } else {
       // Not authenticated via SSO - DO NOT show content
-      console.log('[SSO] Not authenticated, debug:', auth.debug);
+      // SSO not authenticated
 
       // If debug mode, don't redirect
       if (DEBUG_MODE) {
@@ -425,6 +444,10 @@ function initAppAfterAuth() {
     initTheme();
     initializeApp();
     initPerimeterManagement();
+    // Preload Google API availability flag for data browser
+    apiGet(`${API}?action=get_settings`).then(s => {
+      if (s && s.ok && s.data) hasGoogleApi = !!s.data.has_google_api;
+    }).catch(() => {});
   }
 }
 
@@ -1368,16 +1391,12 @@ function closeSettingsOverlay() {
 }
 
 async function loadCurrentSettings() {
-  console.log('loadCurrentSettings called');
   try {
-    console.log('Fetching settings from API...');
     const settings = await apiGet(`${API}?action=get_settings`);
-    console.log('Settings response:', settings);
 
     if (settings && settings.ok) {
       const data = settings.data;
-      console.log('Settings data:', data);
-
+      hasGoogleApi = !!data.has_google_api;
       // Naplň form fields
       $('#hysteresisMeters').value = data.hysteresis_meters || 50;
       $('#hysteresisMinutes').value = data.hysteresis_minutes || 30;
@@ -1385,6 +1404,7 @@ async function loadCurrentSettings() {
       $('#uniqueBucketMinutes').value = data.unique_bucket_minutes || 30;
       $('#macCacheMaxAgeDays').value = data.mac_cache_max_age_days || 3600;
       $('#googleForce').checked = data.google_force === '1' || data.google_force === 1;
+      $('#googleMaxAccuracy').value = data.google_max_accuracy || 500;
       $('#logLevel').value = data.log_level || 'info';
       $('#fetchFrequencyMinutes').value = data.fetch_frequency_minutes || 5;
       $('#smartRefetchFrequencyMinutes').value = data.smart_refetch_frequency_minutes || 30;
@@ -1399,6 +1419,7 @@ async function loadCurrentSettings() {
       $('#currentUniqueBucketMinutes').textContent = `(${data.unique_bucket_minutes || 30} min)`;
       $('#currentMacCacheMaxAgeDays').textContent = `(${data.mac_cache_max_age_days || 3600} dní)`;
       $('#currentGoogleForce').textContent = (data.google_force === '1' || data.google_force === 1) ? '(Zapnuté)' : '(Vypnuté)';
+      $('#currentGoogleMaxAccuracy').textContent = `(${data.google_max_accuracy || 500} m)`;
       const logLevelLabels = { 'error': 'Error', 'info': 'Info', 'debug': 'Debug' };
       $('#currentLogLevel').textContent = `(${logLevelLabels[data.log_level] || 'Info'})`;
       $('#currentFetchFrequencyMinutes').textContent = `(${data.fetch_frequency_minutes || 5} min)`;
@@ -1410,9 +1431,8 @@ async function loadCurrentSettings() {
       // Initialize theme toggle in settings
       initTheme();
 
-      console.log('Settings loaded successfully');
     } else {
-      console.warn('Settings response not OK:', settings);
+      console.warn('Settings response not OK');
     }
   } catch (err) {
     console.error('Failed to load settings:', err);
@@ -1430,6 +1450,7 @@ async function saveSettings() {
       unique_bucket_minutes: parseInt($('#uniqueBucketMinutes').value) || 30,
       mac_cache_max_age_days: parseInt($('#macCacheMaxAgeDays').value) || 3600,
       google_force: $('#googleForce').checked ? '1' : '0',
+      google_max_accuracy: parseInt($('#googleMaxAccuracy').value) || 500,
       log_level: $('#logLevel').value || 'info',
       fetch_frequency_minutes: parseInt($('#fetchFrequencyMinutes').value) || 5,
       smart_refetch_frequency_minutes: parseInt($('#smartRefetchFrequencyMinutes').value) || 30,
@@ -1605,6 +1626,9 @@ async function loadHistory(dateStr) {
     lastPositionMarker.remove();
     lastPositionMarker = null;
   }
+  // Clean up device layers from previous load
+  Object.values(deviceLayers).forEach(l => { l.clearLayers(); map.removeLayer(l); });
+  deviceLayers = {};
   // Clean up cluster markers from previous load
   if (window._clusterMarkers) {
     window._clusterMarkers.forEach(m => m.remove());
@@ -1726,6 +1750,15 @@ async function loadHistory(dateStr) {
       byDevice[did].push(p);
     });
 
+    // Group previous day's data by device for trail connection
+    const prevByDevice = {};
+    if (prevData && prevData.length > 0) {
+      prevData.forEach(p => {
+        const did = p.device_id || 'unknown';
+        prevByDevice[did] = p; // keep only last point per device (array is sorted ASC)
+      });
+    }
+
     // Clear device layers
     Object.values(deviceLayers).forEach(l => { l.clearLayers(); map.removeLayer(l); });
     deviceLayers = {};
@@ -1735,7 +1768,13 @@ async function loadHistory(dateStr) {
       const pts = byDevice[did];
       const color = pts[0].device_color || getDeviceColor(parseInt(did)) || '#3388ff';
       const name = pts[0].device_name || getDeviceName(parseInt(did));
-      const lls = pts.map(p => [p.latitude, p.longitude]);
+      let lls = pts.map(p => [p.latitude, p.longitude]);
+
+      // Prepend previous day's last point to connect the trail
+      const prevPt = prevByDevice[did];
+      if (prevPt && prevPt.latitude && prevPt.longitude) {
+        lls = [[prevPt.latitude, prevPt.longitude], ...lls];
+      }
       allBounds.push(...lls);
 
       const layer = L.layerGroup();
@@ -1761,7 +1800,11 @@ async function loadHistory(dateStr) {
   } else {
     // Single device or legacy mode
     const routeColor = (deviceViewMode === 'single' && activeDeviceId) ? getDeviceColor(activeDeviceId) : '#3388ff';
-    const latlngs = data.map(p => [p.latitude, p.longitude]);
+    let latlngs = data.map(p => [p.latitude, p.longitude]);
+    // Prepend previous day's last point to connect the trail
+    if (lastPrevPoint && lastPrevPoint.latitude && lastPrevPoint.longitude) {
+      latlngs = [[lastPrevPoint.latitude, lastPrevPoint.longitude], ...latlngs];
+    }
     const line = L.polyline(latlngs, { color: routeColor, weight:3 }).addTo(trackLayer);
     map.fitBounds(line.getBounds(), { padding:[20,20] });
   }
@@ -1796,11 +1839,13 @@ async function loadHistory(dateStr) {
             radius: 4, fillColor: color, color: '#fff', weight: 1, fillOpacity: 0.8
           })
           .bindTooltip(`${name}: ${new Date(p.timestamp).toLocaleString('sk-SK')}`, { permanent: false, opacity: 1 })
+          .bindPopup(`<b>${new Date(p.timestamp).toLocaleString('sk-SK')}</b><br>${p.source || ''}<br><a href="#" onclick="openPositionEditModal(${p.id});return false;">✎ Upraviť</a>`)
           .addTo(layer);
 
           marker.on('click', () => {
             highlightTableRowByCoords(p.latitude, p.longitude);
             highlightMarker(marker);
+            marker.openPopup();
           });
 
           circleMarkers.push({ marker, lat: p.latitude, lng: p.longitude, deviceColor: color });
@@ -1828,8 +1873,9 @@ async function loadHistory(dateStr) {
           radius: 4, fillColor: singleColor, color: '#fff', weight: 1, fillOpacity: 0.8
         })
         .bindTooltip(new Date(p.timestamp).toLocaleString('sk-SK'), { permanent: false, opacity: 1 })
+        .bindPopup(`<b>${new Date(p.timestamp).toLocaleString('sk-SK')}</b><br>${p.source || ''}<br><a href="#" onclick="openPositionEditModal(${p.id});return false;">✎ Upraviť</a>`)
         .addTo(trackLayer);
-        marker.on('click', () => { highlightTableRowByCoords(p.latitude, p.longitude); highlightMarker(marker); });
+        marker.on('click', () => { highlightTableRowByCoords(p.latitude, p.longitude); highlightMarker(marker); marker.openPopup(); });
         circleMarkers.push({ marker, lat: p.latitude, lng: p.longitude, deviceColor: singleColor });
       }
     });
@@ -2214,7 +2260,7 @@ let positionEditNewMarker = null;
 let currentEditPosition = null;
 
 function openPositionEditOverlay() {
-  $('#positionEditOverlay').classList.remove('hidden');
+  pushOverlay($('#positionEditOverlay'));
 
   // Reset Google comparison UI
   $('#googleComparisonResult').style.display = 'none';
@@ -2245,7 +2291,7 @@ function openPositionEditOverlay() {
 }
 
 function closePositionEditOverlay() {
-  $('#positionEditOverlay').classList.add('hidden');
+  popOverlay($('#positionEditOverlay'));
   // Clear markers
   if (positionEditCurrentMarker) {
     positionEditMap.removeLayer(positionEditCurrentMarker);
@@ -2279,7 +2325,12 @@ async function openPositionEditModal(positionId) {
     const result = await apiGet(`${API}?action=get_position_detail&id=${positionId}`);
 
     if (!result.ok) {
-      alert(`Chyba: ${result.error || 'Nepodarilo sa načítať záznam'}`);
+      if (result.error?.includes('not found')) {
+        alert('Tento záznam už neexistuje (bol zmazaný alebo refetchnutý). Obnovte mapu.');
+        try { await loadHistory(fmt(currentDate)); } catch(e) {}
+      } else {
+        alert(`Chyba: ${result.error || 'Nepodarilo sa načítať záznam'}`);
+      }
       return;
     }
 
@@ -2361,7 +2412,12 @@ async function openPositionEditModal(positionId) {
     }, 200);
 
   } catch (err) {
-    alert(`Chyba pri načítavaní záznamu: ${err.message}`);
+    if (err.message?.includes('404')) {
+      alert('Tento záznam už neexistuje (bol zmazaný alebo refetchnutý). Obnovte mapu.');
+      try { await loadHistory(fmt(currentDate)); } catch(e) {}
+    } else {
+      alert(`Chyba pri načítavaní záznamu: ${err.message}`);
+    }
   }
 }
 
@@ -2523,17 +2579,22 @@ async function loadHistoryDayOnMap(date) {
 
 async function savePositionEdit() {
   const positionId = parseInt($('#editPositionId').value);
-  const newLat = parseFloat($('#editNewLat').value);
-  const newLng = parseFloat($('#editNewLng').value);
+  let newLat = parseFloat($('#editNewLat').value);
+  let newLng = parseFloat($('#editNewLng').value);
 
   if (!positionId) {
     alert('Chýba ID záznamu');
     return;
   }
 
+  // If no new coordinates, use current ones (allow save without changes)
   if (isNaN(newLat) || isNaN(newLng)) {
-    alert('Zadajte nové súradnice (kliknutím na mapu alebo manuálne)');
-    return;
+    newLat = parseFloat($('#editCurrentLat').value);
+    newLng = parseFloat($('#editCurrentLng').value);
+    if (isNaN(newLat) || isNaN(newLng)) {
+      alert('Žiadne súradnice na uloženie');
+      return;
+    }
   }
 
   if (newLat < -90 || newLat > 90) {
@@ -2556,7 +2617,7 @@ async function savePositionEdit() {
       alert('Poloha bola úspešne aktualizovaná');
       closePositionEditOverlay();
       // Reload the current day's data
-      loadData(fmt(currentDate));
+      loadHistory(fmt(currentDate));
     } else {
       alert(`Chyba: ${result.error || 'Nepodarilo sa uložiť zmeny'}`);
     }
@@ -2566,12 +2627,11 @@ async function savePositionEdit() {
 }
 
 async function invalidateMacCache() {
-  if (!currentEditPosition || !currentEditPosition.mac_address) {
+  const mac = currentEditPosition?.primary_mac || currentEditPosition?.all_macs?.split(',')[0]?.trim();
+  if (!mac) {
     alert('Tento záznam nemá MAC adresu');
     return;
   }
-
-  const mac = currentEditPosition.mac_address;
   if (!confirm(`Naozaj chcete zneplatniť cache pre MAC adresu ${mac}?\n\nToto odstráni súradnice zo všetkých záznamov s touto MAC adresou a označí ju ako neplatnú.`)) {
     return;
   }
@@ -2586,7 +2646,7 @@ async function invalidateMacCache() {
       alert(result.message || 'MAC cache bola zneplatnená');
       closePositionEditOverlay();
       // Reload the current day's data
-      loadData(fmt(currentDate));
+      loadHistory(fmt(currentDate));
     } else {
       alert(`Chyba: ${result.error || 'Nepodarilo sa zneplatniť cache'}`);
     }
@@ -2693,7 +2753,7 @@ async function acceptGoogleCoordinates() {
 
       alert('Súradnice boli aktualizované na Google hodnoty');
       closePositionEditOverlay();
-      loadData(fmt(currentDate));
+      loadHistory(fmt(currentDate));
     } else {
       alert('Chyba: ' + (result.error || 'Nepodarilo sa aktualizovať súradnice'));
     }
@@ -2720,6 +2780,26 @@ async function refetchDay() {
     }
   } catch (err) {
     alert(`Chyba pri refetch: ${err.message}`);
+  }
+}
+
+async function refetchActiveDevice() {
+  const dateStr = fmt(currentDate);
+  const dev = devices.find(d => d.id === activeTableDeviceId);
+  const devName = dev ? dev.name : 'zariadenie';
+
+  if (!confirm(`Refetch dát zo SenseCraft pre "${devName}" na deň ${dateStr}?\n\nExistujúce dáta tohto zariadenia pre tento deň budú nahradené.`)) return;
+
+  try {
+    const result = await apiPost('refetch_day', { date: dateStr, device_id: activeTableDeviceId });
+    if (result.ok) {
+      alert(`Refetch spustený pre "${devName}" na ${dateStr}. Počkajte 1-2 minúty a potom obnovte.`);
+      setTimeout(() => loadHistory(dateStr), 30000);
+    } else {
+      alert(`Chyba: ${result.error || 'Neznáma chyba'}`);
+    }
+  } catch (err) {
+    alert(`Chyba: ${err.message}`);
   }
 }
 
@@ -4204,21 +4284,11 @@ window.sendTestEmail = async function() {
       response = { ok: false, error: `Server vrátil HTTP ${r.status} (nie JSON odpoveď)` };
     }
 
-    console.log('Test email response:', response);
-
     if (response.ok) {
       resultEl.textContent = response.message || 'Testovací e-mail bol odoslaný!';
       resultEl.className = 'test-email-result success';
-
-      if (response.debug) {
-        console.log('Test email debug:', response.debug);
-      }
     } else {
       let errorMsg = response.error || `Chyba servera (HTTP ${r.status})`;
-
-      if (response.debug) {
-        console.error('Test email error debug:', response.debug);
-      }
 
       resultEl.textContent = errorMsg;
       resultEl.className = 'test-email-result error';
@@ -4996,7 +5066,7 @@ function renderDeviceTabs() {
       <span class="device-tab-dot" style="background:${d.color}"></span>
       ${d.name}
     </button>
-  `).join('');
+  `).join('') + `<button class="device-tab" onclick="refetchActiveDevice()" title="Refetch dáta aktívneho zariadenia pre tento deň" style="margin-left:auto;opacity:0.6;font-size:12px;">⟳ Refetch</button>`;
 
   container.querySelectorAll('.device-tab').forEach(tab => {
     tab.addEventListener('click', () => {
@@ -5045,7 +5115,7 @@ function updateDeviceLayerVisibility() {
 function openDeviceManagement() {
   const overlay = $('#deviceManagementOverlay');
   if (overlay) {
-    overlay.classList.remove('hidden');
+    pushOverlay(overlay);
     loadDeviceManagementList();
 
     // Close on background click (consistent with other overlays)
@@ -5057,7 +5127,7 @@ function openDeviceManagement() {
 
 function closeDeviceManagement() {
   const overlay = $('#deviceManagementOverlay');
-  if (overlay) overlay.classList.add('hidden');
+  if (overlay) popOverlay(overlay);
 }
 
 async function loadDeviceManagementList() {
@@ -5245,7 +5315,7 @@ function openDataBrowser(deviceId, deviceName) {
   overlay.querySelector('#dataBrowserTitle').textContent = `Dáta: ${deviceName}`;
   overlay.querySelector('#dataBrowserDate').value = fmt(new Date());
   overlay.querySelector('#dataBrowserSourceFilter').value = 'all';
-  overlay.classList.remove('hidden');
+  pushOverlay(overlay);
 
   overlay.onclick = (e) => {
     if (e.target === overlay) closeDataBrowser();
@@ -5256,7 +5326,43 @@ function openDataBrowser(deviceId, deviceName) {
 
 function closeDataBrowser() {
   const overlay = $('#dataBrowserOverlay');
-  if (overlay) overlay.classList.add('hidden');
+  if (overlay) popOverlay(overlay);
+}
+
+async function deletePositionCoords(recordId, recordType) {
+  const label = recordType === 'wifi_scan' ? 'Vrátiť WiFi sken na nerozpoznaný?' : 'Zmazať tento záznam polohy?';
+  if (!confirm(label)) return;
+
+  try {
+    const res = await apiPost('delete_position_coords', { id: recordId, record_type: recordType });
+    if (res.ok) {
+      loadDataBrowserRecords();
+      try { await loadHistory(fmt(currentDate)); } catch(e) {}
+    } else {
+      alert(res.error || 'Chyba pri mazaní');
+    }
+  } catch (e) {
+    alert('Chyba: ' + e.message);
+  }
+}
+
+async function triggerRefetchFromDataBrowser() {
+  const date = $('#dataBrowserDate')?.value;
+  if (!date) return;
+  if (!confirm(`Spustiť refetch dát zo SenseCraft pre zariadenie "${dataBrowserDeviceName}" na deň ${date}?\n\nExistujúce dáta tohto zariadenia pre tento deň budú nahradené.`)) return;
+
+  try {
+    const res = await apiPost('refetch_day', { date, device_id: dataBrowserDeviceId });
+    if (res.ok) {
+      alert(`Refetch spustený pre "${dataBrowserDeviceName}" na ${date}. Počkajte 1-2 minúty a potom obnovte.`);
+      // Auto-reload after 30 seconds
+      setTimeout(() => loadDataBrowserRecords(), 30000);
+    } else {
+      alert('Chyba: ' + (res.error || 'Nepodarilo sa spustiť refetch'));
+    }
+  } catch (e) {
+    alert('Chyba: ' + e.message);
+  }
 }
 
 async function loadDataBrowserRecords() {
@@ -5289,7 +5395,22 @@ async function loadDataBrowserRecords() {
     const pagination = result.pagination || {};
 
     if (records.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--muted-text);">Žiadne záznamy</td></tr>';
+      // Show diagnostic info when no records found
+      let diagHtml = '<tr><td colspan="7" style="text-align:center;color:var(--muted-text);padding:20px;">';
+      diagHtml += '<div style="font-size:1.1em;">Žiadne záznamy</div>';
+      try {
+        const status = await apiGet(`${API}?action=fetch_status&device_id=${dataBrowserDeviceId}`);
+        if (status && status.ok) {
+          diagHtml += '<div style="margin-top:12px;font-size:0.85em;opacity:0.7;line-height:1.6;">';
+          diagHtml += `Posledný záznam: ${status.last_record || 'žiadny'}<br>`;
+          diagHtml += `Záznamy za 24h: ${status.records_last_24h} (+ ${status.wifi_scans_last_24h} WiFi skenov)<br>`;
+          diagHtml += `Posledný fetch: ${status.last_fetch_run || 'neznámy'}<br>`;
+          diagHtml += `Čas servera: ${status.server_time}`;
+          diagHtml += '</div>';
+        }
+      } catch (e) { /* ignore diagnostic errors */ }
+      diagHtml += '</td></tr>';
+      tbody.innerHTML = diagHtml;
       updateDataBrowserPagination(pagination);
       return;
     }
@@ -5316,14 +5437,29 @@ async function loadDataBrowserRecords() {
         macInfo = '<span class="source-badge ibeacon">iBeacon</span>';
       }
 
-      // Actions
+      // Actions - only show Google buttons if API key is configured
       let actions = '';
-      if (isWifiScan && !r.resolved) {
-        actions = `<button class="btn-sm btn-edit" onclick="retryGoogleForWifiScan(${r.id})" title="Skúsiť Google API pre tento sken">Google</button>`;
-      } else if (r.raw_wifi_macs || isWifiScan) {
-        const retryId = isWifiScan ? r.id : r.id;
-        const retryFn = isWifiScan ? 'retryGoogleForWifiScan' : 'retryGoogleForRecord';
-        actions = `<button class="btn-sm btn-edit" onclick="${retryFn}(${retryId})" title="Zavolať Google API">Google</button>`;
+      const hasCoords = r.latitude && r.longitude;
+
+      // Edit button - for records with coordinates (opens position edit overlay)
+      if (hasCoords && !isWifiScan) {
+        actions += `<button class="btn-sm btn-edit" onclick="openPositionEditModal(${r.id})" title="Upraviť súradnice">✎</button>`;
+      }
+
+      // Google button
+      if (hasGoogleApi) {
+        if (isWifiScan && !r.resolved) {
+          actions += `<button class="btn-sm btn-edit" onclick="retryGoogleForWifiScan(${r.id})" title="Skúsiť Google API pre tento sken">Google</button>`;
+        } else if (r.raw_wifi_macs || isWifiScan) {
+          const retryFn = isWifiScan ? 'retryGoogleForWifiScan' : 'retryGoogleForRecord';
+          actions += `<button class="btn-sm btn-edit" onclick="${retryFn}(${r.id})" title="Zavolať Google API">Google</button>`;
+        }
+      }
+
+      // Delete coordinates button - for records with coordinates
+      if (hasCoords) {
+        const recType = isWifiScan ? 'wifi_scan' : 'tracker';
+        actions += `<button class="btn-sm btn-danger" onclick="deletePositionCoords(${r.id}, '${recType}')" title="Zmazať súradnice" style="padding:2px 6px;font-size:11px;">✕</button>`;
       }
 
       return `<tr data-record-id="${r.id}" data-record-type="${r.record_type || 'tracker'}" class="${rowClass}">
@@ -5479,15 +5615,24 @@ async function retryGoogleForWifiScan(scanId) {
     const res = await apiPost('retry_google_wifi_scan', { scan_id: scanId });
     if (res.ok) {
       let msg = 'Google API odpoveď:\n';
-      if (res.latitude !== undefined && res.latitude !== null) {
+      if (res.message) {
+        // Accuracy rejection or other message from server
+        msg += res.message;
+        if (res.accuracy) msg += `\n(Presnosť: ${Math.round(res.accuracy)} m)`;
+      } else if (res.latitude !== undefined && res.latitude !== null) {
         msg += `Poloha: ${res.latitude.toFixed(5)}, ${res.longitude.toFixed(5)}\n`;
-        msg += `Presnosť: ${res.accuracy || '—'} m\n`;
+        msg += `Presnosť: ${res.accuracy ? Math.round(res.accuracy) + ' m' : '—'}\n`;
         msg += `Aktualizovaných MAC: ${res.macs_updated || 0}`;
       } else {
-        msg += 'Žiadna poloha vrátená - Google nerozpoznal tieto WiFi siete';
+        msg += 'Žiadna poloha vrátená - Google nerozpoznal tieto WiFi siete.\n';
+        msg += '(Keď Google nepozná MAC adresy, vracia polohu servera podľa IP.)';
       }
       alert(msg);
       loadDataBrowserRecords();
+      // Refresh map to show the newly resolved position
+      if (res.latitude !== undefined && res.latitude !== null) {
+        try { await loadHistory(fmt(currentDate)); } catch(e) {}
+      }
     } else {
       alert(res.error || 'Chyba pri volaní Google API');
     }

@@ -29,3 +29,4 @@ vendor/
 
 # Docker volumes data (when using bind mounts)
 data/
+tracker.db

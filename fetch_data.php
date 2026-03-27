@@ -128,17 +128,17 @@ function sensecap_fetch_basic(string $devEui, int $measurementId, string $aid, s
     $http = 0; $err = '';
     [$json, $raw] = http_get_json_basic($url, $aid, $akey, $http, $err);
     
-    if ($err) { 
-        debug_log("SenseCAP ERR m=$measurementId http=$http err=$err"); 
-        return []; 
+    if ($err) {
+        info_log("SenseCAP API ERROR: measurement=$measurementId http=$http err=$err");
+        return [];
     }
-    if (!is_array($json)) { 
-        debug_log("SenseCAP BADJSON m=$measurementId http=$http body=".substr((string)$raw,0,200)); 
-        return []; 
+    if (!is_array($json)) {
+        info_log("SenseCAP API BAD RESPONSE: measurement=$measurementId http=$http body=".substr((string)$raw,0,200));
+        return [];
     }
-    if (($json['code'] ?? '') !== '0') { 
-        debug_log("SenseCAP APICODE m=$measurementId code=".($json['code']??'').' body='.substr(json_encode($json),0,200)); 
-        return []; 
+    if (($json['code'] ?? '') !== '0') {
+        info_log("SenseCAP API CODE ERROR: measurement=$measurementId code=".($json['code']??'').' body='.substr(json_encode($json),0,200));
+        return [];
     }
 
     $list = $json['data']['list'] ?? [];
@@ -343,7 +343,7 @@ function insert_position_with_hysteresis(
         return ['inserted' => true, 'reason' => 'ok', 'distance' => $dist !== null ? round($dist, 1) : null];
     } catch (Throwable $e) {
         $errorMsg = $e->getMessage();
-        debug_log("    DB EXCEPTION: $errorMsg");
+        info_log("    DB INSERT ERROR: $errorMsg (source=$source, lat=$lat, lng=$lng)");
         return ['inserted' => false, 'reason' => 'db_error', 'error' => $errorMsg];
     }
 }
@@ -533,6 +533,14 @@ function google_geolocate(string $apiKey, array $aps, int $minAps, string $times
     if (isset($j['location']['lat'],$j['location']['lng'])) {
         $acc = isset($j['accuracy']) ? (float)$j['accuracy'] : null;
         debug_log("  GOOGLE SUCCESS: lat=".$j['location']['lat']." lng=".$j['location']['lng']." accuracy=".($acc??'null')."m");
+
+        // Reject results with poor accuracy (server IP-based fallback)
+        $maxAcc = (int)(getenv('GOOGLE_MAX_ACCURACY_METERS') ?: 500);
+        if ($acc !== null && $acc > $maxAcc) {
+            info_log("  GOOGLE REJECTED: accuracy={$acc}m exceeds limit={$maxAcc}m (likely IP-based fallback)");
+            return null;
+        }
+
         return [ (float)$j['location']['lat'], (float)$j['location']['lng'], $acc ];
     }
     
@@ -567,30 +575,31 @@ function point_in_polygon(float $lat, float $lng, array $polygon): bool {
 function load_active_perimeters(PDO $pdo, ?int $deviceId = null): array {
     $perimeters = [];
     try {
-        // Check if device_id column exists
+        // Check which columns exist in perimeters table
         $hasDeviceIdCol = false;
+        $hasNotificationEmailCol = false;
         $cols = $pdo->query("SELECT column_name FROM information_schema.columns WHERE table_name = 'perimeters'");
         while ($c = $cols->fetch()) {
-            if ($c['column_name'] === 'device_id') { $hasDeviceIdCol = true; break; }
+            if ($c['column_name'] === 'device_id') { $hasDeviceIdCol = true; }
+            if ($c['column_name'] === 'notification_email') { $hasNotificationEmailCol = true; }
         }
+
+        // Build SELECT columns dynamically based on what exists
+        $selectCols = 'id, name, polygon, alert_on_enter, alert_on_exit';
+        if ($hasNotificationEmailCol) $selectCols .= ', notification_email';
+        if ($hasDeviceIdCol) $selectCols .= ', device_id';
 
         // Load perimeters: global (device_id IS NULL) + device-specific
         if ($hasDeviceIdCol && $deviceId !== null) {
             $stmt = $pdo->prepare("
-                SELECT id, name, polygon, alert_on_enter, alert_on_exit, notification_email, device_id
+                SELECT $selectCols
                 FROM perimeters
                 WHERE is_active = 1 AND (device_id IS NULL OR device_id = :did)
             ");
             $stmt->execute([':did' => $deviceId]);
-        } elseif ($hasDeviceIdCol) {
-            $stmt = $pdo->query("
-                SELECT id, name, polygon, alert_on_enter, alert_on_exit, notification_email, device_id
-                FROM perimeters
-                WHERE is_active = 1
-            ");
         } else {
             $stmt = $pdo->query("
-                SELECT id, name, polygon, alert_on_enter, alert_on_exit, notification_email
+                SELECT $selectCols
                 FROM perimeters
                 WHERE is_active = 1
             ");
@@ -614,8 +623,8 @@ function load_active_perimeters(PDO $pdo, ?int $deviceId = null): array {
                 ];
             }
 
-            // Backwards compatibility: if no emails in new table, use legacy field
-            if (empty($emails) && !empty($r['notification_email'])) {
+            // Backwards compatibility: if no emails in new table, use legacy notification_email field
+            if (empty($emails) && $hasNotificationEmailCol && !empty($r['notification_email'])) {
                 $emails[] = [
                     'email' => $r['notification_email'],
                     'alert_on_enter' => (bool)$r['alert_on_enter'],
@@ -630,7 +639,7 @@ function load_active_perimeters(PDO $pdo, ?int $deviceId = null): array {
                 'polygon' => json_decode($r['polygon'], true),
                 'alert_on_enter' => (bool)$r['alert_on_enter'],
                 'alert_on_exit' => (bool)$r['alert_on_exit'],
-                'notification_email' => $r['notification_email'],
+                'notification_email' => $hasNotificationEmailCol ? ($r['notification_email'] ?? null) : null,
                 'device_id' => $perDeviceId,
                 'emails' => $emails
             ];
@@ -1732,23 +1741,22 @@ try {
         global $REFETCH_MODE, $REFETCH_BREACHES;
         if (empty($activePerimeters)) return;
 
+        // Skip perimeter checking entirely in refetch mode - historical data should not trigger alerts
+        if ($REFETCH_MODE) {
+            $currentStates = get_position_perimeter_states($lat, $lng, $activePerimeters);
+            $previousPerimeterStates = $currentStates;
+            return;
+        }
+
         $currentStates = get_position_perimeter_states($lat, $lng, $activePerimeters);
         $breaches = check_perimeter_breaches($pdo, $lat, $lng, $iso, $activePerimeters, $currentStates, $previousPerimeterStates, $DEVICE_NAME);
 
         foreach ($breaches as $breach) {
-            if ($REFETCH_MODE) {
-                // In refetch mode, collect breaches for summary email
-                $REFETCH_BREACHES[] = $breach;
-                record_perimeter_alert($pdo, $breach, false); // Mark as not yet sent
-                $perimeterAlerts++;
-                debug_log("    BREACH COLLECTED for summary: {$breach['type']} '{$breach['perimeter']['name']}'");
-            } else {
-                // Normal mode: send individual email
-                $emailSent = send_perimeter_alert_email($breach);
-                record_perimeter_alert($pdo, $breach, $emailSent);
-                $perimeterAlerts++;
-                if ($emailSent) $emailsSent++;
-            }
+            // Normal mode: send individual email
+            $emailSent = send_perimeter_alert_email($breach);
+            record_perimeter_alert($pdo, $breach, $emailSent);
+            $perimeterAlerts++;
+            if ($emailSent) $emailsSent++;
         }
 
         // Update previous states for next iteration

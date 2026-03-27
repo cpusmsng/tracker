@@ -384,6 +384,60 @@ if ($action === 'health') {
     }
 }
 
+// Fetch status - diagnostic info about data fetching
+if ($action === 'fetch_status') {
+    try {
+        $deviceId = qparam('device_id');
+
+        // Last tracker_data record per device
+        if ($deviceId) {
+            $stmt = $pdo->prepare("SELECT MAX(timestamp) as last_ts, COUNT(*) as today_count FROM tracker_data WHERE device_id = :did AND timestamp >= (NOW() AT TIME ZONE 'UTC' - INTERVAL '24 hours')");
+            $stmt->execute([':did' => (int)$deviceId]);
+            $row = $stmt->fetch();
+
+            $stmtAll = $pdo->prepare("SELECT MAX(timestamp) as last_ts FROM tracker_data WHERE device_id = :did");
+            $stmtAll->execute([':did' => (int)$deviceId]);
+            $rowAll = $stmtAll->fetch();
+
+            // WiFi scans count for today
+            $wifiToday = 0;
+            try {
+                $stmtWs = $pdo->prepare("SELECT COUNT(*) FROM wifi_scans WHERE device_id = :did AND timestamp >= (NOW() AT TIME ZONE 'UTC' - INTERVAL '24 hours')");
+                $stmtWs->execute([':did' => (int)$deviceId]);
+                $wifiToday = (int)$stmtWs->fetchColumn();
+            } catch (Throwable $e) {}
+        } else {
+            $row = $pdo->query("SELECT MAX(timestamp) as last_ts, COUNT(*) as today_count FROM tracker_data WHERE timestamp >= (NOW() AT TIME ZONE 'UTC' - INTERVAL '24 hours')")->fetch();
+            $rowAll = $pdo->query("SELECT MAX(timestamp) as last_ts FROM tracker_data")->fetch();
+            $wifiToday = 0;
+            try {
+                $wifiToday = (int)$pdo->query("SELECT COUNT(*) FROM wifi_scans WHERE timestamp >= (NOW() AT TIME ZONE 'UTC' - INTERVAL '24 hours')")->fetchColumn();
+            } catch (Throwable $e) {}
+        }
+
+        // Check last fetch run time from file
+        $lastRunFile = __DIR__ . '/data/.fetch_last_run';
+        $lastRunTime = null;
+        if (is_file($lastRunFile)) {
+            $ts = (int)file_get_contents($lastRunFile);
+            if ($ts > 0) {
+                $lastRunTime = (new DateTimeImmutable("@$ts"))->setTimezone(new DateTimeZone('Europe/Bratislava'))->format('Y-m-d H:i:s');
+            }
+        }
+
+        respond([
+            'ok' => true,
+            'last_record' => $rowAll['last_ts'] ? utc_to_local($rowAll['last_ts']) : null,
+            'records_last_24h' => (int)($row['today_count'] ?? 0),
+            'wifi_scans_last_24h' => $wifiToday,
+            'last_fetch_run' => $lastRunTime,
+            'server_time' => (new DateTimeImmutable('now', new DateTimeZone('Europe/Bratislava')))->format('Y-m-d H:i:s'),
+        ]);
+    } catch (Throwable $e) {
+        respond(['ok' => false, 'error' => $e->getMessage()], 500);
+    }
+}
+
 if ($action === 'get_last_position') {
     $deviceId = qparam('device_id');
 
@@ -923,7 +977,7 @@ if ($action === 'retry_google_wifi_scan' && $_SERVER['REQUEST_METHOD'] === 'POST
         $parsed = json_decode($scan['macs_json'], true);
         if (!is_array($parsed) || empty($parsed)) respond(['ok' => false, 'error' => 'No MACs in scan']);
 
-        $GKEY = $CFG['GOOGLE_API_KEY'] ?? '';
+        $GKEY = getenv('GOOGLE_API_KEY') ?: '';
         if (!$GKEY) respond(['ok' => false, 'error' => 'Google API key not configured']);
 
         // Build WiFi access points for Google
@@ -972,9 +1026,48 @@ if ($action === 'retry_google_wifi_scan' && $_SERVER['REQUEST_METHOD'] === 'POST
             respond(['ok' => true, 'latitude' => null, 'longitude' => null, 'message' => 'No location in response']);
         }
 
+        // Reject results with poor accuracy (>500m means Google is guessing)
+        $maxAccuracy = (int)(getenv('GOOGLE_MAX_ACCURACY_METERS') ?: 500);
+        if ($acc !== null && $acc > $maxAccuracy) {
+            respond([
+                'ok' => true,
+                'latitude' => null,
+                'longitude' => null,
+                'accuracy' => (float)$acc,
+                'message' => "Presnosť príliš nízka ({$acc}m > {$maxAccuracy}m limit). Výsledok zamietnutý."
+            ]);
+        }
+
         // Update wifi_scan as resolved
         $upd = $pdo->prepare("UPDATE wifi_scans SET resolved = 1, latitude = :lat, longitude = :lng, source = 'wifi-google' WHERE id = :id");
         $upd->execute([':lat' => $lat, ':lng' => $lng, ':id' => $scanId]);
+
+        // Create tracker_data entry so position appears on map and in history
+        $allMacs = [];
+        $primaryMac = null;
+        foreach ($parsed as $ap) {
+            $mac = strtoupper(str_replace('-', ':', $ap['mac'] ?? ''));
+            if (strlen($mac) === 17) $allMacs[] = $mac;
+        }
+        if (!empty($allMacs)) $primaryMac = $allMacs[0];
+
+        $ins = $pdo->prepare("
+            INSERT INTO tracker_data (timestamp, latitude, longitude, source, raw_wifi_macs, primary_mac, device_id)
+            VALUES (:ts, :lat, :lng, 'wifi-google', :macs, :pmac, :did)
+        ");
+        $ins->execute([
+            ':ts'   => $scan['timestamp'],
+            ':lat'  => $lat,
+            ':lng'  => $lng,
+            ':macs' => implode(',', $allMacs),
+            ':pmac' => $primaryMac,
+            ':did'  => $scan['device_id'],
+        ]);
+        $tdId = (int)$pdo->lastInsertId();
+
+        // Link wifi_scan to the new tracker_data entry
+        $link = $pdo->prepare("UPDATE wifi_scans SET tracker_data_id = :tid WHERE id = :id");
+        $link->execute([':tid' => $tdId, ':id' => $scanId]);
 
         // Update mac_locations for all MACs in this scan
         $macsUpdated = 0;
@@ -1005,6 +1098,7 @@ if ($action === 'retry_google_wifi_scan' && $_SERVER['REQUEST_METHOD'] === 'POST
 if ($action === 'refetch_day' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     $j = json_body();
     $date = trim((string)($j['date'] ?? ''));
+    $deviceId = isset($j['device_id']) ? (int)$j['device_id'] : null;
     
     if ($date === '') {
         respond(['ok'=>false, 'error'=>'Missing date parameter'], 400);
@@ -1034,12 +1128,14 @@ if ($action === 'refetch_day' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         $phpBin = 'php';
     }
     
-    // Spusti proces na pozadÃ­ s parametrom --refetch-date
+    // Spusti proces na pozadí s parametrom --refetch-date
+    $deviceArg = $deviceId ? ' --device-ids=' . escapeshellarg((string)$deviceId) : '';
     $cmd = sprintf(
-        '%s %s --refetch-date=%s >> %s 2>&1 &',
+        '%s %s --refetch-date=%s%s >> %s 2>&1 &',
         escapeshellarg($phpBin),
         escapeshellarg($scriptPath),
         escapeshellarg($dateStr),
+        $deviceArg,
         escapeshellarg($logFile)
     );
     
@@ -1761,7 +1857,9 @@ if ($action === 'get_settings') {
             'smart_refetch_frequency_minutes' => (int)(getenv('SMART_REFETCH_FREQUENCY_MINUTES') ?: 30),
             'smart_refetch_days' => (int)(getenv('SMART_REFETCH_DAYS') ?: 7),
             'battery_alert_enabled' => in_array(strtolower(getenv('BATTERY_ALERT_ENABLED') ?: 'false'), ['true', '1', 'yes']),
-            'battery_alert_email' => getenv('BATTERY_ALERT_EMAIL') ?: ''
+            'battery_alert_email' => getenv('BATTERY_ALERT_EMAIL') ?: '',
+            'has_google_api' => !empty(getenv('GOOGLE_API_KEY')),
+            'google_max_accuracy' => (int)(getenv('GOOGLE_MAX_ACCURACY_METERS') ?: 500)
         ];
 
         respond([
@@ -1790,6 +1888,7 @@ if ($action === 'save_settings' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         $smartRefetchDays = isset($j['smart_refetch_days']) ? (int)$j['smart_refetch_days'] : null;
         $batteryAlertEnabled = isset($j['battery_alert_enabled']) ? ($j['battery_alert_enabled'] ? 'true' : 'false') : null;
         $batteryAlertEmail = isset($j['battery_alert_email']) ? trim((string)$j['battery_alert_email']) : null;
+        $googleMaxAccuracy = isset($j['google_max_accuracy']) ? (int)$j['google_max_accuracy'] : null;
 
         // Validácia hraničných hodnôt
         if ($hysteresisMeters !== null && ($hysteresisMeters < 10 || $hysteresisMeters > 500)) {
@@ -1825,6 +1924,9 @@ if ($action === 'save_settings' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($batteryAlertEmail !== null && $batteryAlertEmail !== '' && !filter_var($batteryAlertEmail, FILTER_VALIDATE_EMAIL)) {
             respond(['ok' => false, 'error' => 'battery_alert_email must be a valid email address'], 400);
         }
+        if ($googleMaxAccuracy !== null && ($googleMaxAccuracy < 50 || $googleMaxAccuracy > 10000)) {
+            respond(['ok' => false, 'error' => 'google_max_accuracy must be between 50 and 10000'], 400);
+        }
 
         // Načítaj aktuálny .env súbor
         $envPath = __DIR__ . '/.env';
@@ -1850,7 +1952,8 @@ if ($action === 'save_settings' && $_SERVER['REQUEST_METHOD'] === 'POST') {
             'smart_refetch_frequency_minutes' => 'SMART_REFETCH_FREQUENCY_MINUTES',
             'smart_refetch_days' => 'SMART_REFETCH_DAYS',
             'battery_alert_enabled' => 'BATTERY_ALERT_ENABLED',
-            'battery_alert_email' => 'BATTERY_ALERT_EMAIL'
+            'battery_alert_email' => 'BATTERY_ALERT_EMAIL',
+            'google_max_accuracy' => 'GOOGLE_MAX_ACCURACY_METERS'
         ];
 
         $newSettings = [];
@@ -2084,6 +2187,43 @@ if ($action === 'update_position' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
+// DELETE position coordinates (revert to unresolved or delete tracker_data entry)
+if ($action === 'delete_position_coords' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    try {
+        $j = json_body();
+        $id = isset($j['id']) ? (int)$j['id'] : null;
+        $recordType = $j['record_type'] ?? 'tracker';
+
+        if (!$id) respond(['ok' => false, 'error' => 'Record ID is required'], 400);
+
+        $pdo = db();
+
+        if ($recordType === 'wifi_scan') {
+            // For wifi_scans: revert to unresolved (keep the scan, just remove coordinates)
+            $stmt = $pdo->prepare("UPDATE wifi_scans SET resolved = 0, latitude = NULL, longitude = NULL, source = NULL, tracker_data_id = NULL WHERE id = ?");
+            $stmt->execute([$id]);
+
+            // Also delete the linked tracker_data entry if exists
+            $stmtTd = $pdo->prepare("DELETE FROM tracker_data WHERE id IN (SELECT tracker_data_id FROM wifi_scans WHERE id = ? AND tracker_data_id IS NOT NULL)");
+            $stmtTd->execute([$id]);
+
+            respond(['ok' => true, 'message' => 'WiFi scan reverted to unresolved']);
+        } else {
+            // For tracker_data: delete the record entirely
+            $stmt = $pdo->prepare("DELETE FROM tracker_data WHERE id = ?");
+            $stmt->execute([$id]);
+
+            // Also unlink any wifi_scans that referenced this
+            $stmtWs = $pdo->prepare("UPDATE wifi_scans SET resolved = 0, tracker_data_id = NULL WHERE tracker_data_id = ?");
+            $stmtWs->execute([$id]);
+
+            respond(['ok' => true, 'message' => 'Position deleted']);
+        }
+    } catch (Throwable $e) {
+        respond(['ok' => false, 'error' => $e->getMessage()], 500);
+    }
+}
+
 // Invalidate MAC address cache (remove coordinates for a MAC)
 if ($action === 'invalidate_mac' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     try {
@@ -2099,19 +2239,24 @@ if ($action === 'invalidate_mac' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         $pdo = db();
 
         // Mark the MAC as negative in the cache (no location)
-        $stmt = $pdo->prepare('UPDATE mac_locations SET lat = NULL, lng = NULL, negative = 1, updated_at = NOW() WHERE mac = ?');
+        $stmt = $pdo->prepare('UPDATE mac_locations SET latitude = NULL, longitude = NULL, last_queried = NOW() WHERE mac_address = ?');
         $stmt->execute([$mac]);
 
         // If mac_locations didn't have this MAC, insert it as negative
         if ($stmt->rowCount() === 0) {
-            $stmt = $pdo->prepare('INSERT INTO mac_locations (mac, lat, lng, negative, created_at, updated_at) VALUES (?, NULL, NULL, 1, NOW(), NOW()) ON CONFLICT (mac) DO UPDATE SET lat = NULL, lng = NULL, negative = 1, updated_at = NOW()');
+            $stmt = $pdo->prepare('INSERT INTO mac_locations (mac_address, latitude, longitude, last_queried) VALUES (?, NULL, NULL, NOW()) ON CONFLICT(mac_address) DO UPDATE SET latitude = NULL, longitude = NULL, last_queried = NOW()');
             $stmt->execute([$mac]);
         }
 
-        // Clear coordinates from all tracker_data entries with this MAC
-        $stmt = $pdo->prepare('UPDATE tracker_data SET latitude = NULL, longitude = NULL WHERE raw_wifi_macs = ?');
+        // Delete tracker_data entries where this MAC is primary (NOT NULL constraint prevents nulling coords)
+        $stmt = $pdo->prepare('DELETE FROM tracker_data WHERE primary_mac = ?');
         $stmt->execute([$mac]);
         $affectedPositions = $stmt->rowCount();
+
+        // Also delete entries where this MAC appears in raw_wifi_macs
+        $stmt = $pdo->prepare('DELETE FROM tracker_data WHERE raw_wifi_macs LIKE ? AND (primary_mac IS NULL OR primary_mac = ?)');
+        $stmt->execute(['%' . $mac . '%', $mac]);
+        $affectedPositions += $stmt->rowCount();
 
         respond([
             'ok' => true,

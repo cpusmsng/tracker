@@ -294,6 +294,10 @@ cd /var/www/html && /usr/local/bin/php -r "
 "
 echo ""
 
+# Scheduling is handled by supervisord (fetch-loop.sh and smart-refetch-loop.sh)
+# Remove any leftover crontabs to avoid duplicate execution
+crontab -r 2>/dev/null || true
+
 # Touch log files
 touch /var/log/tracker/fetch.log /var/log/tracker/smart_refetch.log /var/log/tracker/php-error.log
 chown www-data:www-data /var/log/tracker/*.log
