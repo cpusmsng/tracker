@@ -2783,6 +2783,26 @@ async function refetchDay() {
   }
 }
 
+async function refetchActiveDevice() {
+  const dateStr = fmt(currentDate);
+  const dev = devices.find(d => d.id === activeTableDeviceId);
+  const devName = dev ? dev.name : 'zariadenie';
+
+  if (!confirm(`Refetch dát zo SenseCraft pre "${devName}" na deň ${dateStr}?\n\nExistujúce dáta tohto zariadenia pre tento deň budú nahradené.`)) return;
+
+  try {
+    const result = await apiPost('refetch_day', { date: dateStr, device_id: activeTableDeviceId });
+    if (result.ok) {
+      alert(`Refetch spustený pre "${devName}" na ${dateStr}. Počkajte 1-2 minúty a potom obnovte.`);
+      setTimeout(() => loadHistory(dateStr), 30000);
+    } else {
+      alert(`Chyba: ${result.error || 'Neznáma chyba'}`);
+    }
+  } catch (err) {
+    alert(`Chyba: ${err.message}`);
+  }
+}
+
 // --------- Calendar ---------
 let currentDate = new Date();
 let calendarDate = new Date();
@@ -5046,7 +5066,7 @@ function renderDeviceTabs() {
       <span class="device-tab-dot" style="background:${d.color}"></span>
       ${d.name}
     </button>
-  `).join('');
+  `).join('') + `<button class="device-tab" onclick="refetchActiveDevice()" title="Refetch dáta aktívneho zariadenia pre tento deň" style="margin-left:auto;opacity:0.6;font-size:12px;">⟳ Refetch</button>`;
 
   container.querySelectorAll('.device-tab').forEach(tab => {
     tab.addEventListener('click', () => {
